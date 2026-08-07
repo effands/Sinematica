@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+env/
+storage/jobs/
+data/*.log
+*.log
+data/settings.json
+data/*.json
+job_payload_tmp.json
+sb_resp_tmp.json

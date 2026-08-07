@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sinematica Flow Agent Side Panel</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="panel-container">
+    <!-- Header Card -->
+    <div class="card header-card">
+      <div class="header-main">
+        <div class="app-logo" style="background: none; box-shadow: none; padding: 0; border-radius: 12px; overflow: hidden;">
+          <img src="logo.png" alt="Logo" style="width: 44px; height: 44px; object-fit: cover; border-radius: 12px;" />
+        </div>
+        <div class="app-info">
+          <h2>Flow Agent</h2>
+          <p>Generate images & videos on autopilot</p>
+        </div>
+        <div class="toggle-container">
+          <span class="status-dot" id="statusDot"></span>
+          <span class="toggle-label" id="toggleLabel">OFF</span>
+          <label class="switch">
+            <input type="checkbox" id="autopilotToggle">
+            <span class="slider round"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics Cards Grid -->
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-value" id="metricTotal">0</div>
+        <div class="metric-title">TOTAL</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value success-val" id="metricSuccess">0</div>
+        <div class="metric-title">SUCCESS</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value fail-val" id="metricFailed">0</div>
+        <div class="metric-title">FAILED</div>
+      </div>
+    </div>
+
+    <!-- Token Sync & Credit Bar -->
+    <div class="token-bar">
+      <div class="token-status">
+        <span class="pulse-green"></span>
+        <span id="tokenSyncText">token synced 1m</span>
+      </div>
+      <div class="points-status" id="pointsText">
+        Sisa Point — / ±— Video
+      </div>
+    </div>
+
+    <!-- Request Log Section -->
+    <div class="log-section">
+      <div class="log-header">
+        <span class="log-title">REQUEST LOG</span>
+        <span class="log-badge" id="logCountBadge">0</span>
+      </div>
+
+      <div class="table-container">
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>TYPE</th>
+              <th>TIME</th>
+              <th>STATUS</th>
+              <th>ERROR</th>
+            </tr>
+          </thead>
+          <tbody id="logTableBody">
+            <!-- Empty state when no logs -->
+          </tbody>
+        </table>
+        <div class="empty-log-state" id="emptyLogState">
+          <div class="empty-icon">📋</div>
+          <p>No requests yet</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer Action Buttons -->
+    <div class="footer-actions">
+      <button class="btn-purple" id="btnOpenFlowTab">Open Flow Tab</button>
+      <button class="btn-glass" id="btnRefreshToken">Refresh Token</button>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

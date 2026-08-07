@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sinematica Agent</title>
+  <style>
+    body {
+      width: 280px;
+      padding: 16px;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      margin: 0;
+    }
+    h3 {
+      margin: 0 0 12px 0;
+      color: #38bdf8;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card {
+      background: #1e293b;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      font-size: 13px;
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .badge {
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-green { background: #065f46; color: #34d399; }
+    .badge-red { background: #881337; color: #f43f5e; }
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #fff;
+      margin-top: 4px;
+      font-size: 12px;
+    }
+    button {
+      margin-top: 12px;
+      width: 100%;
+      padding: 8px;
+      border: none;
+      background: #0284c7;
+      color: white;
+      font-weight: bold;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: #0369a1; }
+  </style>
+</head>
+<body>
+  <h3><img src="logo.png" style="width:24px; height:24px; vertical-align:middle; border-radius:6px; margin-right:6px;" /> Sinematica Agent</h3>
+  <div class="card">
+    <div class="status-row">
+      <span>Backend Server:</span>
+      <span id="serverStatus" class="badge badge-red">Disconnected</span>
+    </div>
+    <div class="status-row">
+      <span>Flow Login:</span>
+      <span id="authStatus" class="badge badge-red">Belum Auth</span>
+    </div>
+
+    <div style="margin-top: 8px;">
+      <label style="font-size: 11px; color: #cbd5e1;">Server Port:</label>
+      <input type="number" id="serverPortInput" placeholder="8888" value="8888" />
+    </div>
+
+    <div style="margin-top: 8px;">
+      <label style="font-size: 11px; color: #cbd5e1;">Profil Name:</label>
+      <input type="text" id="profileNameInput" placeholder="Contoh: Chrome Akun 1" />
+    </div>
+
+    <div style="margin-top: 8px; font-size: 11px; color: #94a3b8;">
+      Project ID: <span id="projIdLabel">-</span>
+    </div>
+
+    <button id="saveBtn">Simpan & Connect</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
