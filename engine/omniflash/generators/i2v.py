@@ -253,11 +253,21 @@ def find_failure_reason(item: dict) -> Optional[str]:
     if not isinstance(item, dict):
         return None
 
-    status_str = str(item.get("status") or item.get("state") or "").upper()
-    failed = "FAILED" in status_str or "ERROR" in status_str
+    # Flow's batch-status response puts the definitive result here:
+    # media[].mediaMetadata.mediaStatus.  Older responses used top-level fields,
+    # so normalize both shapes before deciding whether polling should stop.
+    metadata = item.get("mediaMetadata") or item.get("metadata") or {}
+    media_status = metadata.get("mediaStatus") if isinstance(metadata, dict) else {}
+    holders = [item.get("operation"), item.get("response"), media_status, metadata, item]
+
+    status_values = [item.get("status"), item.get("state")]
+    if isinstance(media_status, dict):
+        status_values.extend((media_status.get("mediaGenerationStatus"), media_status.get("status")))
+    status_str = " ".join(str(value or "") for value in status_values).upper()
+    failed = "FAILED" in status_str or "ERROR" in status_str or "BLOCKED" in status_str
 
     message = None
-    for holder in (item.get("operation"), item.get("response"), item):
+    for holder in holders:
         if isinstance(holder, dict):
             err = holder.get("error")
             if isinstance(err, dict) and err.get("message"):
@@ -266,8 +276,16 @@ def find_failure_reason(item: dict) -> Optional[str]:
             if isinstance(err, str) and err:
                 message = err
                 break
-    if not message and item.get("errorMessage"):
-        message = str(item["errorMessage"])
+    if not message:
+        for holder in holders:
+            if isinstance(holder, dict) and holder.get("errorMessage"):
+                message = str(holder["errorMessage"])
+                break
+
+    if isinstance(media_status, dict):
+        reasons = media_status.get("failureReasons")
+        if not message and reasons:
+            message = ", ".join(str(reason) for reason in reasons)
 
     if not failed and not message:
         return None
@@ -276,6 +294,11 @@ def find_failure_reason(item: dict) -> Optional[str]:
     for code, hint in RAI_HINTS.items():
         if code in reason:
             return f"{reason} — {hint}"
+    if "PROMINENT_PERSON" in reason or "PROMINENT_PEOPLE" in reason:
+        return (
+            f"{reason} — Google Flow menganggap prompt/gambar menyerupai tokoh terkenal. "
+            "Hilangkan jabatan/nama yang terkesan tokoh nyata dan gunakan karakter fiktif generik."
+        )
     return reason
 
 
@@ -362,21 +385,11 @@ async def poll_video_status(bridge, media_id: str, project_id: str,
             except Exception:
                 pass
 
-        # Use the schema already proven to work, otherwise probe the next untried candidate.
-        variant_idx = _WORKING_VARIANT_IDX
-        if variant_idx is None or variant_idx in rejected_variants:
-            variant_idx = next((i for i in range(len(op_variants)) if i not in rejected_variants), None)
-
-        if variant_idx is None:
-            detail = " | ".join(f"#{i}: {msg}" for i, msg in sorted(rejected_variants.items()))
-            raise RuntimeError(
-                "Semua skema request polling ditolak Google Flow (HTTP 400). "
-                f"Endpoint {ENDPOINTS['poll_status']} menolak seluruh varian yang dicoba. Detail: {detail}"
-            )
-
+        # Use the schema already proven to work from Affilia
+        variant_idx = 0
         body = {
             "clientContext": build_client_context(project_id),
-            "operations": [op_variants[variant_idx]],
+            "media": [{"name": clean_id, "projectId": project_id}]
         }
 
         try:
@@ -450,8 +463,22 @@ async def poll_video_status(bridge, media_id: str, project_id: str,
             for item in items_to_check:
                 item_url = find_video_url(item) or top_url
                 if is_item_successful(item) or item_url:
+                    if not item_url and clean_id:
+                        # Fallback: get encodedVideo (base64) directly from get_media if URL is not found
+                        try:
+                            m_res = await bridge.api_request(f"/v1/media/{clean_id}", {"clientContext": build_client_context(project_id)}, instance_id=instance_id)
+                            m_data = m_res.get("data", {})
+                            if isinstance(m_data, dict):
+                                v = m_data.get("video", {})
+                                if isinstance(v, dict):
+                                    encoded = v.get("encodedVideo")
+                                    if encoded:
+                                        item_url = f"data:video/mp4;base64,{encoded}"
+                        except Exception as ex:
+                            log.warning("Gagal fetch encodedVideo: %s", ex)
+
                     if item_url:
-                        log.info("Video render selesai! URL: %s", item_url[:60])
+                        log.info("Video render selesai! URL (termasuk b64): %s", item_url[:60] + "...")
                         if progress_callback:
                             progress_callback(int(elapsed), 100)
                         return {
@@ -460,6 +487,18 @@ async def poll_video_status(bridge, media_id: str, project_id: str,
                             "video_url": item_url,
                             "raw": item,
                         }
+                    elif clean_id:
+                        log.info("Video render selesai! Menggunakan direct flow media ID: %s", clean_id)
+                        if progress_callback:
+                            progress_callback(int(elapsed), 100)
+                        return {
+                            "media_id": media_id,
+                            "status": "COMPLETED",
+                            "video_url": f"flow_media_id:{clean_id}",
+                            "raw": item,
+                        }
+                    else:
+                        log.warning("Render dinyatakan sukses tapi tidak ada URL dan clean_id: %s", item)
 
             if top_url:
                 log.info("Video render selesai (extracted fallback URL)! URL: %s", top_url[:60])

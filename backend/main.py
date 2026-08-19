@@ -9,16 +9,21 @@ from contextlib import asynccontextmanager
 import logging
 import traceback
 import time
+import os
+
+# Fix gRPC SSL Handshake issue on Windows with Google APIs
+os.environ["GRPC_DNS_RESOLVER"] = "native"
 
 from . import settings
 from .bridge_manager import init_bridge, close_bridge
-from .routers import status, storyboard, jobs, gallery, settings as settings_router
+from .routers import status, storyboard, jobs, gallery, settings as settings_router, actors
 import importlib
 importlib.reload(status)
 importlib.reload(storyboard)
 importlib.reload(jobs)
 importlib.reload(gallery)
 importlib.reload(settings_router)
+importlib.reload(actors)
 
 ERROR_LOG_FILE = settings.DATA_DIR / "error_diagnostics.log"
 
@@ -86,6 +91,7 @@ app.include_router(storyboard.router)
 app.include_router(jobs.router)
 app.include_router(gallery.router)
 app.include_router(settings_router.router)
+app.include_router(actors.router)
 
 # Mount Static Storage
 app.mount("/storage", StaticFiles(directory=str(settings.STORAGE_DIR)), name="storage")

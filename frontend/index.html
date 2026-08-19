@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="icon" type="image/x-icon" href="favicon.ico?v=1.2.0">
-  <link rel="stylesheet" href="style.css?v=1.2.0">
+  <link rel="stylesheet" href="style.css?v=1.3.1">
 </head>
 <body>
   <div class="app-container">
@@ -32,6 +32,9 @@
         <button class="nav-item" data-tab="tab-storyboard">
           <span class="nav-icon">✨</span> AI Storyboard
         </button>
+        <button class="nav-item" data-tab="tab-musicvideo">
+          <span class="nav-icon">🎵</span> Music Video
+        </button>
         <button class="nav-item" data-tab="tab-history">
           <span class="nav-icon">📜</span> Scene Master
         </button>
@@ -40,6 +43,9 @@
         </button>
         <button class="nav-item" data-tab="tab-gallery">
           <span class="nav-icon">🎞️</span> Video Gallery
+        </button>
+        <button class="nav-item" data-tab="tab-actors">
+          <span class="nav-icon">🎭</span> Casting Karakter
         </button>
         <button class="nav-item" data-tab="tab-settings">
           <span class="nav-icon">⚙️</span> Settings
@@ -330,6 +336,61 @@
         </div>
       </section>
 
+      <!-- TAB 2.5: Music Video Creator -->
+      <section class="tab-page" id="tab-musicvideo" style="max-width: 1200px; margin: 0 auto; width: 100%;">
+        <div class="card" style="padding: 32px; background: linear-gradient(145deg, rgba(12, 18, 36, 0.85), rgba(20, 29, 54, 0.75)); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 20px; backdrop-filter: blur(24px); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);">
+          <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 18px;">
+            <div>
+              <h3 style="font-family: var(--font-heading); font-size: 22px; color: #ffffff; margin: 0; font-weight: 800; display: flex; align-items: center; gap: 10px;">
+                <span>🎵</span> Music Video Auto-Generator
+              </h3>
+              <p style="color: var(--text-secondary); margin: 6px 0 0 0; font-size: 14px; font-weight: 500;">
+                Buat video klip sinematik yang otomatis disinkronisasikan dengan durasi lagu dan lirik.
+              </p>
+            </div>
+          </div>
+          
+          <form id="mvForm" class="modern-form" style="display: grid; grid-template-columns: 1fr; gap: 24px;">
+            <div class="form-group">
+              <label for="mvAudioFile" style="color: #fff; font-weight: 600; font-size: 14px; margin-bottom: 8px; display: block;">1. Upload Audio Lagu (MP3/WAV)</label>
+              <input type="file" id="mvAudioFile" accept="audio/*" required style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff;">
+            </div>
+
+            <div class="form-group">
+              <label for="mvLyrics" style="color: #fff; font-weight: 600; font-size: 14px; margin-bottom: 8px; display: block;">2. Lirik Lagu ATAU Deskripsi Suasana Instrumen</label>
+              <textarea id="mvLyrics" rows="8" placeholder="Masukkan lirik lagu ATAU tema instrumen di sini. (Contoh: Lagu piano sedih di tengah hujan rintik-rintik, tentang perpisahan...)" required style="width: 100%; padding: 16px; font-size: 14px; line-height: 1.6; font-family: inherit; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; color: #ffffff; resize: vertical; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);"></textarea>
+            </div>
+
+            <div class="form-row" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+              <div class="form-group">
+                <label for="mvAspectRatio" style="color: #fff; font-weight: 600; font-size: 14px; margin-bottom: 8px; display: block;">3. Format Video</label>
+                <select id="mvAspectRatio" style="width: 100%; padding: 12px 16px; font-size: 14px; font-family: inherit; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; color: #ffffff; cursor: pointer; appearance: none;">
+                  <option value="landscape">📺 16:9 Landscape (YouTube/Film)</option>
+                  <option value="portrait">📱 9:16 Portrait (TikTok/Reels)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="mvCharacterInfo" style="color: #fff; font-weight: 600; font-size: 14px; margin-bottom: 8px; display: block;">4. Deskripsi Karakter (Opsional)</label>
+                <input type="text" id="mvCharacterInfo" placeholder="Misal: Gadis berambut panjang dengan gaun merah..." style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff;">
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label style="color: #fff; font-weight: 600; font-size: 14px; margin-bottom: 8px; display: block;">🎭 Pilih Aktor (Opsional)</label>
+              <div id="actorSelectionList_mv" style="display: flex; gap: 10px; flex-wrap: wrap; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                  <span style="color: #aaa; font-size: 13px;">Belum ada aktor tersimpan. Daftarkan di tab Casting Karakter.</span>
+              </div>
+            </div>
+
+            <div class="action-bar" style="margin-top: 10px; display: flex; justify-content: flex-end;">
+              <button type="submit" class="btn-primary" id="btnGenerateMV" style="padding: 16px 32px; font-size: 16px; font-weight: 700; border-radius: 14px; display: flex; align-items: center; gap: 10px; box-shadow: 0 10px 20px rgba(56, 189, 248, 0.3); transition: all 0.3s ease;">
+                <span class="icon">✨</span> Generate MV Storyboard
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+
       <!-- TAB: Scene Master (Review & Edit Storyboard + Koleksi Riwayat) -->
       <section class="tab-page" id="tab-history" style="max-width: 1200px; margin: 0 auto; width: 100%;">
         <!-- Card 1: Review & Edit Storyboard Adegan Aktif -->
@@ -456,7 +517,7 @@
               <h3 style="font-family: var(--font-heading); font-size: 22px; color: #ffffff; margin: 0; font-weight: 800; display: flex; align-items: center; gap: 10px;">
                 <span>⚙️</span> Sinematica Studio Settings
               </h3>
-              <p style="color: var(--text-muted); font-size: 14px; margin-top: 4px;">Kelola Gemini API Key, model AI engine, konfigurasikan Google Flow Project ID, dan karakter seed template.</p>
+              <p style="color: var(--text-muted); font-size: 14px; margin-top: 4px;">Kelola Gemini, OpenAI, DeepSeek, dan xAI/Grok, pilih provider utama, serta atur auto-failover AI.</p>
             </div>
             <button type="button" class="btn-primary" id="saveSettingsTabBtn" style="padding: 12px 24px; font-size: 14px; font-weight: 800; border-radius: 12px; background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple)); border: none; color: #ffffff; cursor: pointer; box-shadow: 0 8px 24px rgba(168, 85, 247, 0.4);">
               💾 Simpan Pengaturan Studio
@@ -481,18 +542,77 @@
                 <div style="display: flex; flex-direction: column; gap: 14px;">
                   <div>
                     <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; display: block;">Model Gemini AI Engine:</label>
-                    <select id="settingGeminiModelTab" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600;">
-                      <option value="gemini-3.6-flash" selected>⚡ Gemini 3.6 Flash (Terbaru, Super Cepat & Rekomendasi Utama)</option>
-                      <option value="gemini-3.5-flash-lite">⚡ Gemini 3.5 Flash-Lite (Super Ringan & Cepat)</option>
-                      <option value="gemini-2.5-flash">⚡ Gemini 2.5 Flash</option>
-                      <option value="gemini-2.0-flash">⚡ Gemini 2.0 Flash</option>
-                      <option value="gemini-2.5-pro">🧠 Gemini 2.5 Pro (Khusus Akun Berbayar - Limit Strict)</option>
-                    </select>
+                    <input id="settingGeminiModelTab" list="geminiCurrentModels" value="gemini-3.6-flash" placeholder="Ketik ID model terbaru, mis. gemini-3.7-flash" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600; box-sizing: border-box;">
+                    <datalist id="geminiCurrentModels">
+                      <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                      <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                      <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option>
+                    </datalist>
+                    <small style="color: var(--text-muted); font-size: 11px;">ID model dapat diketik manual untuk model baru yang sudah tersedia di akun Anda.</small>
                   </div>
 
                   <button type="button" class="btn-secondary" id="testGeminiKeyTabBtn" style="height: 44px; font-size: 13px; font-weight: 700; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer;">
                     🧪 Uji Validitas API Keys
                   </button>
+                  <div class="provider-test-result" id="testGeminiKeyResult"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section 1b: Multi-provider text AI -->
+            <div style="background: rgba(8, 12, 24, 0.5); padding: 22px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.08);">
+              <h4 style="font-size: 16px; font-weight: 800; color: #c084fc; margin: 0 0 14px 0;">🔀 Provider AI Teks & Auto-Failover</h4>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px;">
+                <div style="grid-column: 1 / -1;">
+                  <label style="font-size: 13px; font-weight: 800; color: #fff; display: block; margin-bottom: 10px;">⭐ Pilih Provider Utama</label>
+                  <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    <label class="provider-default-choice"><input type="radio" name="defaultTextProvider" value="gemini"> Gemini <span class="provider-main-badge" data-provider-badge="gemini">UTAMA</span></label>
+                    <label class="provider-default-choice"><input type="radio" name="defaultTextProvider" value="openai"> OpenAI <span class="provider-main-badge" data-provider-badge="openai">UTAMA</span></label>
+                    <label class="provider-default-choice"><input type="radio" name="defaultTextProvider" value="deepseek"> DeepSeek <span class="provider-main-badge" data-provider-badge="deepseek">UTAMA</span></label>
+                    <label class="provider-default-choice"><input type="radio" name="defaultTextProvider" value="xai"> xAI/Grok <span class="provider-main-badge" data-provider-badge="xai">UTAMA</span></label>
+                  </div>
+                  <small style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 8px;">Provider bertanda UTAMA dicoba pertama. Jika gagal/kuota habis, sistem otomatis berpindah.</small>
+                </div>
+                <div>
+                  <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); display: block; margin-bottom: 6px;">Model OpenAI</label>
+                  <input id="settingOpenAIModelTab" value="gpt-4.1-mini" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255,255,255,.15); color: #fff; box-sizing: border-box;" />
+                </div>
+                <div>
+                  <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); display: block; margin-bottom: 6px;">Model DeepSeek</label>
+                  <input id="settingDeepSeekModelTab" value="deepseek-chat" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255,255,255,.15); color: #fff; box-sizing: border-box;" />
+                </div>
+                <div>
+                  <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); display: block; margin-bottom: 6px;">Model xAI/Grok</label>
+                  <input id="settingXAIModelTab" list="xaiCurrentModels" value="grok-4.3" placeholder="grok-4.3" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255,255,255,.15); color: #fff; box-sizing: border-box;" />
+                  <datalist id="xaiCurrentModels">
+                    <option value="grok-4.3">Grok 4.3</option>
+                    <option value="grok-4.5">Grok 4.5</option>
+                    <option value="grok-4.20">Grok 4.20</option>
+                    <option value="grok-4.20-reasoning">Grok 4.20 Reasoning</option>
+                    <option value="grok-4.20-non-reasoning">Grok 4.20 Non-Reasoning</option>
+                  </datalist>
+                </div>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; margin-top: 18px;">
+                <div>
+                  <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); display: block; margin-bottom: 6px;">OpenAI API Keys (1 per baris)</label>
+                  <textarea id="settingOpenAIKeyTab" rows="4" placeholder="sk-proj-..." style="width: 100%; font-family: monospace; color: #86efac; background: rgba(4,7,16,.8); border: 1px solid rgba(134,239,172,.3); border-radius: 10px; padding: 12px; box-sizing: border-box;"></textarea>
+                  <button type="button" class="btn-secondary provider-test-btn" id="testOpenAIKeyTabBtn">🧪 Uji Koneksi OpenAI</button>
+                  <div class="provider-test-result" id="testOpenAIKeyResult"></div>
+                </div>
+                <div>
+                  <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); display: block; margin-bottom: 6px;">DeepSeek API Keys (1 per baris)</label>
+                  <textarea id="settingDeepSeekKeyTab" rows="4" placeholder="sk-..." style="width: 100%; font-family: monospace; color: #93c5fd; background: rgba(4,7,16,.8); border: 1px solid rgba(147,197,253,.3); border-radius: 10px; padding: 12px; box-sizing: border-box;"></textarea>
+                  <button type="button" class="btn-secondary provider-test-btn" id="testDeepSeekKeyTabBtn">🧪 Uji Koneksi DeepSeek</button>
+                  <div class="provider-test-result" id="testDeepSeekKeyResult"></div>
+                </div>
+                <div>
+                  <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); display: block; margin-bottom: 6px;">xAI API Keys (1 per baris)</label>
+                  <textarea id="settingXAIKeyTab" rows="4" placeholder="xai-..." style="width: 100%; font-family: monospace; color: #fbbf24; background: rgba(4,7,16,.8); border: 1px solid rgba(251,191,36,.3); border-radius: 10px; padding: 12px; box-sizing: border-box;"></textarea>
+                  <label style="font-size: 12px; font-weight: 700; color: var(--text-secondary); display: block; margin: 10px 0 6px;">xAI Base URL</label>
+                  <input id="settingXAIBaseUrlTab" value="https://api.x.ai/v1" placeholder="https://api.x.ai/v1" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4,7,16,.8); border: 1px solid rgba(251,191,36,.3); color: #fff; box-sizing: border-box;" />
+                  <button type="button" class="btn-secondary provider-test-btn" id="testXAIKeyTabBtn">🧪 Uji Koneksi xAI/Grok</button>
+                  <div class="provider-test-result" id="testXAIKeyResult"></div>
                 </div>
               </div>
             </div>
@@ -533,8 +653,60 @@
           </div>
         </div>
       </section>
+
+      <!-- TAB 6: Actors / Casting Karakter -->
+      <section class="tab-page" id="tab-actors" style="max-width: 1200px; margin: 0 auto; width: 100%;">
+        <div class="card" style="padding: 32px; background: linear-gradient(145deg, rgba(12, 18, 36, 0.85), rgba(20, 29, 54, 0.75)); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 20px; backdrop-filter: blur(24px); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);">
+          <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 18px;">
+            <div>
+              <h3 style="font-family: var(--font-heading); font-size: 22px; color: #ffffff; margin: 0; font-weight: 800; display: flex; align-items: center; gap: 10px;">
+                <span>🎭</span> Casting Karakter (Actor Registry)
+              </h3>
+              <p style="color: var(--text-secondary); margin: 6px 0 0 0; font-size: 14px; font-weight: 500;">
+                Daftarkan wajah dan identitas aktor untuk digunakan secara konsisten di berbagai film.
+              </p>
+            </div>
+            <button class="btn-primary" onclick="document.getElementById('addActorModal').classList.add('active')" style="padding: 12px 20px; font-size: 14px; border-radius: 12px;">+ Tambah Aktor</button>
+          </div>
+
+          <div id="actorsGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px;">
+            <!-- Actors will be rendered here by JS -->
+          </div>
+        </div>
+      </section>
     </main>
   </div>
+    
+    <!-- Add Actor Modal -->
+    <div class="modal-overlay" id="addActorModal">
+      <div class="modal-content" style="max-width: 500px; background: rgba(20, 29, 54, 0.95);">
+        <div class="modal-header">
+          <h3>Tambah Aktor Baru</h3>
+          <button class="modal-close" onclick="document.getElementById('addActorModal').classList.remove('active')">×</button>
+        </div>
+        <div class="modal-body">
+          <form id="addActorForm" class="modern-form" style="display: grid; gap: 16px;">
+            <div class="form-group">
+              <label style="color: #fff; font-size: 14px; margin-bottom: 6px; display: block;">Nama Aktor</label>
+              <input type="text" id="actorName" required style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff;">
+            </div>
+            <div class="form-group">
+              <label style="color: #fff; font-size: 14px; margin-bottom: 6px; display: block;">Foto Wajah (Close-up)</label>
+              <input type="file" id="actorImage" accept="image/*" required style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff;">
+            </div>
+            <div class="form-group">
+              <label style="color: #fff; font-size: 14px; margin-bottom: 6px; display: block;">Deskripsi Fisik</label>
+              <textarea id="actorDesc" rows="3" placeholder="Contoh: Pria berumur 30 tahun, rambut pendek hitam, berkacamata." required style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; resize: vertical;"></textarea>
+            </div>
+            <div class="form-group">
+              <label style="color: #fff; font-size: 14px; margin-bottom: 6px; display: block;">Seed ID (Opsional)</label>
+              <input type="number" id="actorSeed" placeholder="Biarkan kosong untuk generate acak" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff;">
+            </div>
+            <button type="submit" class="btn-primary" style="padding: 14px; font-size: 15px; border-radius: 12px; margin-top: 10px;">Simpan Aktor</button>
+          </form>
+        </div>
+      </div>
+    </div>
 
   <!-- Settings Modal Glass -->
   <div class="modal-overlay" id="settingsModal">
@@ -687,6 +859,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=1.3.6"></script>
+  <script src="app.js?v=1.3.14"></script>
 </body>
 </html>

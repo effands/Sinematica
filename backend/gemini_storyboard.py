@@ -11,6 +11,7 @@ import google.generativeai as genai
 from PIL import Image
 
 from . import settings
+from .text_generation import generate_text
 
 log = logging.getLogger("sinematica.storyboard")
 
@@ -26,6 +27,11 @@ ADULT_ACTION_RULES = """ATURAN KEPADATAN AKSI (WAJIB — INI YANG MEMBUAT CERITA
    menjadi latar sambil tokoh melakukan aksi dramatis yang sesungguhnya.
 3. **Mulai dari tengah aksi (start late, end early).** Buang basa-basi pembuka. Adegan dimulai tepat saat
    konflik sudah berjalan, dan dipotong tepat setelah titik baliknya — jangan menunggu tokoh datang lalu duduk.
+3a. **Khusus adegan 10 detik, WAJIB tiga beat bertimestamp di dalam `prompt_for_flow`:** `0-3 seconds`
+   aksi/konflik langsung dimulai; `3-7 seconds` ada balasan atau counter-action; `7-10 seconds` ada reveal,
+   keputusan, benturan, atau reaksi tajam yang mengubah situasi. Tidak boleh ada slow motion, tatapan diam,
+   pose beku, jalan kosong, atau jeda tanpa aksi. Jika ada dialog, wajib minimal DUA giliran bicara pendek
+   yang dipisahkan reaksi fisik/counter-action—bukan satu kalimat yang dipanjangkan selama sepuluh detik.
 4. **Adegan pertama WAJIB langsung menyodorkan konflik atau pertanyaan besar** dalam 2 detik pertama.
    DILARANG membuka film dengan establishing shot kota, gedung, atau tokoh berjalan tanpa masalah.
 5. **Maksimal SATU establishing shot** di seluruh film, itu pun wajib memuat aksi dramatis di dalamnya.
@@ -76,14 +82,6 @@ def sanitize_prompt_for_policy(prompt_for_flow: str, rejection_reason: str = "",
     swaps out whatever tends to trip Flow's policy filters. Returns the rewritten English
     prompt, or None when no model could produce one.
     """
-    api_keys = settings.get_gemini_api_keys()
-    cfg = settings.get_settings()
-    model_name = cfg.get("gemini_model") or "gemini-3.6-flash"
-    models_to_try = []
-    for m in [model_name, "gemini-3.6-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
-        if m and m not in models_to_try:
-            models_to_try.append(m)
-
     prompt = f"""
 Anda adalah Script Doctor spesialis lolos moderasi konten Google Flow (AI video generator).
 
@@ -100,8 +98,8 @@ TUGAS ANDA:
 Tulis ULANG prompt tersebut dalam Bahasa Inggris agar LOLOS filter, dengan syarat mutlak:
 1. PERTAHANKAN: seluruh nama karakter beserta Seed ID-nya, sudut & gerakan kamera, jenis lensa,
    color grading, tata cahaya, lokasi umum, dan inti dramatis adegan.
-2. PERTAHANKAN dialog Bahasa Indonesia yang dikutip (jika ada) — boleh diperhalus kalimatnya,
-   tetapi TETAP dalam Bahasa Indonesia, jangan diterjemahkan ke Inggris.
+2. PERTAHANKAN dialog bahasa asli/lokal yang dikutip (jika ada) — boleh diperhalus kalimatnya,
+   tetapi TETAP dalam bahasa tersebut, jangan diterjemahkan ke Inggris.
 3. GANTI hanya elemen yang melanggar aturan di atas dengan padanan fiktif/netral.
 4. Jangan menambah adegan baru, jangan mengubah jumlah karakter.
 
@@ -112,22 +110,15 @@ OUTPUT WAJIB FORMAT JSON VALID (tanpa teks lain di luar JSON):
 }}
 """
 
-    for key in api_keys:
-        try:
-            genai.configure(api_key=key)
-        except Exception:
-            continue
-        for m in models_to_try:
-            try:
-                res = genai.GenerativeModel(m).generate_content(prompt)
-                parsed = json.loads(_extract_json_text(res.text))
-                revised = (parsed.get("revised_prompt") or "").strip()
-                if revised:
-                    log.info("Prompt adegan berhasil ditulis ulang agar lolos filter (%s). Perubahan: %s",
-                             m, parsed.get("changes", "-"))
-                    return revised
-            except Exception as ex:
-                log.warning("Sanitasi prompt via model %s gagal: %s", m, ex)
+    try:
+        result = generate_text(prompt, json_output=True)
+        parsed = json.loads(_extract_json_text(result.text))
+        revised = (parsed.get("revised_prompt") or "").strip()
+        if revised:
+            log.info("Prompt adegan berhasil ditulis ulang via %s (%s).", result.provider, result.model)
+            return revised
+    except Exception as ex:
+        log.warning("Sanitasi prompt via provider AI gagal: %s", ex)
 
     web_txt = _call_web2api(prompt)
     if web_txt:
@@ -245,25 +236,13 @@ ATURAN WAJIB REALISME LOKAL / TARGET NEGARA: "{country}"
 3. **Lingkungan & Set Lokasi**: Latar tempat (rumah, jalanan, kantor, kendaraan, signage, interior) WAJIB terlihat autentik seperti kondisi nyata di "{country}" — arsitektur, dekorasi, dan detail lingkungan lokal, bukan skyline/interior ala Amerika/Eropa generik.
 4. **Nama Karakter**: Gunakan nama-nama yang lazim dan natural dipakai di "{country}", bukan nama Barat (contoh: hindari "Julian Mercer", "Elena Rostova" — gunakan nama yang umum di "{country}").
 5. **Realita Sosial "Merakyat"**: Premis, konflik, dan detail kehidupan sehari-hari (makanan, transportasi, kebiasaan, dialog) WAJIB terasa dekat dengan realita masyarakat "{country}" sehari-hari, bukan fantasi hidup mewah generik ala Hollywood yang tidak membumi.
-6. Setiap `prompt_for_flow` WAJIB tetap menyisipkan deskripsi fisik/etnis & wardrobe lokal ini secara eksplisit dalam Bahasa Inggris (misal: "Southeast Asian Indonesian woman, warm tan skin tone, wearing modest modern batik-inspired blouse...").
+6. Setiap `prompt_for_flow` WAJIB tetap menyisipkan deskripsi fisik/etnis & wardrobe lokal ini secara eksplisit dalam Bahasa Inggris (sesuaikan dengan etnis mayoritas di {country}, misal jika negara target adalah Jepang: "East Asian Japanese woman, fair skin tone, wearing minimalist modern office wear...").
 7. **Bahasa Suara/Dialog Video**: Kalau karakter berbicara di adegan, dialognya WAJIB diucapkan dalam bahasa asli "{country}" (bukan Inggris) — kutip langsung dialognya di dalam `prompt_for_flow` sesuai format yang dijelaskan di aturan Dynamic Multi-Angle Camera. Jangan biarkan Google Flow menghasilkan suara berbahasa Inggris untuk konten yang menyasar penonton "{country}".
 """
 
 
 def auto_suggest_details(theme: str = "", microdrama_mode: bool = False, target_country: str = "", dracin_theme: str = "") -> Dict[str, Any]:
     """Auto-suggest character matrix, creative cinematic premise, and seeds using Gemini AI."""
-    api_keys = settings.get_gemini_api_keys()
-    if not api_keys:
-        raise ValueError("GEMINI_API_KEY belum diisi!")
-
-    cfg = settings.get_settings()
-    model_name = cfg.get("gemini_model") or "gemini-3.6-flash"
-    models_to_try = [model_name, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
-    seen_models = []
-    for m in models_to_try:
-        if m and m not in seen_models:
-            seen_models.append(m)
-
     seed_main = random.randint(100000, 999999)
     seed_2 = random.randint(100000, 999999)
     seed_3 = random.randint(100000, 999999)
@@ -331,27 +310,14 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa teks tambahan di luar JSON):
 }}
 """
 
-    last_err = None
-    for k_idx, key in enumerate(api_keys, start=1):
-        genai.configure(api_key=key)
-        for m in seen_models:
-            try:
-                model = genai.GenerativeModel(m)
-                res = model.generate_content(prompt)
-                txt = res.text.strip()
-                if "```json" in txt:
-                    txt = txt.split("```json")[1].split("```")[0].strip()
-                elif "```" in txt:
-                    txt = txt.split("```")[1].split("```")[0].strip()
-                parsed = json.loads(txt)
-                if parsed.get("suggested_premise"):
-                    log.info("Auto-suggest Gemini berhasil disusun dengan model %s!", m)
-                    return parsed
-            except Exception as ex:
-                last_err = ex
-                if "429" in str(ex) or "quota" in str(ex).lower():
-                    time.sleep(1.5)
-                log.warning("Auto-suggest model %s gagal: %s", m, ex)
+    try:
+        result = generate_text(prompt, json_output=True)
+        parsed = json.loads(_extract_json_text(result.text))
+        if parsed.get("suggested_premise"):
+            parsed["generated_via"] = result.provider
+            return parsed
+    except Exception as ex:
+        log.warning("Auto-suggest provider AI gagal: %s", ex)
 
     # Every API key is spent — try the local web2api bridge before the canned concept.
     web_txt = _call_web2api(prompt)
@@ -380,14 +346,6 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa teks tambahan di luar JSON):
 
 def generate_youtube_metadata(film_title: str, premise: str) -> Dict[str, Any]:
     """Generate 3 SEO titles (90-100 chars), 3-paragraph description with CTA & hashtags, thumbnail prompt, and 10 long-tail tags."""
-    api_key = settings.get_gemini_api_key()
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY belum diisi!")
-
-    genai.configure(api_key=api_key)
-    cfg = settings.get_settings()
-    model_name = cfg.get("gemini_model") or "gemini-3.6-flash"
-
     prompt = f"""
 Anda adalah YouTube SEO Specialist & Content Strategist Terkemuka.
 Berdasarkan judul film "{film_title}" dan premis cerita: "{premise}", rancangkan kit publikasi YouTube lengkap:
@@ -417,16 +375,12 @@ OUTPUT WAJIB FORMAT JSON VALID:
 }}
 """
     try:
-        model = genai.GenerativeModel(model_name)
-        res = model.generate_content(prompt)
-        txt = res.text.strip()
-        if "```json" in txt:
-            txt = txt.split("```json")[1].split("```")[0].strip()
-        elif "```" in txt:
-            txt = txt.split("```")[1].split("```")[0].strip()
-        return json.loads(txt)
+        result = generate_text(prompt, json_output=True)
+        parsed = json.loads(_extract_json_text(result.text))
+        parsed["generated_via"] = result.provider
+        return parsed
     except Exception as ex:
-        log.warning("Gagal generate metadata YouTube dari Gemini: %s", ex)
+        log.warning("Gagal generate metadata YouTube dari provider AI: %s", ex)
         web_txt = _call_web2api(prompt)
         if web_txt:
             try:
@@ -464,14 +418,11 @@ def generate_storyboard(
     fixed_scene_duration: Optional[int] = None,
     children_mode: bool = False
 ) -> Dict[str, Any]:
-    """Generate multi-scene structured storyboard JSON using Gemini API."""
-    api_keys = settings.get_gemini_api_keys()
-    if not api_keys:
-        raise ValueError("GEMINI_API_KEY belum diisi di Pengaturan!")
+    """Generate multi-scene structured storyboard JSON using the configured AI providers."""
 
     image_paths = image_paths or []
+    scene_count = max(1, min(60, int(scene_count or 4)))
     cfg = settings.get_settings()
-    model_name = cfg.get("gemini_model") or "gemini-3.6-flash"
     seed = character_seed or random.randint(100000, 999999)
 
     # Load reference images for Gemini Vision analysis
@@ -495,14 +446,12 @@ ATURAN SPECIAL MICRODRAMA PRODUCTION AI (MASTER SYSTEM PROMPT PDF):
 5. **Tema Dracin**: {dracin_theme.strip() or f"Pilih salah satu tema dracin populer paling relate berikut: {', '.join(DRACIN_THEME_POOL)}"}
 """ if microdrama_mode else ""
 
-    if ugc_mode:
-        scene_count = random.choice([3, 4])
-
-    ugc_rules = """
-ATURAN TEMPLATE PROMPT STORYBOARD VIDEO UGC AESTHETIC SANGAT MAHAL (STRICTLY 3 S/D 4 SCENE):
-1. **Jumlah Adegan Optimal (HANYA 3 s/d 4 Scene)**:
-   - JANGAN gunakan 5 adegan karena pergerakan dan perpindahan kameranya terlalu rapat dan tampak kurang bagus. Batasi secara ketat HANYA 3 atau 4 adegan saja agar alur cerita dan perpindahan sudut kamera terasa sangat halus, mewah, dan sinematik.
-   - Bagikan stempel waktu ("time_range") secara proporsional sesuai jumlah adegan (contoh 3 adegan: "0:00–0:03", "0:03–0:07", "0:07–0:10"; contoh 4 adegan: "0:00–0:02", "0:02–0:05", "0:05–0:07", "0:07–0:10").
+    ugc_rules = f"""
+ATURAN TEMPLATE PROMPT STORYBOARD VIDEO UGC AESTHETIC SANGAT MAHAL:
+1. **Jumlah Adegan Mengikuti Input Pengguna (WAJIB TEPAT {scene_count} Scene)**:
+   - Buat persis {scene_count} objek di array `scenes`; dilarang mengurangi menjadi 3–4 scene.
+   - Setiap scene adalah satu video tersendiri dengan durasi yang dipilih pengguna. Bagikan alur cerita
+     secara mulus ke seluruh {scene_count} scene tanpa mempercepat atau melompati perkembangan cerita.
 
 2. **Kesan Sinematik SANGAT MAHAL & EKSKLUSIF (High-End Luxury Vibe)**:
    - Master Style Wajib: `cinematic UGC aesthetic, clean infographic storyboard, TikTok/Reels format, premium lifestyle photography, realistic lighting, smooth scene transition, consistent character face, ultra detailed, soft depth of field, modern luxury atmosphere, camera iPhone 16 Pro cinematic quality`.
@@ -513,7 +462,7 @@ ATURAN TEMPLATE PROMPT STORYBOARD VIDEO UGC AESTHETIC SANGAT MAHAL (STRICTLY 3 S
    - Untuk tema lain, gunakan add-on aesthetic yang 100% RELEVAN (misal: `corporate executive luxury, sleek architectural interior, modern professional mood, sharp 8k detail` untuk Working Girl; `scenic vacation aesthetic, vibrant golden hour, luxury travel vibe` untuk Travel Vlog; `modest elegant aesthetic, warm ambient lighting, peaceful spiritual atmosphere` untuk Muslimah Lifestyle).
    - Pilihan Add-On harus selalu serasi dengan konteks cerita agar kesan visualnya tetap terasa MAHAL dan natural.
 
-4. **Text Overlay Aesthetic**: Sertakan field "text_overlay" (Bahasa Indonesia pendek ala TikTok/Reels caption, max 6 kata) untuk setiap adegan.
+4. **Text Overlay Aesthetic**: Sertakan field "text_overlay" (Bahasa {target_lang} pendek ala TikTok/Reels caption, max 6 kata) untuk setiap adegan.
 5. **Karakter Utama**: karakter utama wanita/pria dengan rupa & seed konsisten, outfit sesuai aktivitas, ekspresi natural candid, luxury lifestyle aesthetic.
 """ if ugc_mode else ""
 
@@ -528,6 +477,7 @@ anamorphic lens, teal-and-orange grading, human child characters.
 """ if children_mode else ""
     action_density_rules = CHILDREN_ACTION_RULES if children_mode else ADULT_ACTION_RULES
     local_realism_rules = "" if children_mode else build_local_realism_rules(target_country)
+    target_lang = "Indonesia"
 
     if fixed_scene_duration:
         # User asked for one fixed clip length, so the film length stays predictable:
@@ -539,6 +489,8 @@ anamorphic lens, teal-and-orange grading, human child characters.
 2. Total durasi film = {scene_count} adegan x {fixed} detik = **{scene_count * fixed} detik**.
 3. Isi setiap adegan supaya benar-benar PENUH selama {fixed} detik: rancang aksi bertingkat
    (aksi awal -> perkembangan -> titik balik) agar tidak ada waktu kosong atau gerakan mengambang.
+   Untuk durasi 10 detik tulis eksplisit: 0-3 detik aksi pertama, 3-7 detik counter-action/dialog balasan,
+   7-10 detik reveal/keputusan/impact. Jika ada percakapan, wajib sedikitnya dua giliran bicara pendek.
 4. Panjang narasi/dialog menyesuaikan {fixed} detik (patokan: sekitar {int(fixed * 2.8)}-{int(fixed * 3.2)} kata).
 5. Awali `prompt_for_flow` dengan frasa: A {fixed}-second ...
 """
@@ -570,7 +522,7 @@ anamorphic lens, teal-and-orange grading, human child characters.
     elegant_rules = """
 6. **Premium "Elegant & Expensive" Production Value (Wajib di Setiap Scene)**: Ini yang membedakan hasil murahan vs High-End Studio Look. Setiap `prompt_for_flow` WAJIB menyisipkan minimal 3 elemen berikut secara eksplisit:
    - **Lensa Sinema**: sebutkan jenis lensa spesifik (misal `35mm anamorphic lens`, `85mm portrait lens, shallow depth of field`, `24mm wide-angle establishing lens`) — jangan generik.
-   - **Color Grading Premium**: sebutkan gaya grading (misal `teal-and-orange cinematic color grade`, `desaturated Nordic noir palette`, `warm Kodak Vision3 film emulation`, `high-contrast chiaroscuro`).
+   - **Color Grading Premium**: sebutkan gaya grading (misal `teal-and-orange cinematic color grade`, `desaturated Nordic noir palette`, `warm cinematic color grade`, `high-contrast chiaroscuro`).
    - **Production & Costume Design Detail**: sebutkan tekstur kain, material, detail set/prop mewah (misal `heavy embroidered silk fabric catching light`, `polished marble floor reflections`, `aged brass ornamental details`) — bukan cuma "baju bagus".
    - **Lighting Setup Sinematik Bernama**: gunakan istilah tata cahaya profesional (misal `Rembrandt lighting`, `three-point studio lighting`, `volumetric god-rays`, `soft rim-light backlighting silhouette`).
    - Hindari kata generik murahan seperti "beautiful", "high quality", "detailed" tanpa spesifik teknis di atas.
@@ -596,7 +548,16 @@ ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
    - WAJIB gunakan sudut & gerakan kamera yang BERBEDA-BEDA untuk SETIAP adegan!
    - Rotasi bervariasi: `Wide Master Establishing Tracking Shot`, `Extreme Low-Angle Dynamic Hero Shot`, `Over-the-Shoulder (OTS) Medium Close-Up`, `High-Angle Birdseye Drone View`, `Dutch-Angle High Action Tracking`, `Slow Push-in Tight Close-Up`.
    - Di dalam `prompt_for_flow` SETIAP adegan, WAJIB secara eksplisit diawali dengan klausa tipe kamera sinematik tersebut! (contoh: "A 10-second Over-The-Shoulder Close-Up Shot...", "A 10-second Low Angle Dynamic Tracking Shot...").
-3. **Seamless Visual Continuation**: Adegan $N+1$ melanjutkan posisi fisik tokoh dari adegan $N$ namun dengan SUDUT KAMERA BERBEDA (Multi-Angle Cut).
+3. **Seamless Visual Continuation Antarvideo (Wajib)**: Adegan $N+1$ melanjutkan posisi fisik, properti,
+   pakaian, waktu, dan lokasi logis dari adegan $N$. Susun lokasi dalam blok 2-4 adegan berurutan; jangan
+   memindahkan tokoh bolak-balik ke lokasi jauh pada setiap adegan. Jika cerita memang harus pindah lokasi,
+   adegan sebelum/sesudahnya WAJIB menunjukkan jembatan visual yang masuk akal (keluar pintu, masuk kendaraan,
+   tiba di lobi/gerbang), bukan teleportasi atau lompatan waktu mendadak.
+3a. **Empat Shot Dalam Satu Video 10 Detik (Default Semua Niche)**: Setiap `prompt_for_flow` berdurasi 10 detik
+   harus berisi 4 shot/mini-beat pada penanda 0-2.5s, 2.5-5s, 5-7.5s, dan 7.5-10s. Keempatnya adalah sudut
+   kamera berbeda dari SATU kejadian berantai di SATU lokasi dan SATU rentang waktu kontinu—bukan empat
+   adegan cerita yang berpindah ruangan/kota/waktu. Aturan ini berlaku untuk drama, cerita anak, komedi,
+   romansa, horor aman, aksi aman, edukasi, UGC, dan seluruh kategori lain.
 4. **Flow Prompt Professional**: Setiap `prompt_for_flow` ditulis dalam Bahasa Inggris yang murni visual, mendetail (Karakter & Seed IDs + Multi-Angle Camera Shot + Aksi Tokoh + Studio 8K Lighting).
 4a. **AKSI HARUS TERJADI DI DALAM KLIP (Wajib)**: `prompt_for_flow` WAJIB mendeskripsikan gerakan yang benar-benar
    berlangsung selama klip, bukan pose diam atau tablo. Tuliskan progresi jelas memakai penanda urutan waktu
@@ -604,9 +565,9 @@ ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
    Contoh BENAR: "begins gripping the envelope, then slams it onto the table, and finally turns away in tears."
    Contoh SALAH: "stands in the ballroom looking sad" (statis, tidak ada perubahan — DILARANG).
    Sertakan kata kerja gerak eksplisit (slams, snatches, shoves, storms out, collapses, spins around, lunges). Jika UGC Mode aktif, akhiri prompt dengan Aesthetic Add-On yang 100% cocok dengan tema (Girly/Pastel untuk Beauty, Corporate Luxury untuk Working Girl, Travel Vacation untuk Travel, dll.).
-4b. **BAHASA AUDIO/DIALOG VIDEO (WAJIB)**: Jika ada karakter yang berbicara/bersuara di adegan tersebut, WAJIB sisipkan dialog ASLI dalam Bahasa Indonesia di dalam tanda kutip langsung di tengah `prompt_for_flow`. Format wajib: `speaking angrily in natural Indonesian: "Kamu pikir aku takut sama kamu?!"`.
+4b. **BAHASA AUDIO/DIALOG VIDEO (WAJIB)**: Jika ada karakter yang berbicara/bersuara di adegan tersebut, WAJIB sisipkan dialog ASLI dalam bahasa {target_lang} di dalam tanda kutip langsung di tengah `prompt_for_flow`. Format wajib: `speaking angrily in natural {target_lang}: "..."`.
 5. **Time Range Timestamp Wajib**: Sertakan field "time_range" pada setiap scene (contoh: "0:00–0:02", "0:02–0:04", "0:04–0:06", "0:06–0:08", "0:08–0:10" atau sesuai durasi).
-6. **Voiceover Narration**: Narasi dubbing Bahasa Indonesia & Bahasa Inggris berdurasi sesuai adegan.
+6. **Voiceover Narration**: Narasi dubbing bahasa {target_lang} & bahasa Inggris berdurasi sesuai adegan.
 {elegant_rules}
 
 PARAMETIK REQUEST (WAJIB 100% PATUH & RELEVAN):
@@ -646,14 +607,14 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "scene_number": 1,
       "time_range": "0:00–0:02",
       "title": "Judul Adegan 1 (misal Opening Activity)",
-      "action_summary": "Ringkasan aksi adegan dalam Bahasa Indonesia, panjangnya proporsional dengan durasi adegan",
+      "action_summary": "Ringkasan aksi adegan dalam bahasa {target_lang}, panjangnya proporsional dengan durasi adegan",
       "shot_type": "Framing baku, pilih SATU: Extreme Wide Shot / Wide Shot / Medium Shot / Medium Close Up / Close Up / Extreme Close Up / Over-The-Shoulder / Point of View",
       "characters_in_scene": [1],
       "prompt_for_flow": "Detailed English video prompt for Google Flow ending with Girly Aesthetic Add-On: pastel aesthetic, luxury lifestyle mood, cinematic bokeh lights, realistic skin texture, soft shadows, glossy lighting, premium social media content, smooth motion blur, high fashion composition, realistic environment details",
-      "text_overlay": "WAJIB DIISI di semua mode: teks overlay pendek Bahasa Indonesia (maks 6 kata) yang muncul di layar untuk adegan ini",
+      "text_overlay": "WAJIB DIISI di semua mode: teks overlay pendek bahasa {target_lang} (maks 6 kata) yang muncul di layar untuk adegan ini",
       "camera_movement": "Pergerakan kamera saja, terpisah dari shot_type (misal: Slow push-in, Handheld tracking, Static locked-off)",
       "lighting_mood": "Mood pencahayaan (misal: Soft natural lighting, cinematic bokeh lights)",
-      "narration_id": "Teks Narasi Voiceover Bahasa Indonesia, jumlah katanya sesuai patokan durasi",
+      "narration_id": "Teks Narasi Voiceover bahasa {target_lang}, jumlah katanya sesuai patokan durasi",
       "narration_en": "English Voiceover Narration Text",
       "duration": 4
     }}
@@ -664,42 +625,38 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
     user_contents = [system_prompt, f"Ide Cerita / Tema: {premise}"]
     user_contents.extend(pil_images)
 
-    models_to_try = [model_name, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
-    seen_models = []
-    for m in models_to_try:
-        if m and m not in seen_models:
-            seen_models.append(m)
-
     last_err = None
-
-    for k_idx, key in enumerate(api_keys, start=1):
-        genai.configure(api_key=key)
-        log.info("Mencoba Gemini API Key #%d...", k_idx)
-
-        for m in seen_models:
-            try:
-                model = genai.GenerativeModel(m)
-                response = model.generate_content(user_contents)
-                text_resp = response.text.strip()
-
-                text_resp = _extract_json_text(text_resp)
-
-                storyboard = json.loads(text_resp)
-                storyboard["raw_response"] = text_resp
-                storyboard["character_seed"] = seed
-                storyboard["children_mode"] = children_mode
-                log.info("Storyboard Gemini berhasil dibuat (%d adegan, seed %d) menggunakan Key #%d (%s)!", len(storyboard.get("scenes", [])), seed, k_idx, m)
-                return storyboard
-
-            except Exception as ex:
-                last_err = ex
-                log.warning("Gemini Key #%d model %s gagal: %s", k_idx, m, ex)
+    try:
+        # Gemini receives reference images; OpenAI-compatible fallbacks retain the
+        # complete textual direction when their adapter drops local PIL objects.
+        result = generate_text(user_contents, json_output=True)
+        text_resp = _extract_json_text(result.text)
+        storyboard = json.loads(text_resp)
+        actual_scene_count = len(storyboard.get("scenes") or [])
+        if actual_scene_count != scene_count:
+            raise ValueError(
+                f"Provider menghasilkan {actual_scene_count} scene, seharusnya tepat {scene_count} scene."
+            )
+        storyboard["raw_response"] = text_resp
+        storyboard["character_seed"] = seed
+        storyboard["children_mode"] = children_mode
+        storyboard["generated_via"] = result.provider
+        storyboard["generated_model"] = result.model
+        return storyboard
+    except Exception as ex:
+        last_err = ex
+        log.warning("Semua provider cloud gagal membuat storyboard: %s", ex)
 
     # Every API key/model combination is spent — try the local web2api bridge before giving up.
     web_txt = _call_web2api("\n\n".join(str(c) for c in user_contents), dropped_images=len(pil_images))
     if web_txt:
         try:
             storyboard = json.loads(_extract_json_text(web_txt))
+            actual_scene_count = len(storyboard.get("scenes") or [])
+            if actual_scene_count != scene_count:
+                raise ValueError(
+                    f"Fallback menghasilkan {actual_scene_count} scene, seharusnya tepat {scene_count} scene."
+                )
             storyboard["raw_response"] = web_txt
             storyboard["character_seed"] = seed
             storyboard["children_mode"] = children_mode
@@ -710,22 +667,11 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
         except Exception as ex:
             log.warning("Fallback Web2API mengembalikan JSON storyboard tidak valid: %s", ex)
 
-    raise RuntimeError(f"Gagal generate storyboard dari seluruh Gemini API Keys: {last_err}")
+    raise RuntimeError(f"Gagal generate storyboard dari seluruh provider AI: {last_err}")
 
 
 def regenerate_single_scene(film_title: str, scene_number: int, scene_title: str, consistent_characters: str, genre_style: str) -> Dict[str, Any]:
-    """Regenerate prompt and action for a single specific scene using Gemini AI."""
-    api_keys = settings.get_gemini_api_keys()
-    if not api_keys:
-        raise ValueError("GEMINI_API_KEY belum diisi!")
-
-    cfg = settings.get_settings()
-    model_name = cfg.get("gemini_model") or "gemini-3.6-flash"
-    models_to_try = [model_name, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
-    seen_models = []
-    for m in models_to_try:
-        if m and m not in seen_models:
-            seen_models.append(m)
+    """Regenerate prompt and action for a single scene using configured providers."""
 
     prompt = f"""
 Anda adalah Sutradara Film AI Sinematik Kelas Dunia.
@@ -757,26 +703,15 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa teks lain di luar JSON):
 """
 
     last_err = None
-    for key in api_keys:
-        genai.configure(api_key=key)
-        for m in seen_models:
-            try:
-                model = genai.GenerativeModel(m)
-                res = model.generate_content(prompt)
-                txt = res.text.strip()
-                if "```json" in txt:
-                    txt = txt.split("```json")[1].split("```")[0].strip()
-                elif "```" in txt:
-                    txt = txt.split("```")[1].split("```")[0].strip()
-                parsed = json.loads(txt)
-                if parsed.get("prompt_for_flow"):
-                    log.info("Regenerate Scene %d berhasil disusun dengan model %s!", scene_number, m)
-                    return parsed
-            except Exception as ex:
-                last_err = ex
-                if "429" in str(ex) or "quota" in str(ex).lower():
-                    time.sleep(1.5)
-                log.warning("Regenerate scene model %s gagal: %s", m, ex)
+    try:
+        result = generate_text(prompt, json_output=True)
+        parsed = json.loads(_extract_json_text(result.text))
+        if parsed.get("prompt_for_flow"):
+            parsed["generated_via"] = result.provider
+            return parsed
+    except Exception as ex:
+        last_err = ex
+        log.warning("Regenerate scene via provider AI gagal: %s", ex)
 
     web_txt = _call_web2api(prompt)
     if web_txt:
@@ -789,3 +724,116 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa teks lain di luar JSON):
             log.warning("Fallback Web2API mengembalikan JSON adegan tidak valid: %s", ex)
 
     raise RuntimeError(f"Gagal regenerate adegan: {last_err}")
+
+
+def generate_music_video_storyboard(lyrics: str, audio_duration: float, scene_count: int, aspect_ratio: str, character_info: str, image_paths: List[str] = None) -> Dict[str, Any]:
+    """Generates a cinematic music video storyboard mapped precisely to audio duration and lyrics."""
+    model_name = settings.get_settings().get("gemini_model") or "gemini-3.6-flash"
+    models_to_try = [
+        model_name,
+        "gemini-3.6-flash",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash"
+    ]
+
+    seed = random.randint(100000, 999999)
+
+    prompt = f"""
+Anda adalah seorang Music Video Director profesional.
+Tugas Anda adalah merancang storyboard video musik yang memukau secara visual berdasarkan lirik atau tema musik.
+
+- Durasi Total Musik: {audio_duration} detik
+- Target Jumlah Adegan: {scene_count} (masing-masing adegan berdurasi ~10 detik)
+- Lirik Lagu ATAU Suasana Musik Instrumen:
+{lyrics}
+
+ATURAN UTAMA:
+1. Rancang alur cerita/visual yang dibagi ke dalam {scene_count} adegan secara merata.
+2. Jika input berupa lirik, masukkan potongan lirik ke dalam field `narration_id` untuk dijadikan subtitle. Jika input berupa instrumen musik/suasana, Anda BISA mengosongkan `narration_id` atau mengisinya dengan penceritaan narasi pendek.
+3. Rancang visual (prompt_for_flow) yang mencerminkan suasana, emosi, dan makna musik berdasarkan teks di atas.
+4. Aspect ratio: {aspect_ratio}.
+5. Jika ada tokoh manusia, pastikan karakternya konsisten menggunakan sistem Seed:
+   - Character Seed Utama: {seed}
+   - Karakter Info / Referensi Tambahan: {character_info}
+6. Gaya visual: cinematic music video, highly aesthetic, emotional grading, 8k resolution.
+7. SANGAT PENTING: Karakter TIDAK BOLEH bernyanyi, lip-sync, berbicara, atau menggerakkan bibir mengikuti lirik. Visual hanya berupa adegan dramatis/sinematik yang bisu. Karakter mengekspresikan makna lirik HANYA melalui ekspresi wajah, tatapan mata, bahasa tubuh, dan sinematografi. Jangan pernah memasukkan instruksi "singing", "lip-sync", atau "speaking" di dalam `prompt_for_flow`.
+
+OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
+{{
+  "film_title": "Music Video",
+  "genre_style": "Cinematic Music Video",
+  "art_direction": "Music Video Art Direction",
+  "character_seed": {seed},
+  "consistent_characters": "Deskripsi Karakter",
+  "characters": [
+    {{
+      "id": 1,
+      "name": "Nama Karakter Utama",
+      "seed": {seed},
+      "description": "Deskripsi visual karakter"
+    }}
+  ],
+  "scenes": [
+    {{
+      "scene_number": 1,
+      "time_range": "0:00-0:10",
+      "title": "Potongan Lirik/Suasana",
+      "action_summary": "Terjemahan/visualisasi dari lirik",
+      "shot_type": "Wide Shot / Close Up",
+      "characters_in_scene": [1],
+      "prompt_for_flow": "Detailed English video prompt for Google Flow... (wajib gunakan {seed})",
+      "text_overlay": "Lirik yang sedang dinyanyikan",
+      "camera_movement": "Gerakan kamera",
+      "lighting_mood": "Mood lighting",
+      "narration_id": "",
+      "narration_en": "",
+      "duration": 10
+    }}
+  ]
+}}
+
+HANYA KEMBALIKAN JSON VALID!
+"""
+
+    last_err = None
+    image_paths = image_paths or []
+    pil_images = []
+    for p in image_paths:
+        try:
+            if Path(p).exists():
+                pil_images.append(Image.open(p))
+        except Exception as ex:
+            log.warning("Gagal memuat gambar referensi MV %s: %s", p, ex)
+
+    last_err = None
+    try:
+        result = generate_text(pil_images + [prompt], json_output=True)
+        parsed = json.loads(_extract_json_text(result.text))
+        parsed["character_seed"] = seed
+        parsed["generated_via"] = result.provider
+        if "scenes" in parsed:
+            for scene in parsed["scenes"]:
+                scene["duration"] = 10.0
+                if "narration_id" not in scene:
+                    scene["narration_id"] = scene.get("action_summary", "")
+        return parsed
+    except Exception as ex:
+        last_err = ex
+        log.warning("Generate MV via provider AI gagal: %s", ex)
+
+    # fallback
+    web_txt = _call_web2api(prompt)
+    if web_txt:
+        try:
+            parsed = json.loads(_extract_json_text(web_txt))
+            parsed["character_seed"] = seed
+            if "scenes" in parsed:
+                for s in parsed["scenes"]:
+                    s["duration"] = 10.0
+                    if "narration_id" not in s:
+                        s["narration_id"] = s.get("action_summary", "")
+            return parsed
+        except Exception as ex:
+            log.warning("Fallback Web2API MV gagal: %s", ex)
+
+    raise RuntimeError(f"Gagal merancang Music Video Storyboard: {last_err}")

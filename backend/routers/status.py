@@ -5,6 +5,7 @@ import json
 import logging
 
 from ..bridge_manager import get_bridge, status_snapshot
+from engine.omniflash.bridge import is_routable_bridge_message
 
 router = APIRouter(tags=["Status & Fleet"])
 
@@ -40,7 +41,7 @@ async def get_fleet_credits():
         logged_in = inst.get("logged_in", False)
 
         if connected and logged_in:
-            c_val = "Unlimited (Kuota Melimpah)"
+            c_val = "Unlimited"
             try:
                 res = await bridge.api_request("/v1/credits", None, instance_id=iid, timeout=6)
                 if res.get("status") == 200:
@@ -136,6 +137,16 @@ async def test_image_probe():
     return {"accepted": accepted_shape, "results": results}
 
 
+import asyncio
+
+async def _ws_ping_loop(websocket: WebSocket):
+    try:
+        while True:
+            await asyncio.sleep(20)
+            await websocket.send_text(json.dumps({"type": "ping"}))
+    except Exception:
+        pass
+
 @router.websocket("/ws")
 @router.websocket("/ws/agent")
 @router.websocket("/api/ws")
@@ -145,6 +156,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
     instance_id = None
     log.info("Chrome Extension WebSocket connected!")
+    
+    ping_task = asyncio.create_task(_ws_ping_loop(websocket))
 
     try:
         while True:
@@ -169,7 +182,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if instance_id and msg.get("flow_key"):
                         bridge.record_instance_token(instance_id, msg["flow_key"])
 
-                elif msg_type == "api_response":
+                elif is_routable_bridge_message(msg_type):
                     bridge.handle_message(data_str, websocket, instance_id)
 
                 elif msg_type == "flow_ui_request":
@@ -186,6 +199,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as ex:
         log.error("WebSocket handler error (%s): %s", instance_id, ex)
     finally:
+        ping_task.cancel()
         log.info("Cleaning up WebSocket connection for instance: %s", instance_id or "unnamed")
         if hasattr(bridge, "remove_ws_reference"):
             bridge.remove_ws_reference(websocket)

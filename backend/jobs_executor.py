@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import urllib.request
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -12,6 +13,8 @@ import uuid
 from . import settings
 from .bridge_manager import get_bridge, ensure_ready
 from .film_stitcher import stitch_scenes
+from .media_download import resolve_exact_media_url, stream_download
+from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
 from .storyboard_image import fetch_image_bytes, generate_storyboard_sheet
 
 from omniflash.generators import upload_image, generate_video_i2v, poll_video_status
@@ -174,7 +177,7 @@ def resolve_scene_duration(scene: Dict[str, Any], fallback: int) -> int:
 
 
 def resolve_scene_characters(scene: Dict[str, Any], characters: List[Dict[str, Any]],
-                             available_ids: Dict[Any, str], limit: int = 3) -> List[Dict[str, Any]]:
+                             available_ids: Dict[Any, str], limit: int = 10) -> List[Dict[str, Any]]:
     """Work out which characters belong in this scene, accurately matching by ID or Name.
 
     Uses character tags, name matching in scene text, or falls back to including all available
@@ -300,6 +303,30 @@ def resolve_scene_characters(scene: Dict[str, Any], characters: List[Dict[str, A
     return matched_items[:limit]
 
 
+def build_video_reference_ids(character_ids: List[str], storyboard_media_id: Optional[str],
+                              policy_attempt: int = 0, limit: int = 10) -> List[str]:
+    """Keep identity sheets first; storyboard may only use an empty Flow slot."""
+    refs = list(dict.fromkeys(mid for mid in character_ids if mid))[:limit]
+    if not refs and storyboard_media_id:
+        return [storyboard_media_id]
+    if policy_attempt == 0 and storyboard_media_id and storyboard_media_id not in refs and len(refs) < limit:
+        refs.append(storyboard_media_id)
+    return refs
+
+
+def choose_instance_for_project(instances: List[Dict[str, Any]], project_id: Optional[str]) -> Optional[str]:
+    """Choose the connected Chrome identity that actually owns the requested Flow project."""
+    connected = [item for item in instances if item.get("connected")]
+    if not connected:
+        return None
+    if project_id:
+        exact = next((item for item in connected if item.get("project_id") == project_id), None)
+        if exact:
+            return exact.get("instance_id")
+    with_project = next((item for item in connected if item.get("project_id")), None)
+    return (with_project or connected[0]).get("instance_id")
+
+
 def build_sheet_manifest(sheet_chars: List[Dict[str, Any]]) -> str:
     """Spell out which attached sheet belongs to which character."""
     if not sheet_chars:
@@ -344,10 +371,45 @@ def build_composition_addendum(scene: Dict[str, Any]) -> str:
     return " ".join(bits)
 
 
-def download_file(url: str, dest_path: Path):
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=60) as resp, open(dest_path, "wb") as out:
-        out.write(resp.read())
+async def download_file(
+    bridge, url: str, dest_path: Path, instance_id: Optional[str] = None,
+    media_id: Optional[str] = None, project_id: Optional[str] = None,
+):
+    if url.startswith("data:"):
+        import base64
+        # format is data:video/mp4;base64,.....
+        header, encoded = url.split(",", 1)
+        video_bytes = base64.b64decode(encoded)
+        with open(dest_path, "wb") as out:
+            out.write(video_bytes)
+    else:
+        download_url = url
+        if media_id and hasattr(bridge, "trpc_request"):
+            try:
+                exact_url = await resolve_exact_media_url(
+                    bridge, media_id.rsplit("/", 1)[-1], project_id or "", instance_id
+                )
+                if exact_url:
+                    download_url = exact_url
+            except Exception as ex:
+                log.warning("Signed URL exact tidak dapat diambil; memakai URL polling: %s", ex)
+        if url.startswith("flow_media_id:"):
+            clean_id = url.split(":", 1)[1]
+            if download_url == url:
+                download_url = f"https://aisandbox-pa.googleapis.com/v1/media/{clean_id}?alt=media"
+        if download_url.startswith(("https://", "http://")) and "aisandbox-pa.googleapis.com" not in download_url:
+            try:
+                # Signed Flow URLs are directly reachable by the backend. Streaming them avoids
+                # converting an entire MP4 to base64 inside Chrome and pushing it over WebSocket.
+                await asyncio.to_thread(stream_download, download_url, dest_path)
+                return
+            except Exception as ex:
+                log.warning("Unduhan langsung MP4 gagal; mencoba profil Chrome: %s", ex)
+        result = await bridge.download_url_with_retry(
+            download_url, instance_id=instance_id, attempts=2, delay=1.0
+        )
+        with open(dest_path, "wb") as out:
+            out.write(result["data"])
 
 
 async def execute_storyboard_job(
@@ -416,6 +478,8 @@ async def execute_storyboard_job(
     else:
         log_event(job_id, f"🌐 [0%] Flow Project ID terdeteksi: {project_id[:16]}...")
 
+    project_instance_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
+
     # Step 1: Upload Reference Image, or Generate one Anchor Seed Image PER Character in Flow
     ref_media_id = None
     character_media_ids: Dict[Any, str] = {}
@@ -438,7 +502,9 @@ async def execute_storyboard_job(
     elif theme_image_path and Path(theme_image_path).exists():
         log_event(job_id, "📸 [5%] Mengunggah gambar referensi tema ke Google Flow...")
         try:
-            ref_media_id = await upload_image(bridge, theme_image_path, project_id=project_id)
+            ref_media_id = await upload_image(
+                bridge, theme_image_path, project_id=project_id, instance_id=project_instance_id
+            )
             log_event(job_id, f"✅ [5%] Gambar referensi berhasil diunggah ke Flow! (Media ID: {ref_media_id[:16]}...)")
         except Exception as ex:
             log_event(job_id, f"⚠️ Gagal mengunggah gambar referensi: {ex}. Melanjutkan tanpa Media ID...", level="warning")
@@ -449,8 +515,7 @@ async def execute_storyboard_job(
             characters = [{"id": 1, "name": job_state["title"], "seed": storyboard.get("character_seed", 123456), "description": char_desc}]
 
         from omniflash.generators import generate_character_image
-        snap_inst = [i for i in bridge.instance_snapshot() if i["connected"]]
-        first_target_id = snap_inst[0]["instance_id"] if snap_inst else None
+        first_target_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
 
         log_event(job_id, f"🎨 [5%] [Tahap 1/2] Membuat {len(characters)} Gambar Anchor Seed Karakter di Google Flow (Master Prompt Template)...")
         for c_idx, char in enumerate(characters, start=1):
@@ -517,6 +582,29 @@ async def execute_storyboard_job(
         scene_title = sc.get("title", f"Adegan {idx}")
         prompt = sc.get("prompt_for_flow", "")
         scene_duration = duration if force_uniform_duration else resolve_scene_duration(sc, duration)
+        if scene_duration == 10:
+            log_event(
+                job_id,
+                f"⚡ [Adegan {idx}/{total_scenes}] Membagi 10 detik menjadi 4 shot/mini-adegan multi-angle yang padat...",
+            )
+            pacing_scene = dict(sc)
+            if idx > 1:
+                previous_scene = scenes[idx - 2]
+                pacing_scene["previous_scene_title"] = previous_scene.get("title") or ""
+                pacing_scene["previous_scene_action"] = previous_scene.get("action_summary") or ""
+                pacing_scene["previous_scene_prompt"] = previous_scene.get("prompt_for_flow") or ""
+            prompt, pacing_provider = await asyncio.to_thread(
+                rewrite_dense_prompt_with_ai,
+                prompt,
+                pacing_scene,
+                scene_duration,
+                children_mode=is_children,
+            )
+            log_event(
+                job_id,
+                f"✅ [Adegan {idx}/{total_scenes}] Prompt padat selesai via {pacing_provider}: "
+                "4 shot berbeda, aksi berantai, dialog berbalas, dan kontinuitas terkunci.",
+            )
 
         scene_record = {
             "scene_number": idx,
@@ -530,6 +618,7 @@ async def execute_storyboard_job(
         job_state["scenes"].append(scene_record)
 
         snap_instances = [i for i in bridge.instance_snapshot() if i["connected"]]
+        snap_instances.sort(key=lambda item: item.get("instance_id") != project_instance_id)
         if not snap_instances:
             log_event(job_id, f"❌ [Adegan {idx}/{total_scenes}] Gagal: Tidak ada akun profil Chrome terhubung yang siap (ready).", level="error")
             scene_record["status"] = "failed"
@@ -562,8 +651,7 @@ async def execute_storyboard_job(
             for token, value in sb_fields.items():
                 storyboard_prompt = storyboard_prompt.replace(token, value)
             _sb_manifest_slot = True  # manifest appended once the sheet list is known
-            sb_snap_inst = [i for i in bridge.instance_snapshot() if i["connected"]]
-            sb_target_id = sb_snap_inst[0]["instance_id"] if sb_snap_inst else None
+            sb_target_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
 
             # Feed the character sheets in as references, otherwise the panel invents new
             # faces and wardrobe and every scene ends up with different-looking characters.
@@ -576,7 +664,7 @@ async def execute_storyboard_job(
             # Preferred route: let Gemini compose the sheet from the real character images.
             # Its image models accept picture inputs officially, so the faces are genuinely
             # carried over instead of being re-invented from a text description.
-            if sb_chars:
+            if sb_chars and should_try_gemini_storyboard_image(cfg):
                 try:
                     log_event(job_id, f"🖼️ [Adegan {idx}/{total_scenes}] Menyusun storyboard via Gemini "
                                       f"dari character sheet: {who}...")
@@ -604,7 +692,9 @@ async def execute_storyboard_job(
                     if sheet.get("image"):
                         sheet_path = job_dir / f"storyboard_{idx:02d}.png"
                         sheet_path.write_bytes(sheet["image"])
-                        storyboard_media_id = await upload_image(bridge, str(sheet_path), project_id=project_id)
+                        storyboard_media_id = await upload_image(
+                            bridge, str(sheet_path), project_id=project_id, instance_id=sb_target_id
+                        )
                         scene_record["storyboard_sheet_url"] = f"/storage/jobs/{job_id}/{sheet_path.name}"
                         log_event(job_id, f"✅ [Adegan {idx}/{total_scenes}] Storyboard tersusun MENGIKUTI "
                                           f"{len(refs)} character sheet via {sheet.get('model')} & terunggah ke Flow! "
@@ -616,6 +706,13 @@ async def execute_storyboard_job(
                 except Exception as ex:
                     log_event(job_id, f"⚠️ [Adegan {idx}/{total_scenes}] Penyusunan storyboard via Gemini gagal: {ex}. "
                                       f"Beralih ke jalur cadangan...", level="warning")
+            elif sb_chars:
+                log_event(
+                    job_id,
+                    f"⏭️ [Adegan {idx}/{total_scenes}] Provider utama "
+                    f"{str(cfg.get('default_text_provider') or '').title()}; melewati Gemini Image "
+                    "dan langsung memakai Google Flow.",
+                )
 
             # Fallback: compose the sheet inside Flow itself when the Gemini route was
             # unavailable (no API key, download failed, or every image model refused).
@@ -645,8 +742,9 @@ async def execute_storyboard_job(
             except Exception as ex:
                 log_event(job_id, f"⚠️ [Adegan {idx}/{total_scenes}] Gagal membuat gambar storyboard key-frame: {ex}. Melanjutkan hanya dengan seed karakter...", level="warning")
 
-        # Google Flow can reject a prompt on content policy. That is a fault in the wording,
-        # not the account, so have Gemini rewrite the prompt and give the scene another go.
+        # Google Flow can reject either wording or a reference image on content policy.
+        # Rewrite first, then progressively reduce references so one false-positive image
+        # cannot leave the whole film waiting at 95%.
         max_policy_rewrites = int(cfg.get("max_policy_rewrites", 2) or 0)
         policy_attempt = 0
 
@@ -670,9 +768,19 @@ async def execute_storyboard_job(
                 try:
                     media_ids = None
                     v_chars = resolve_scene_characters(sc, storyboard.get("characters") or [], character_media_ids)
-                    scene_ref_ids = [c["media_id"] for c in v_chars if c.get("media_id")]
-                    if storyboard_media_id and storyboard_media_id not in scene_ref_ids:
-                        scene_ref_ids.append(storyboard_media_id)
+                    character_ref_ids = [c["media_id"] for c in v_chars if c.get("media_id")]
+                    scene_ref_ids = build_video_reference_ids(
+                        character_ref_ids, storyboard_media_id, policy_attempt=policy_attempt
+                    )
+
+                    if policy_attempt >= 1 and character_ref_ids:
+                        log_event(
+                            job_id,
+                            f"🛡️ [Adegan {idx}/{total_scenes}] Retry aman: tetap memakai "
+                            f"{len(scene_ref_ids)} sheet karakter; storyboard turunan dilepas agar identitas tidak berubah.",
+                            level="warning",
+                            profile=target_name,
+                        )
 
                     # Reference mode ("Ingredients") reads sheets as style/identity guides.
                     # Start-image mode would paste the sheet in as the literal opening frame,
@@ -742,6 +850,10 @@ async def execute_storyboard_job(
                         raise ValueError("Google Flow tidak mengembalikan media ID untuk adegan ini.")
 
                     target_media_id = media_ids[0]
+                    # Persist the full ID before polling/downloading so a completed Flow render
+                    # remains recoverable even if the backend restarts during file transfer.
+                    scene_record["media_id"] = target_media_id
+                    _save_history()
                     log_event(job_id, f"📥 [Adegan {idx}/{total_scenes}] Request diterima Flow! Media ID: {target_media_id[:16]}... Menunggu render selesai...", profile=target_name)
 
                     last_pct = -1
@@ -766,7 +878,11 @@ async def execute_storyboard_job(
                     # Download MP4 file
                     out_filename = f"scene_{idx:02d}.mp4"
                     out_path = job_dir / out_filename
-                    download_file(video_url, out_path)
+
+                    await download_file(
+                        bridge, video_url, out_path, instance_id=target_instance_id,
+                        media_id=target_media_id, project_id=inst_project_id,
+                    )
 
                     scene_record["status"] = "completed"
                     scene_record["video_path"] = str(out_path)
@@ -800,7 +916,7 @@ async def execute_storyboard_job(
                 break
 
             policy_attempt += 1
-            log_event(job_id, f"🧠 [Adegan {idx}/{total_scenes}] Prompt ditolak filter. Meminta Gemini meracik prompt alternatif (percobaan {policy_attempt}/{max_policy_rewrites})...")
+            log_event(job_id, f"🧠 [Adegan {idx}/{total_scenes}] Prompt/gambar ditolak filter. Meminta provider AI utama meracik prompt alternatif (percobaan {policy_attempt}/{max_policy_rewrites})...")
 
             from .gemini_storyboard import sanitize_prompt_for_policy
             revised = await asyncio.to_thread(sanitize_prompt_for_policy, prompt, policy_rejection, scene_title)
@@ -840,9 +956,17 @@ async def execute_storyboard_job(
             job_state["srt_subtitles_url"] = f"/storage/jobs/{job_id}/subtitles.srt"
 
             film_path = stitch_scenes(job_dir, completed_scene_paths, output_filename="cinematic_film.mp4")
+
+            music_track = cfg.get("music_track_path")
+            if music_track and os.path.exists(music_track):
+                log_event(job_id, "🎵 [98%] Menyatukan audio track musik latar dengan video klip...")
+                from .film_stitcher import mux_audio_to_video
+                film_path = mux_audio_to_video(job_dir, film_path, music_track, output_filename="cinematic_film_with_audio.mp4")
+
             job_state["cinematic_film_path"] = str(film_path)
-            job_state["cinematic_film_url"] = f"/storage/jobs/{job_id}/cinematic_film.mp4"
-            log_event(job_id, "🎬 [100%] SELURUH PROSES SELESAI! Film sinematik utuh & Subtitle SRT siap diputar di Galeri!")
+            final_filename = os.path.basename(film_path)
+            job_state["cinematic_film_url"] = f"/storage/jobs/{job_id}/{final_filename}"
+            log_event(job_id, "✅ [100%] SELURUH PROSES SELESAI! Film sinematik utuh & Subtitle SRT siap diputar di Galeri!")
             job_state["status"] = "completed"
         except Exception as ex:
             log_event(job_id, f"⚠️ Gagal menggabungkan film sinematik: {ex}", level="warning")

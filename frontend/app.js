@@ -583,7 +583,7 @@ async function fetchFleetStatus() {
 
     fleetGrid.innerHTML = profiles.map(p => {
       const credData = fleetCreditsMap[p.instance_id];
-      let credText = p.connected && p.logged_in ? '⚡ Unlimited (Kuota Melimpah)' : 'Belum Login';
+      let credText = p.connected && p.logged_in ? '⚡ Unlimited' : 'Belum Login';
       let credBadgeColor = p.connected && p.logged_in ? 'rgba(16, 185, 129, 0.12)' : 'rgba(244, 63, 94, 0.1)';
       let credBorder = p.connected && p.logged_in ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.3)';
       let credTextColor = p.connected && p.logged_in ? '#34d399' : '#f43f5e';
@@ -871,7 +871,11 @@ function initStoryboardForm() {
     const durModeEl = document.getElementById('durationPerSceneSelect');
     const durMode = durModeEl ? durModeEl.value : '10';
 
+    const actorCheckboxes = document.querySelectorAll('#actorSelectionList_storyboard input[type="checkbox"]:checked');
+    const actorIds = Array.from(actorCheckboxes).map(cb => cb.value).join(',');
+
     const formData = new FormData();
+    formData.append('actor_ids', actorIds);
     formData.append('premise', theme);
     formData.append('scene_count', sceneCount);
     formData.append('aspect_ratio', aspectRatio);
@@ -1873,6 +1877,26 @@ async function loadSettingsTab() {
     const modelTabEl = document.getElementById('settingGeminiModelTab') || document.getElementById('settingGeminiModel');
     if (modelTabEl && s.gemini_model) modelTabEl.value = s.gemini_model;
 
+    const providerRadio = document.querySelector(`input[name="defaultTextProvider"][value="${s.default_text_provider || 'gemini'}"]`);
+    if (providerRadio) providerRadio.checked = true;
+    const openAIKeys = s.openai_api_keys?.length ? s.openai_api_keys : (s.openai_api_key ? [s.openai_api_key] : []);
+    const deepSeekKeys = s.deepseek_api_keys?.length ? s.deepseek_api_keys : (s.deepseek_api_key ? [s.deepseek_api_key] : []);
+    const xaiKeys = s.xai_api_keys?.length ? s.xai_api_keys : (s.xai_api_key ? [s.xai_api_key] : []);
+    const openAIKeyEl = document.getElementById('settingOpenAIKeyTab');
+    const deepSeekKeyEl = document.getElementById('settingDeepSeekKeyTab');
+    const xaiKeyEl = document.getElementById('settingXAIKeyTab');
+    if (openAIKeyEl) openAIKeyEl.value = openAIKeys.join('\n');
+    if (deepSeekKeyEl) deepSeekKeyEl.value = deepSeekKeys.join('\n');
+    if (xaiKeyEl) xaiKeyEl.value = xaiKeys.join('\n');
+    const openAIModelEl = document.getElementById('settingOpenAIModelTab');
+    const deepSeekModelEl = document.getElementById('settingDeepSeekModelTab');
+    const xaiModelEl = document.getElementById('settingXAIModelTab');
+    const xaiBaseUrlEl = document.getElementById('settingXAIBaseUrlTab');
+    if (openAIModelEl) openAIModelEl.value = s.openai_model || 'gpt-4.1-mini';
+    if (deepSeekModelEl) deepSeekModelEl.value = s.deepseek_model || 'deepseek-chat';
+    if (xaiModelEl) xaiModelEl.value = s.xai_model || 'grok-4.3';
+    if (xaiBaseUrlEl) xaiBaseUrlEl.value = s.xai_base_url || 'https://api.x.ai/v1';
+
     const projTabEl = document.getElementById('settingFlowProjectIdTab') || document.getElementById('settingFlowProjectId');
     if (projTabEl && (s.default_flow_project_id || s.flow_project_id)) {
       projTabEl.value = s.default_flow_project_id || s.flow_project_id;
@@ -1896,6 +1920,59 @@ function initSettingsTab() {
   const saveBtn = document.getElementById('saveSettingsTabBtn') || document.getElementById('saveSettingsBtn');
   const testBtn = document.getElementById('testGeminiKeyTabBtn') || document.getElementById('testGeminiKeyBtn');
   const resetBtn = document.getElementById('resetSeedTemplateTabBtn') || document.getElementById('resetSeedTemplateBtn');
+  const openAITestBtn = document.getElementById('testOpenAIKeyTabBtn');
+  const deepSeekTestBtn = document.getElementById('testDeepSeekKeyTabBtn');
+  const xaiTestBtn = document.getElementById('testXAIKeyTabBtn');
+
+  const statusLabels = {
+    valid: '✅ Valid & terhubung',
+    quota_limited: '⚠️ Valid, tetapi kuota habis/terbatas',
+    invalid: '❌ API key tidak sah',
+    unreachable: '🌐 Tidak dapat terhubung',
+    model_unavailable: '🧩 Key dikenali, tetapi model belum aktif/dibeli di workspace ini'
+  };
+
+  async function testProviderKeys(provider, keyElement, modelElement, button, resultElement, baseUrlElement = null) {
+    const rawKeys = keyElement?.value.trim() || '';
+    if (!rawKeys) return showToast(`Harap masukkan API key ${provider}!`, 'warning');
+    const oldText = button.textContent;
+    const keyCount = rawKeys.split(/[\n,]+/).map(key => key.trim()).filter(Boolean).length;
+    const startedAt = Date.now();
+    button.disabled = true;
+    button.textContent = `⏳ Menguji ${provider}... 0s`;
+    if (resultElement) resultElement.textContent = `Menguji ${keyCount} key secara paralel...`;
+    const progressTimer = window.setInterval(() => {
+      button.textContent = `⏳ Menguji ${provider}... ${Math.floor((Date.now() - startedAt) / 1000)}s`;
+    }, 1000);
+    try {
+      const response = await fetch('/api/settings/test_ai_keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          api_keys: rawKeys,
+          model: modelElement?.value || null,
+          base_url: baseUrlElement?.value?.trim() || null
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Pengujian gagal');
+      const summary = data.results.map(item => {
+        const diagnostic = item.detail ? `<br><small style="color:var(--text-muted)">HTTP ${item.http_status || '-'} — ${escapeHtml(item.detail)}</small>` : '';
+        return `Key #${item.index} (${item.key_preview}): ${statusLabels[item.status] || item.status}${diagnostic}`;
+      }).join('<br>');
+      if (resultElement) resultElement.innerHTML = summary;
+      const validCount = data.results.filter(item => item.status === 'valid').length;
+      showToast(`${provider}: ${validCount}/${data.results.length} key valid`, validCount ? 'success' : 'warning');
+    } catch (error) {
+      if (resultElement) resultElement.textContent = `❌ ${error.message}`;
+      showToast(`Gagal menguji ${provider}: ${error.message}`, 'error');
+    } finally {
+      window.clearInterval(progressTimer);
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
 
   if (resetBtn) {
     resetBtn.addEventListener('click', () => {
@@ -1910,42 +1987,20 @@ function initSettingsTab() {
   if (testBtn) {
     testBtn.addEventListener('click', async () => {
       const keyEl = document.getElementById('settingGeminiKeyTab') || document.getElementById('settingGeminiKey');
-      const rawKeys = keyEl ? keyEl.value.trim() : '';
-      if (!rawKeys) {
-        showToast('Harap masukkan setidaknya 1 Gemini API Key!', 'warning');
-        return;
-      }
-
-      testBtn.disabled = true;
-      testBtn.textContent = '🧪 Menguji API Keys...';
-
-      try {
-        const res = await fetch('/api/settings/test_gemini', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gemini_api_keys: rawKeys })
-        });
-        const data = await res.json();
-
-        if (data.results && data.results.length) {
-          const validCount = data.results.filter(r => r.valid).length;
-          const total = data.results.length;
-          if (validCount > 0) {
-            showToast(`🧪 Uji Selesai: ${validCount}/${total} Gemini API Key valid & aktif!`, 'success');
-          } else {
-            showToast(`❌ Uji Selesai: Seluruh ${total} API Key tidak valid.`, 'error');
-          }
-        } else {
-          showToast(data.message || 'Hasil pengujian API Key diterima', 'info');
-        }
-      } catch (err) {
-        showToast('Gagal menguji Gemini API Key: ' + err.message, 'error');
-      } finally {
-        testBtn.disabled = false;
-        testBtn.textContent = '🧪 Uji Validitas API Keys';
-      }
+      const modelEl = document.getElementById('settingGeminiModelTab') || document.getElementById('settingGeminiModel');
+      await testProviderKeys('gemini', keyEl, modelEl, testBtn, document.getElementById('testGeminiKeyResult'));
     });
   }
+
+  if (openAITestBtn) openAITestBtn.addEventListener('click', () => testProviderKeys(
+    'openai', document.getElementById('settingOpenAIKeyTab'), document.getElementById('settingOpenAIModelTab'),
+    openAITestBtn, document.getElementById('testOpenAIKeyResult')));
+  if (deepSeekTestBtn) deepSeekTestBtn.addEventListener('click', () => testProviderKeys(
+    'deepseek', document.getElementById('settingDeepSeekKeyTab'), document.getElementById('settingDeepSeekModelTab'),
+    deepSeekTestBtn, document.getElementById('testDeepSeekKeyResult')));
+  if (xaiTestBtn) xaiTestBtn.addEventListener('click', () => testProviderKeys(
+    'xai', document.getElementById('settingXAIKeyTab'), document.getElementById('settingXAIModelTab'),
+    xaiTestBtn, document.getElementById('testXAIKeyResult'), document.getElementById('settingXAIBaseUrlTab')));
 
   if (saveBtn) {
     saveBtn.addEventListener('click', async () => {
@@ -1954,6 +2009,14 @@ function initSettingsTab() {
       const projEl = document.getElementById('settingFlowProjectIdTab') || document.getElementById('settingFlowProjectId');
       const enableEl = document.getElementById('settingEnableSeedImageTab') || document.getElementById('settingEnableSeedImage');
       const templateEl = document.getElementById('settingSeedTemplateTab') || document.getElementById('settingSeedTemplate');
+      const defaultProviderEl = document.querySelector('input[name="defaultTextProvider"]:checked');
+      const openAIKeyEl = document.getElementById('settingOpenAIKeyTab');
+      const deepSeekKeyEl = document.getElementById('settingDeepSeekKeyTab');
+      const openAIModelEl = document.getElementById('settingOpenAIModelTab');
+      const deepSeekModelEl = document.getElementById('settingDeepSeekModelTab');
+      const xaiKeyEl = document.getElementById('settingXAIKeyTab');
+      const xaiModelEl = document.getElementById('settingXAIModelTab');
+      const xaiBaseUrlEl = document.getElementById('settingXAIBaseUrlTab');
 
       const rawKeys = keyEl ? keyEl.value.trim() : '';
       const model = modelEl ? modelEl.value : 'gemini-2.5-flash';
@@ -1970,6 +2033,14 @@ function initSettingsTab() {
           body: JSON.stringify({
             gemini_api_keys: keyArray,
             gemini_model: model,
+            openai_api_keys: (openAIKeyEl?.value || '').split(/[\n,]+/).map(k => k.trim()).filter(Boolean),
+            openai_model: openAIModelEl?.value.trim() || 'gpt-4.1-mini',
+            deepseek_api_keys: (deepSeekKeyEl?.value || '').split(/[\n,]+/).map(k => k.trim()).filter(Boolean),
+            deepseek_model: deepSeekModelEl?.value.trim() || 'deepseek-chat',
+            xai_api_keys: (xaiKeyEl?.value || '').split(/[\n,]+/).map(k => k.trim()).filter(Boolean),
+            xai_model: xaiModelEl?.value.trim() || 'grok-4.3',
+            xai_base_url: xaiBaseUrlEl?.value.trim() || 'https://api.x.ai/v1',
+            default_text_provider: defaultProviderEl?.value || 'gemini',
             default_flow_project_id: projId,
             enable_character_seed_image: enableSeed,
             character_seed_template: seedTemplate
@@ -1985,3 +2056,192 @@ function initSettingsTab() {
     });
   }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  const mvForm = document.getElementById('mvForm');
+  if (mvForm) {
+    mvForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const audioFile = document.getElementById('mvAudioFile').files[0];
+      const lyrics = document.getElementById('mvLyrics').value;
+      const aspect = document.getElementById('mvAspectRatio').value;
+      const charInfo = document.getElementById('mvCharacterInfo').value;
+      const btn = document.getElementById('btnGenerateMV');
+      
+      if (!audioFile) {
+        showToast('Pilih file audio lagu terlebih dahulu.', 'error');
+        return;
+      }
+      
+      btn.disabled = true;
+      btn.innerHTML = '<span class="icon">⏳</span> Menganalisa Lagu & Generating MV Storyboard...';
+      
+      try {
+        const actorCheckboxes = document.querySelectorAll('#actorSelectionList_mv input[type="checkbox"]:checked');
+        const actorIds = Array.from(actorCheckboxes).map(cb => cb.value).join(',');
+        
+        const formData = new FormData();
+        formData.append('actor_ids', actorIds);
+        formData.append('audio_file', audioFile);
+        formData.append('lyrics', lyrics);
+        formData.append('aspect_ratio', aspect);
+        formData.append('character_info', charInfo);
+        
+        const res = await fetch('/api/storyboard/generate-mv', {
+          method: 'POST',
+          body: formData
+        });
+        
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.detail || 'Gagal generate MV storyboard');
+        
+        // Auto-save the generated MV storyboard to Scene Master so it is not lost
+        if (data.storyboard) {
+          saveStoryboardToHistory(data.storyboard);
+          // Optionally set it as current so the Scene Master studio panel displays it
+          if (typeof currentStoryboard !== 'undefined') currentStoryboard = data.storyboard;
+        }
+        
+        showToast('Music Video Storyboard berhasil di-generate! Memulai proses render...', 'success');
+        
+        const executeRes = await fetch('/api/jobs/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            storyboard: data.storyboard,
+            aspect_ratio: aspect,
+            force_uniform_duration: true
+          })
+        });
+        
+        const execData = await executeRes.json();
+        if(execData.success) {
+            showToast('Proses render Music Video dimulai!', 'success');
+            document.querySelector('[data-tab="tab-execution"]').click();
+            
+            startJobPolling(execData.job_id);
+        } else {
+            throw new Error(execData.detail || 'Gagal memulai job');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="icon">✨</span> Generate MV Storyboard';
+      }
+    });
+  }
+  
+  // Actor Registry Logic
+  const fetchActors = async () => {
+      try {
+          const res = await fetch('/api/actors');
+          const data = await res.json();
+          if (data.success) {
+              renderActors(data.actors);
+              renderActorCheckboxes(data.actors);
+          }
+      } catch (err) {
+          console.error("Gagal load aktor:", err);
+      }
+  };
+  
+  const renderActors = (actors) => {
+      const grid = document.getElementById('actorsGrid');
+      if (!grid) return;
+      grid.innerHTML = '';
+      
+      if (actors.length === 0) {
+          grid.innerHTML = '<div class="empty-state"><h4>Belum Ada Aktor</h4><p>Daftarkan wajah baru untuk menggunakannya di storyboard.</p></div>';
+          return;
+      }
+      
+      actors.forEach(actor => {
+          const card = document.createElement('div');
+          card.style = "background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;";
+          card.innerHTML = `
+            <img src="${actor.image_url}" alt="${actor.name}" style="width: 100%; height: 200px; object-fit: cover;">
+            <div style="padding: 16px;">
+                <h4 style="margin: 0 0 8px 0; color: #fff;">${actor.name}</h4>
+                <p style="margin: 0 0 12px 0; color: #aaa; font-size: 13px; min-height: 40px;">${actor.description}</p>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-family: monospace;">Seed: ${actor.seed}</span>
+                    <button class="btn-secondary" onclick="deleteActor('${actor.id}')" style="padding: 4px 10px; font-size: 12px; border-color: #ef4444; color: #ef4444;">Hapus</button>
+                </div>
+            </div>
+          `;
+          grid.appendChild(card);
+      });
+  };
+  
+  const renderActorCheckboxes = (actors) => {
+      const containerSB = document.getElementById('actorSelectionList_storyboard');
+      const containerMV = document.getElementById('actorSelectionList_mv');
+      
+      let html = '';
+      if (actors.length === 0) {
+          html = '<span style="color: #aaa; font-size: 13px;">Belum ada aktor tersimpan.</span>';
+      } else {
+          actors.forEach(actor => {
+              html += `
+              <label style="display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.3); padding: 6px 12px; border-radius: 20px; cursor: pointer;">
+                  <input type="checkbox" value="${actor.id}" style="accent-color: #38bdf8;">
+                  <img src="${actor.image_url}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover;">
+                  <span style="color: #fff; font-size: 13px;">${actor.name}</span>
+              </label>
+              `;
+          });
+      }
+      
+      if (containerSB) containerSB.innerHTML = html;
+      if (containerMV) containerMV.innerHTML = html;
+  };
+  
+  window.deleteActor = async (actorId) => {
+      if(!confirm("Yakin ingin menghapus aktor ini?")) return;
+      try {
+          const res = await fetch('/api/actors/' + actorId, { method: 'DELETE' });
+          if(res.ok) {
+              showToast("Aktor berhasil dihapus!", "success");
+              fetchActors();
+          }
+      } catch (err) {
+          showToast("Gagal menghapus aktor", "error");
+      }
+  };
+  
+  const addActorForm = document.getElementById('addActorForm');
+  if (addActorForm) {
+      addActorForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const name = document.getElementById('actorName').value;
+          const desc = document.getElementById('actorDesc').value;
+          const seed = document.getElementById('actorSeed').value;
+          const image = document.getElementById('actorImage').files[0];
+          
+          if(!image) return showToast("Foto wajaah wajib diunggah", "error");
+          
+          const formData = new FormData();
+          formData.append('name', name);
+          formData.append('description', desc);
+          formData.append('image_file', image);
+          if (seed) formData.append('seed', parseInt(seed));
+          
+          try {
+              const res = await fetch('/api/actors', { method: 'POST', body: formData });
+              if (res.ok) {
+                  showToast("Aktor berhasil didaftarkan!", "success");
+                  document.getElementById('addActorModal').classList.remove('active');
+                  addActorForm.reset();
+                  fetchActors();
+              }
+          } catch(err) {
+              showToast("Gagal mendaftarkan aktor", "error");
+          }
+      });
+  }
+  
+  // Initial load
+  fetchActors();
+});

@@ -7,11 +7,45 @@ import shutil
 import uuid
 import logging
 from pathlib import Path
+import math
+import subprocess
+import json
 
 from .. import settings
 
 router = APIRouter(prefix="/api/storyboard", tags=["Storyboard"])
 log = logging.getLogger("sinematica.routers.storyboard")
+
+def _inject_actors_info(actor_ids: str, character_info: str, saved_paths: List[str]) -> str:
+    if not actor_ids:
+        return character_info
+    
+    actor_ids_list = [aid.strip() for aid in actor_ids.split(",") if aid.strip()]
+    if not actor_ids_list:
+        return character_info
+        
+    actors_db = settings.DATA_DIR / "actors.json"
+    if not actors_db.exists():
+        return character_info
+        
+    try:
+        with open(actors_db, "r", encoding="utf-8") as f:
+            all_actors = json.load(f)
+            
+        selected = [a for a in all_actors if a["id"] in actor_ids_list]
+        if not selected:
+            return character_info
+            
+        appended_info = "\n\nDAFTAR AKTOR SPESIFIK (PASTIKAN MENGGUNAKAN SEED MEREKA UNTUK KARAKTER INI):\n"
+        for idx, a in enumerate(selected):
+            appended_info += f"- Aktor {idx+1} ({a['name']}): Seed={a['seed']}, Deskripsi Fisik={a['description']}\n"
+            if a.get("image_path") and Path(a["image_path"]).exists():
+                saved_paths.append(a["image_path"])
+                
+        return character_info + appended_info
+    except Exception as ex:
+        log.warning("Gagal memuat aktor: %s", ex)
+        return character_info
 
 
 class AutoSuggestRequest(BaseModel):
@@ -34,7 +68,7 @@ class RegenerateSceneRequest(BaseModel):
     genre_style: Optional[str] = ""
 
 
-from ..gemini_storyboard import generate_storyboard, auto_suggest_details, generate_youtube_metadata, regenerate_single_scene
+from ..gemini_storyboard import generate_storyboard, auto_suggest_details, generate_youtube_metadata, regenerate_single_scene, generate_music_video_storyboard
 
 
 @router.post("/seo_kit")
@@ -103,10 +137,13 @@ async def generate_ai_storyboard(
     dracin_theme: str = Form(""),
     fixed_scene_duration: Optional[int] = Form(None),
     target_total_duration: Optional[int] = Form(None),
+    actor_ids: str = Form(""),
     reference_images: List[UploadFile] = File(None)
 ):
     try:
         saved_paths = []
+        character_info = _inject_actors_info(actor_ids, character_info, saved_paths)
+        
         if reference_images:
             for img in reference_images:
                 if img.filename:
@@ -141,4 +178,56 @@ async def generate_ai_storyboard(
         }
     except Exception as ex:
         log.error("Error generating storyboard: %s", ex, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@router.post("/generate-mv")
+async def generate_mv_storyboard(
+    lyrics: str = Form(...),
+    aspect_ratio: str = Form("landscape"),
+    character_info: str = Form(""),
+    actor_ids: str = Form(""),
+    audio_file: UploadFile = File(...)
+):
+    try:
+        saved_paths = []
+        character_info = _inject_actors_info(actor_ids, character_info, saved_paths)
+        
+        ext = Path(audio_file.filename).suffix or ".mp3"
+        file_name = f"music_{uuid.uuid4().hex[:8]}{ext}"
+        dest = settings.UPLOADS_DIR / file_name
+        with open(dest, "wb") as buffer:
+            shutil.copyfileobj(audio_file.file, buffer)
+        
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(dest)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        try:
+            duration = float(proc.stdout.strip())
+        except (ValueError, TypeError):
+            duration = 30.0 # fallback
+            
+        total_scenes = math.ceil(duration / 10.0)
+        
+        storyboard = generate_music_video_storyboard(
+            lyrics=lyrics,
+            audio_duration=duration,
+            scene_count=total_scenes,
+            aspect_ratio=aspect_ratio,
+            character_info=character_info,
+            image_paths=saved_paths
+        )
+        
+        # Inject the audio path so jobs_executor can use it
+        storyboard["music_track_path"] = str(dest)
+
+        return {
+            "success": True,
+            "storyboard": storyboard,
+            "audio_duration": duration
+        }
+    except Exception as ex:
+        log.error("Error generating MV storyboard: %s", ex, exc_info=True)
         raise HTTPException(status_code=500, detail=str(ex))

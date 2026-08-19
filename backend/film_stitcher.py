@@ -188,3 +188,41 @@ def stitch_scenes(job_dir: Path, ordered_video_paths: List[str], output_filename
 
     log.info("Film sinematik berhasil digabungkan! %s", output_path)
     return str(output_path)
+
+
+def mux_audio_to_video(job_dir: Path, video_path: str, audio_path: str, output_filename: str = "cinematic_film_with_audio.mp4") -> str:
+    """Mux background audio track onto the video using FFmpeg.
+    
+    Replaces the original video's audio with the new audio track and trims to the shortest stream.
+    """
+    if not os.path.exists(video_path) or not os.path.exists(audio_path):
+        log.warning("File tidak ditemukan untuk proses mux_audio_to_video.")
+        return video_path
+        
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        log.warning("FFmpeg tidak ditemukan, skip muxing audio.")
+        return video_path
+        
+    output_path = job_dir / output_filename
+    
+    cmd = [
+        ffmpeg_bin, "-y",
+        "-i", str(video_path),
+        "-i", str(audio_path),
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-map", "0:v:0?",
+        "-map", "1:a:0?",
+        "-shortest",
+        str(output_path)
+    ]
+    
+    log.info("Running FFmpeg audio mux command...")
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        log.warning("Muxing audio gagal: %s", proc.stderr)
+        return video_path
+        
+    log.info("Audio track berhasil digabungkan (muxed)! %s", output_path)
+    return str(output_path)

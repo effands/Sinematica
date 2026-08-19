@@ -3,6 +3,8 @@
  * Executes API requests natively in tab main world with real reCAPTCHA Enterprise tokens.
  */
 
+importScripts('trpc-response.js');
+
 const API_KEY = 'AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
 
 const WS_URL = 'ws://127.0.0.1:8888/ws/agent';
@@ -218,6 +220,10 @@ function connectWebSocket() {
       const msg = JSON.parse(event.data);
       if (msg.type === 'api_request') {
         await handleApiRequest(msg);
+      } else if (msg.type === 'trpc_request') {
+        await handleTrpcRequest(msg);
+      } else if (msg.type === 'download_request') {
+        await handleDownloadRequest(msg);
       } else if (msg.type === 'ping' && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'pong' }));
       }
@@ -239,6 +245,100 @@ function connectWebSocket() {
   // `onclose` always follows `onerror`, so retrying is handled there only.
   // Doing it here too would spawn duplicate sockets and duplicate registrations.
   socket.onerror = () => {};
+}
+
+async function handleTrpcRequest(msg) {
+  const { id, params = {} } = msg;
+  const { url, method = 'POST', headers = {}, body } = params;
+  if (!url || !url.startsWith('https://labs.google/')) {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'trpc_response', id, error: 'INVALID_TRPC_URL' }));
+    }
+    return;
+  }
+  const requestHeaders = { 'Content-Type': 'application/json', ...headers };
+  if (flowKey) requestHeaders.authorization = `Bearer ${flowKey}`;
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: requestHeaders,
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: 'include',
+    });
+    const decoded = await FlowTrpcResponse.decodeTrpcResponse(response);
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'trpc_response', id, status: response.status,
+        data: decoded.data, responseUrl: decoded.responseUrl,
+      }));
+    }
+  } catch (error) {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'trpc_response', id, error: error?.message || 'TRPC_FETCH_FAILED' }));
+    }
+  }
+}
+
+async function handleDownloadRequest(msg) {
+  const { id, url } = msg;
+  try {
+    const tabs = await chrome.tabs.query({ url: '*://labs.google/*' });
+    const targetTab = tabs.find(t => t.active) || tabs[0];
+    if (!targetTab) throw new Error('Tab Google Flow tidak ditemukan.');
+
+    let authenticatedUrl = url;
+    if (authenticatedUrl.startsWith('https://aisandbox-pa.googleapis.com/') && !authenticatedUrl.includes('key=')) {
+      authenticatedUrl += (authenticatedUrl.includes('?') ? '&' : '?') + `key=${API_KEY}`;
+    }
+
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: targetTab.id },
+      world: 'MAIN',
+      func: async (downloadUrl) => {
+        const response = await fetch(downloadUrl, { credentials: 'include' });
+        if (!response.ok) {
+          return { status: response.status, error: `HTTP ${response.status}: ${(await response.text()).slice(0, 300)}` };
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        let binary = '';
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        return {
+          status: response.status,
+          content_type: response.headers.get('content-type') || 'application/octet-stream',
+          data_base64: btoa(binary),
+        };
+      },
+      args: [authenticatedUrl],
+    });
+    const result = results?.[0]?.result || { status: 500, error: 'Chrome tidak mengembalikan hasil unduhan.' };
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      if (result.status === 200 && result.data_base64) {
+        const transferChunkSize = 512 * 1024;
+        const totalChunks = Math.ceil(result.data_base64.length / transferChunkSize);
+        ws.send(JSON.stringify({
+          type: 'download_start', id, status: 200,
+          content_type: result.content_type, total_chunks: totalChunks,
+        }));
+        for (let index = 0; index < totalChunks; index++) {
+          const chunk = result.data_base64.slice(index * transferChunkSize, (index + 1) * transferChunkSize);
+          while (ws.bufferedAmount > 4 * 1024 * 1024) {
+            await new Promise(resolve => setTimeout(resolve, 25));
+          }
+          ws.send(JSON.stringify({ type: 'download_chunk', id, index, data_base64: chunk }));
+        }
+        ws.send(JSON.stringify({ type: 'download_complete', id, status: 200 }));
+      } else {
+        const { data_base64, ...safeResult } = result;
+        ws.send(JSON.stringify({ type: 'download_response', id, ...safeResult }));
+      }
+    }
+  } catch (err) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'download_response', id, status: 500, error: err.toString() }));
+    }
+  }
 }
 
 function notifyRegistration() {
@@ -276,16 +376,21 @@ async function handleApiRequest(msg) {
   }
 
   if (!targetTab) {
-    console.error('[Sinematica Agent] Tab Google Flow tidak ditemukan!');
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'api_response',
-        id,
-        status: 400,
-        data: { error: 'Tab Google Flow tidak ditemukan di Chrome. Buka labs.google/fx/tools/flow.' }
-      }));
+    console.warn('[Sinematica Agent] Tab Google Flow tidak ditemukan! Membuka otomatis...');
+    try {
+      targetTab = await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
+      await new Promise(r => setTimeout(r, 4000));
+    } catch (e) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'api_response',
+          id,
+          status: 400,
+          data: { error: 'INTERNAL_ERROR_AUTO_OPEN: ' + e.toString() }
+        }));
+      }
+      return;
     }
-    return;
   }
 
   // Special Async DOM Scraping for Google Flow Credits (Extracts exact number e.g. '894 Credits')
@@ -405,11 +510,12 @@ async function handleApiRequest(msg) {
         const tabCheck = await chrome.tabs.get(targetTab.id).catch(() => null);
         if (!tabCheck) {
           const freshTabs = await chrome.tabs.query({ url: '*://labs.google/*' });
-          if (freshTabs && freshTabs.length) {
-            targetTab = freshTabs[0];
-          } else {
-            throw new Error('Tab Google Flow tidak ditemukan di Chrome. Buka labs.google/fx/tools/flow.');
-          }
+            if (freshTabs && freshTabs.length) {
+              targetTab = freshTabs[0];
+            } else {
+              targetTab = await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
+              await new Promise(r => setTimeout(r, 4000));
+            }
         } else if (tabCheck.status === 'loading') {
           await new Promise(r => setTimeout(r, 1500));
         }

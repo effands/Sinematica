@@ -9,6 +9,7 @@ Flow so it can serve as a reference for video generation.
 import base64
 import logging
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests

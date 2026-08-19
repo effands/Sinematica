@@ -109,6 +109,21 @@ def get_settings() -> dict:
         "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
         "gemini_api_keys": [os.getenv("GEMINI_API_KEY", "")] if os.getenv("GEMINI_API_KEY") else [],
         "gemini_model": os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
+        "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
+        "openai_api_keys": [os.getenv("OPENAI_API_KEY", "")] if os.getenv("OPENAI_API_KEY") else [],
+        "openai_model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        "deepseek_api_key": os.getenv("DEEPSEEK_API_KEY", ""),
+        "deepseek_api_keys": [os.getenv("DEEPSEEK_API_KEY", "")] if os.getenv("DEEPSEEK_API_KEY") else [],
+        "deepseek_model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        "xai_api_key": os.getenv("XAI_API_KEY", ""),
+        "xai_api_keys": [os.getenv("XAI_API_KEY", "")] if os.getenv("XAI_API_KEY") else [],
+        "xai_model": os.getenv("XAI_MODEL", "grok-4.3"),
+        "xai_base_url": os.getenv(
+            "XAI_BASE_URL",
+            "https://api.x.ai/v1",
+        ),
+        "default_text_provider": os.getenv("DEFAULT_TEXT_PROVIDER", "gemini"),
+        "text_provider_order": ["gemini", "openai", "deepseek", "xai", "web2api"],
         "default_flow_project_id": os.getenv("DEFAULT_FLOW_PROJECT_ID", ""),
         "preferred_instance_id": "",
         "aspect_ratio": "landscape",
@@ -136,6 +151,18 @@ def get_settings() -> dict:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 saved = json.load(f)
                 defaults.update(saved)
+                # Alibaba/Qwen was removed in favor of xAI/Grok. Never retain its
+                # credentials invisibly or leave an invalid provider in failover order.
+                for old_key in (
+                    "alibaba_api_key", "alibaba_api_keys", "alibaba_model", "alibaba_base_url"
+                ):
+                    defaults.pop(old_key, None)
+                if defaults.get("default_text_provider") == "alibaba":
+                    defaults["default_text_provider"] = "xai"
+                order = defaults.get("text_provider_order") or []
+                defaults["text_provider_order"] = [
+                    "xai" if provider == "alibaba" else provider for provider in order
+                ]
         except Exception:
             pass
     return defaults

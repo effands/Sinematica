@@ -4,6 +4,7 @@ WebSocket bridge routing requests across multiple connected Chrome extension ins
 """
 
 import asyncio
+import base64
 import json
 import logging
 import random
@@ -13,6 +14,20 @@ import uuid
 from .config import API_REQUEST_TIMEOUT, MAX_CONCURRENT_REQUESTS, REQUEST_MIN_INTERVAL
 
 log = logging.getLogger("sinematica.engine.bridge")
+
+_ROUTABLE_BRIDGE_MESSAGES = frozenset({
+    "api_response",
+    "trpc_response",
+    "download_response",
+    "download_start",
+    "download_chunk",
+    "download_complete",
+})
+
+
+def is_routable_bridge_message(message_type: str) -> bool:
+    """Return whether a WebSocket payload belongs to a pending bridge request."""
+    return message_type in _ROUTABLE_BRIDGE_MESSAGES
 
 
 def _is_ws_connected(ws) -> bool:
@@ -41,6 +56,7 @@ class ExtensionBridge:
         self._preferred_instance_id: str | None = None
         self.active_instance_id: str | None = None
         self._pending: dict[str, asyncio.Future] = {}
+        self._download_chunks: dict[str, dict] = {}
         self._flow_key = None
         self._connected = asyncio.Event()
         self._rr_idx = 0
@@ -258,6 +274,103 @@ class ExtensionBridge:
                 self._pending.pop(req_id, None)
                 raise RuntimeError(f"Request ke Google Flow via Chrome ({target_instance_id}) mengalami timeout ({timeout}s)")
 
+    async def download_url(self, url: str, instance_id: str = None, timeout: float = 180) -> dict:
+        """Download private Flow media inside the authenticated Chrome tab."""
+        req_id = str(uuid.uuid4())
+        ws, entry = self._get_target_ws_with_entry(instance_id)
+        if not ws:
+            raise RuntimeError("Tidak ada profil Chrome Extension untuk mengunduh media Flow.")
+
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._pending[req_id] = fut
+        message = {
+            "type": "download_request",
+            "id": req_id,
+            "url": url,
+            "instance_id": entry.get("instance_id") if entry else self.active_instance_id,
+        }
+        try:
+            payload = json.dumps(message)
+            if hasattr(ws, "send_str"):
+                await ws.send_str(payload)
+            elif hasattr(ws, "send_text"):
+                await ws.send_text(payload)
+            else:
+                await ws.send(payload)
+            result = await asyncio.wait_for(fut, timeout=timeout)
+        except asyncio.TimeoutError as ex:
+            self._pending.pop(req_id, None)
+            self._download_chunks.pop(req_id, None)
+            raise RuntimeError(
+                f"Unduhan media Flow via Chrome ({entry.get('name') if entry else instance_id}) "
+                f"timeout setelah {timeout}s; render tetap tersimpan di Flow."
+            ) from ex
+        except Exception:
+            self._pending.pop(req_id, None)
+            self._download_chunks.pop(req_id, None)
+            raise
+
+        status = int(result.get("status") or 0)
+        if status != 200 or not result.get("data_base64"):
+            raise RuntimeError(result.get("error") or f"Unduhan media Flow gagal (HTTP {status})")
+        return {
+            "data": base64.b64decode(result["data_base64"]),
+            "content_type": result.get("content_type") or "application/octet-stream",
+        }
+
+    async def trpc_request(
+        self, url: str, method: str = "POST", headers: dict = None, body=None,
+        timeout: float = 20, instance_id: str = None,
+    ) -> dict:
+        """Run a silent authenticated Flow tRPC request in the selected Chrome profile."""
+        req_id = str(uuid.uuid4())
+        ws, entry = self._get_target_ws_with_entry(instance_id)
+        if not ws:
+            return {"error": "Extension not connected"}
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._pending[req_id] = fut
+        message = {
+            "type": "trpc_request",
+            "id": req_id,
+            "params": {
+                "url": url,
+                "method": method,
+                "headers": headers or {},
+                "body": body,
+            },
+        }
+        try:
+            payload = json.dumps(message)
+            if hasattr(ws, "send_str"):
+                await ws.send_str(payload)
+            elif hasattr(ws, "send_text"):
+                await ws.send_text(payload)
+            else:
+                await ws.send(payload)
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except asyncio.TimeoutError:
+            return {"error": "TIMEOUT"}
+        finally:
+            self._pending.pop(req_id, None)
+
+    async def download_url_with_retry(
+        self, url: str, instance_id: str = None, timeout: float = 180,
+        attempts: int = 2, delay: float = 1.0,
+    ) -> dict:
+        """Retry only the authenticated download; the completed Flow render is reused."""
+        last_error = None
+        for attempt in range(1, max(1, attempts) + 1):
+            try:
+                return await self.download_url(url, instance_id=instance_id, timeout=timeout)
+            except Exception as ex:
+                last_error = ex
+                if attempt < attempts:
+                    log.warning("Unduhan Flow gagal (%s/%s): %s. Mengulang unduhan yang sama...", attempt, attempts, ex)
+                    await asyncio.sleep(delay)
+        raise RuntimeError(f"Unduhan media Flow gagal setelah {attempts} percobaan: {last_error}") from last_error
+
     def handle_message(self, data_str: str, ws, instance_id: str = None):
         try:
             msg = json.loads(data_str)
@@ -280,7 +393,39 @@ class ExtensionBridge:
             if iid and flow_key:
                 self.record_instance_token(iid, flow_key)
 
-        elif msg_type == "api_response":
+        elif msg_type == "download_start":
+            req_id = msg.get("id")
+            total = int(msg.get("total_chunks") or 0)
+            if req_id in self._pending and total > 0:
+                self._download_chunks[req_id] = {
+                    "chunks": [None] * total,
+                    "content_type": msg.get("content_type") or "application/octet-stream",
+                    "status": int(msg.get("status") or 200),
+                }
+
+        elif msg_type == "download_chunk":
+            req_id = msg.get("id")
+            transfer = self._download_chunks.get(req_id)
+            index = int(msg.get("index") or 0)
+            if transfer and 0 <= index < len(transfer["chunks"]):
+                transfer["chunks"][index] = base64.b64decode(msg.get("data_base64") or "")
+
+        elif msg_type == "download_complete":
+            req_id = msg.get("id")
+            transfer = self._download_chunks.pop(req_id, None)
+            fut = self._pending.pop(req_id, None)
+            if fut and not fut.done():
+                if not transfer or any(chunk is None for chunk in transfer["chunks"]):
+                    fut.set_result({"status": 500, "error": "Transfer MP4 tidak lengkap dari Chrome."})
+                else:
+                    joined = b"".join(transfer["chunks"])
+                    fut.set_result({
+                        "status": int(msg.get("status") or transfer["status"]),
+                        "content_type": transfer["content_type"],
+                        "data_base64": base64.b64encode(joined).decode("ascii"),
+                    })
+
+        elif msg_type in ("api_response", "download_response", "trpc_response"):
             req_id = msg.get("id")
             if req_id and req_id in self._pending:
                 fut = self._pending.pop(req_id)

@@ -7,6 +7,8 @@ import google.generativeai as genai
 import logging
 
 from .. import settings
+from ..provider_config import normalize_settings_update
+from ..provider_validation import validate_provider_keys
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
 log = logging.getLogger("sinematica.routers.settings")
@@ -18,6 +20,18 @@ class SettingsUpdateRequest(BaseModel):
     gemini_api_key: Optional[Union[str, List[str]]] = None
     gemini_api_keys: Optional[Union[str, List[str]]] = None
     gemini_model: Optional[str] = None
+    openai_api_key: Optional[Union[str, List[str]]] = None
+    openai_api_keys: Optional[Union[str, List[str]]] = None
+    openai_model: Optional[str] = None
+    deepseek_api_key: Optional[Union[str, List[str]]] = None
+    deepseek_api_keys: Optional[Union[str, List[str]]] = None
+    deepseek_model: Optional[str] = None
+    xai_api_key: Optional[Union[str, List[str]]] = None
+    xai_api_keys: Optional[Union[str, List[str]]] = None
+    xai_model: Optional[str] = None
+    xai_base_url: Optional[str] = None
+    default_text_provider: Optional[str] = None
+    text_provider_order: Optional[List[str]] = None
     default_flow_project_id: Optional[str] = None
     preferred_instance_id: Optional[str] = None
     aspect_ratio: Optional[str] = None
@@ -40,6 +54,13 @@ class TestGeminiRequest(BaseModel):
     gemini_model: Optional[str] = "gemini-3.6-flash"
 
 
+class TestAIKeysRequest(BaseModel):
+    provider: str
+    api_keys: Union[str, List[str]]
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+
+
 @router.get("")
 def get_all_settings():
     return {"settings": settings.get_settings()}
@@ -47,18 +68,10 @@ def get_all_settings():
 
 @router.post("")
 def update_settings(req: SettingsUpdateRequest):
-    data = req.dict(exclude_unset=True)
-    raw = data.get("gemini_api_keys") or data.get("gemini_api_key")
-    if raw:
-        if isinstance(raw, str):
-            keys = [k.strip() for k in raw.replace("\n", ",").split(",") if k.strip()]
-        elif isinstance(raw, list):
-            keys = [str(k).strip() for k in raw if str(k).strip()]
-        else:
-            keys = []
-        data["gemini_api_keys"] = keys
-        if keys:
-            data["gemini_api_key"] = keys[0]
+    try:
+        data = normalize_settings_update(req)
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex)) from ex
 
     updated = settings.save_settings(data)
     return {"success": True, "settings": updated}
@@ -93,7 +106,7 @@ def test_gemini_keys(req: TestGeminiRequest):
         key_res = {"index": idx, "key_preview": preview, "valid": False, "model": None, "error": None}
 
         try:
-            genai.configure(api_key=key)
+            genai.configure(api_key=key, transport="rest")
             for m in models_to_test:
                 try:
                     mod = genai.GenerativeModel(m)
@@ -119,6 +132,29 @@ def test_gemini_keys(req: TestGeminiRequest):
         "total_keys": len(keys),
         "results": results,
         "message": f"✅ {valid_count} dari {len(keys)} Gemini API Key Valid & Siap Digunakan (Auto-Rotation Active)!"
+    }
+
+
+@router.post("/test_ai_keys")
+def test_ai_keys(req: TestAIKeysRequest):
+    defaults = {
+        "gemini": "gemini-2.5-flash",
+        "openai": "gpt-4.1-mini",
+        "deepseek": "deepseek-chat",
+        "xai": "grok-4.3",
+    }
+    try:
+        model = (req.model or defaults.get(req.provider) or "").strip()
+        results = validate_provider_keys(
+            req.provider, req.api_keys, model, base_url=(req.base_url or "").strip()
+        )
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex)) from ex
+
+    return {
+        "success": any(item["status"] in ("valid", "quota_limited") for item in results),
+        "provider": req.provider,
+        "results": results,
     }
 
 
