@@ -10,6 +10,39 @@ from typing import List, Dict, Any
 log = logging.getLogger("sinematica.film_stitcher")
 
 
+def extract_continuity_frame(
+    video_path: Path,
+    output_path: Path,
+    *,
+    ffmpeg_bin: str = None,
+    runner=subprocess.run,
+) -> str | None:
+    """Extract a stable frame 0.2 seconds before a scene ends for the next scene."""
+    source = Path(video_path)
+    destination = Path(output_path)
+    executable = ffmpeg_bin or shutil.which("ffmpeg")
+    if not executable or not source.exists():
+        return None
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        executable,
+        "-y",
+        "-sseof", "-0.2",
+        "-i", str(source),
+        "-frames:v", "1",
+        "-q:v", "2",
+        str(destination),
+    ]
+    proc = runner(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode == 0 and destination.exists() and destination.stat().st_size > 0:
+        return str(destination)
+
+    destination.unlink(missing_ok=True)
+    log.warning("Gagal mengekstrak continuity frame dari %s: %s", source, proc.stderr[-300:])
+    return None
+
+
 def format_srt_timestamp(seconds: float) -> str:
     hrs = int(seconds // 3600)
     mins = int((seconds % 3600) // 60)

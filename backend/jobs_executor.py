@@ -12,10 +12,11 @@ import uuid
 
 from . import settings
 from .bridge_manager import get_bridge, ensure_ready
-from .film_stitcher import stitch_scenes
+from .film_stitcher import extract_continuity_frame, stitch_scenes
 from .gallery_cleanup import cleanup_job_files, job_source_files
 from .media_download import resolve_exact_media_url, stream_download
 from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
+from .scene_continuity import build_continuity_prompt, continuity_start_image
 from .storyboard_image import fetch_image_bytes, generate_storyboard_sheet
 
 from omniflash.generators import upload_image, generate_video_i2v, poll_video_status
@@ -577,6 +578,10 @@ async def execute_storyboard_job(
 
     # Step 2: Render each scene video across connected Chrome profiles
     completed_scene_paths = []
+    continuity_media_id = None
+    continuity_scene_number = None
+    continuity_instance_id = None
+    continuity_project_id = None
 
     for idx, sc in enumerate(scenes, start=1):
         if job_state.get("cancelled"):
@@ -754,12 +759,21 @@ async def execute_storyboard_job(
         # cannot leave the whole film waiting at 95%.
         max_policy_rewrites = int(cfg.get("max_policy_rewrites", 2) or 0)
         policy_attempt = 0
+        available_continuity_id = continuity_start_image(
+            continuity_media_id, continuity_scene_number, idx
+        )
 
         while True:
             policy_rejection = None
 
-            start_idx = (idx - 1) % len(snap_instances)
-            candidate_instances = snap_instances[start_idx:] + snap_instances[:start_idx]
+            if available_continuity_id and continuity_instance_id:
+                candidate_instances = sorted(
+                    snap_instances,
+                    key=lambda item: item.get("instance_id") != continuity_instance_id,
+                )
+            else:
+                start_idx = (idx - 1) % len(snap_instances)
+                candidate_instances = snap_instances[start_idx:] + snap_instances[:start_idx]
 
             for chosen in candidate_instances:
                 if job_state.get("cancelled"):
@@ -767,7 +781,14 @@ async def execute_storyboard_job(
 
                 target_instance_id = chosen["instance_id"]
                 target_name = chosen["name"]
-                inst_project_id = flow_project_id or chosen.get("project_id") or project_id or settings.get_flow_project_id()
+                owns_continuity = (
+                    available_continuity_id
+                    and policy_attempt == 0
+                    and target_instance_id == continuity_instance_id
+                )
+                inst_project_id = (
+                    continuity_project_id if owns_continuity else None
+                ) or flow_project_id or chosen.get("project_id") or project_id or settings.get_flow_project_id()
 
                 log_event(job_id, f"🚀 [Adegan {idx}/{total_scenes}: '{scene_title}'] [{target_name}] Mengirim prompt video {scene_duration}s ke Google Flow (Model: abra_t2v_{scene_duration}s, Ratio: {aspect_ratio})...", profile=target_name)
                 scene_record["profile_used"] = target_name
@@ -779,6 +800,37 @@ async def execute_storyboard_job(
                     scene_ref_ids = build_video_reference_ids(
                         character_ref_ids, storyboard_media_id, policy_attempt=policy_attempt
                     )
+
+                    # A real end-frame is stronger than an ordinary visual reference: use it
+                    # as the literal I2V start frame before trying the legacy reference modes.
+                    if owns_continuity:
+                        continuity_prompt = build_continuity_prompt(prompt, available_continuity_id)
+                        try:
+                            from omniflash.generators import generate_video_i2v
+                            log_event(
+                                job_id,
+                                f"🔗 [Adegan {idx}/{total_scenes}] Melanjutkan frame akhir adegan "
+                                f"{idx - 1} sebagai frame pembuka literal...",
+                                profile=target_name,
+                            )
+                            media_ids = await generate_video_i2v(
+                                bridge=bridge,
+                                prompt=continuity_prompt,
+                                aspect=aspect_ratio,
+                                project_id=inst_project_id,
+                                start_image_id=available_continuity_id,
+                                duration=scene_duration,
+                                instance_id=target_instance_id,
+                            )
+                        except Exception as continuity_err:
+                            log_event(
+                                job_id,
+                                f"⚠️ [{target_name}] Continuity I2V gagal ({continuity_err}). "
+                                "Kembali ke referensi karakter/storyboard biasa...",
+                                level="warning",
+                                profile=target_name,
+                            )
+                            media_ids = None
 
                     if policy_attempt >= 1 and character_ref_ids:
                         log_event(
@@ -792,7 +844,7 @@ async def execute_storyboard_job(
                     # Reference mode ("Ingredients") reads sheets as style/identity guides.
                     # Start-image mode would paste the sheet in as the literal opening frame,
                     # so any scene carrying the storyboard sheet must go through R2V.
-                    if len(scene_ref_ids) >= 2 or storyboard_media_id:
+                    if not media_ids and (len(scene_ref_ids) >= 2 or storyboard_media_id):
                         try:
                             from omniflash.generators import generate_video_r2v
                             media_ids = await generate_video_r2v(
@@ -895,6 +947,50 @@ async def execute_storyboard_job(
                     scene_record["video_path"] = str(out_path)
                     scene_record["relative_url"] = f"/storage/jobs/{job_id}/{out_filename}"
                     completed_scene_paths.append(str(out_path))
+
+                    # Prepare a literal start frame for the immediately following scene.
+                    # Any failure here is non-fatal: the established reference pipeline remains.
+                    continuity_media_id = None
+                    continuity_scene_number = None
+                    continuity_instance_id = None
+                    continuity_project_id = None
+                    if idx < total_scenes:
+                        continuity_path = job_dir / f"continuity_{idx:02d}.jpg"
+                        try:
+                            extracted = await asyncio.to_thread(
+                                extract_continuity_frame, out_path, continuity_path
+                            )
+                            if extracted:
+                                uploaded_continuity_id = await upload_image(
+                                    bridge,
+                                    extracted,
+                                    project_id=inst_project_id,
+                                    instance_id=target_instance_id,
+                                )
+                                continuity_media_id = uploaded_continuity_id
+                                continuity_scene_number = idx
+                                continuity_instance_id = target_instance_id
+                                continuity_project_id = inst_project_id
+                                scene_record["continuity_frame_url"] = (
+                                    f"/storage/jobs/{job_id}/{continuity_path.name}"
+                                )
+                                scene_record["continuity_media_id"] = uploaded_continuity_id
+                                log_event(
+                                    job_id,
+                                    f"🔗 [Adegan {idx}/{total_scenes}] Frame akhir siap menjadi "
+                                    f"pembuka adegan {idx + 1}.",
+                                    profile=target_name,
+                                )
+                        except Exception as continuity_ex:
+                            log_event(
+                                job_id,
+                                f"⚠️ [Adegan {idx}/{total_scenes}] Frame continuity tidak tersedia "
+                                f"({continuity_ex}); adegan berikutnya memakai fallback normal.",
+                                level="warning",
+                                profile=target_name,
+                            )
+
+                    _save_history()
 
                     log_event(job_id, f"✅ [Adegan {idx}/{total_scenes}] Selesai 100%! Tersimpan di {out_filename}. Siap melangkah ke adegan berikutnya.", profile=target_name)
                     scene_success = True
