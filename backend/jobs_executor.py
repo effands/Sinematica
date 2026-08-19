@@ -13,6 +13,7 @@ import uuid
 from . import settings
 from .bridge_manager import get_bridge, ensure_ready
 from .film_stitcher import stitch_scenes
+from .gallery_cleanup import cleanup_job_files, job_source_files
 from .media_download import resolve_exact_media_url, stream_download
 from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
 from .storyboard_image import fetch_image_bytes, generate_storyboard_sheet
@@ -90,16 +91,21 @@ def cancel_job(job_id: str) -> bool:
 
 
 def delete_job(job_id: str) -> bool:
-    job = _active_jobs.pop(job_id, None)
-    _job_logs.pop(job_id, None)
+    job = _active_jobs.get(job_id)
     job_dir = settings.JOBS_DIR / job_id
     existed = job is not None or job_dir.exists()
-    if job_dir.exists():
-        try:
-            import shutil
-            shutil.rmtree(job_dir, ignore_errors=True)
-        except Exception as ex:
-            log.warning("Gagal menghapus folder job %s: %s", job_id, ex)
+    remaining_jobs = [item for jid, item in _active_jobs.items() if jid != job_id]
+    cleanup = cleanup_job_files(
+        job_id,
+        job,
+        remaining_jobs,
+        jobs_dir=settings.JOBS_DIR,
+        uploads_dir=settings.UPLOADS_DIR,
+    )
+    if cleanup.errors:
+        raise RuntimeError("; ".join(cleanup.errors))
+    _active_jobs.pop(job_id, None)
+    _job_logs.pop(job_id, None)
     _save_history()
     return existed
 
@@ -142,6 +148,7 @@ def create_render_job(title: str) -> str:
         "cancelled": False,
         "created_at": time.time(),
         "created_at_formatted": time.strftime("%d %b %Y, %H:%M"),
+        "source_files": job_source_files(theme_image_path, storyboard),
     }
     _active_jobs[job_id] = job_state
     _save_history()
