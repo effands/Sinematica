@@ -39,8 +39,9 @@ async def get_fleet_credits():
             continue
         connected = inst.get("connected", False)
         logged_in = inst.get("logged_in", False)
+        ready = inst.get("ready", True)
 
-        if connected and logged_in:
+        if connected and logged_in and ready:
             c_val = "Unlimited"
             try:
                 res = await bridge.api_request("/v1/credits", None, instance_id=iid, timeout=6)
@@ -58,8 +59,8 @@ async def get_fleet_credits():
         elif connected:
             results[iid] = {
                 "success": False,
-                "credits": "Perlu Login Flow",
-                "status": "NO_AUTH"
+                "credits": inst.get("readiness_error") or "Perlu Login/Window Flow",
+                "status": inst.get("readiness_error") or "NOT_READY"
             }
         else:
             results[iid] = {
@@ -172,7 +173,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         instance_id=instance_id,
                         ws=websocket,
                         instance_name=msg.get("name"),
-                        project_id=msg.get("project_id")
+                        project_id=msg.get("project_id"),
+                        ready=msg.get("ready", True),
+                        readiness_error=msg.get("readiness_error"),
                     )
                     if msg.get("flow_key"):
                         bridge.record_instance_token(instance_id, msg["flow_key"])
@@ -227,7 +230,7 @@ async def test_fleet_prompt(req: TestPromptRequest):
     bridge = get_bridge()
     instances = bridge.instance_snapshot()
     log.info("test_fleet_prompt instances: %s", instances)
-    ready = [i for i in instances if i.get("connected")]
+    ready = [i for i in instances if i.get("connected") and i.get("ready", True)]
     if not ready:
         raise HTTPException(
             status_code=400,

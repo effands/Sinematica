@@ -12,6 +12,7 @@
     "storage",
     "alarms",
     "tabs",
+    "windows",
     "webRequest",
     "scripting",
     "declarativeNetRequest",

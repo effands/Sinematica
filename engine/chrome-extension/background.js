@@ -3,7 +3,7 @@
  * Executes API requests natively in tab main world with real reCAPTCHA Enterprise tokens.
  */
 
-importScripts('trpc-response.js');
+importScripts('trpc-response.js', 'flow-tab.js');
 
 const API_KEY = 'AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
 
@@ -177,7 +177,7 @@ function init() {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'keepAlive') {
     connectWebSocket();
-    _detectProjectIdFromTabs();
+    _detectProjectIdFromTabs().then(() => notifyRegistration());
   }
 });
 
@@ -341,14 +341,28 @@ async function handleDownloadRequest(msg) {
   }
 }
 
-function notifyRegistration() {
+async function notifyRegistration() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  let flowTab = null;
+  let readinessError = null;
+  try {
+    flowTab = await FlowTab.ensureFlowTab(chrome);
+    await _detectProjectIdFromTabs();
+  } catch (error) {
+    readinessError = error?.message || String(error);
+  }
+  const readiness = readinessError
+    ? { ready: false, error: readinessError }
+    : FlowTab.readinessState({ tab: flowTab, flowKey, projectId: currentProjectId });
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({
     type: 'register',
     instance_id: instanceId,
     name: instanceName,
     flow_key: flowKey,
-    project_id: currentProjectId
+    project_id: currentProjectId,
+    ready: readiness.ready,
+    readiness_error: readiness.error,
   }));
 }
 
@@ -359,6 +373,7 @@ function notifyTokenCaptured() {
     instance_id: instanceId,
     flow_key: flowKey
   }));
+  notifyRegistration();
 }
 
 // ─── Native Main World API Request Proxy ───────────────────
@@ -367,30 +382,20 @@ async function handleApiRequest(msg) {
 
   await _detectProjectIdFromTabs();
 
-  const tabs = await chrome.tabs.query({ url: '*://labs.google/*' });
-  let targetTab = (tabs && tabs.length > 0) ? (tabs.find(t => t.active) || tabs[0]) : null;
-
-  if (!targetTab) {
-    const allTabs = await chrome.tabs.query({});
-    targetTab = allTabs.find(t => t.url && t.url.includes('labs.google'));
-  }
-
-  if (!targetTab) {
-    console.warn('[Sinematica Agent] Tab Google Flow tidak ditemukan! Membuka otomatis...');
-    try {
-      targetTab = await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
-      await new Promise(r => setTimeout(r, 4000));
-    } catch (e) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'api_response',
-          id,
-          status: 400,
-          data: { error: 'INTERNAL_ERROR_AUTO_OPEN: ' + e.toString() }
-        }));
-      }
-      return;
+  let targetTab;
+  try {
+    targetTab = await FlowTab.ensureFlowTab(chrome);
+  } catch (e) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'api_response',
+        id,
+        status: 400,
+        data: { error: 'FLOW_TAB_NOT_READY: ' + e.toString() }
+      }));
     }
+    notifyRegistration();
+    return;
   }
 
   // Special Async DOM Scraping for Google Flow Credits (Extracts exact number e.g. '894 Credits')
@@ -513,8 +518,7 @@ async function handleApiRequest(msg) {
             if (freshTabs && freshTabs.length) {
               targetTab = freshTabs[0];
             } else {
-              targetTab = await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow', active: false });
-              await new Promise(r => setTimeout(r, 4000));
+              targetTab = await FlowTab.ensureFlowTab(chrome);
             }
         } else if (tabCheck.status === 'loading') {
           await new Promise(r => setTimeout(r, 1500));

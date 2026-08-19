@@ -565,7 +565,7 @@ async function fetchFleetStatus() {
     serverPill.innerHTML = `<span class="dot green"></span> Backend: Online (${currentPort})`;
 
     const profiles = data.profiles || [];
-    const readyProfiles = profiles.filter(p => p.connected && p.logged_in);
+    const readyProfiles = profiles.filter(p => p.connected && p.logged_in && p.ready !== false);
 
     fleetCountBadge.textContent = readyProfiles.length;
     fleetPill.innerHTML = `<span class="dot ${readyProfiles.length > 0 ? 'green' : 'red'}"></span> Fleet: ${readyProfiles.length} Profile Ready`;
@@ -583,10 +583,11 @@ async function fetchFleetStatus() {
 
     fleetGrid.innerHTML = profiles.map(p => {
       const credData = fleetCreditsMap[p.instance_id];
-      let credText = p.connected && p.logged_in ? '⚡ Unlimited' : 'Belum Login';
-      let credBadgeColor = p.connected && p.logged_in ? 'rgba(16, 185, 129, 0.12)' : 'rgba(244, 63, 94, 0.1)';
-      let credBorder = p.connected && p.logged_in ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.3)';
-      let credTextColor = p.connected && p.logged_in ? '#34d399' : '#f43f5e';
+      const isReady = p.connected && p.logged_in && p.ready !== false;
+      let credText = isReady ? '⚡ Unlimited' : (p.readiness_error || 'Belum Siap');
+      let credBadgeColor = isReady ? 'rgba(16, 185, 129, 0.12)' : 'rgba(244, 63, 94, 0.1)';
+      let credBorder = isReady ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.3)';
+      let credTextColor = isReady ? '#34d399' : '#f43f5e';
 
       if (credData) {
         if (credData.success) {
@@ -606,8 +607,8 @@ async function fetchFleetStatus() {
         <div class="profile-card" style="position: relative; background: rgba(12, 18, 36, 0.85); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px;">
           <div class="profile-header" style="display: flex; justify-content: space-between; align-items: center;">
             <span class="profile-title" style="font-weight: 800; font-size: 15px; color: #ffffff;">💻 ${p.name || p.instance_id}</span>
-            <span class="badge-status ${p.connected && p.logged_in ? 'badge-ready' : 'badge-noauth'}">
-              ${p.connected && p.logged_in ? 'Ready & Logged In' : 'Need Login/Connect'}
+            <span class="badge-status ${isReady ? 'badge-ready' : 'badge-noauth'}">
+              ${isReady ? 'Ready & Logged In' : (p.readiness_error || 'Need Flow Window/Login')}
             </span>
           </div>
           <div style="font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px;">

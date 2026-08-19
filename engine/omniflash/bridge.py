@@ -75,7 +75,7 @@ class ExtensionBridge:
         """Select a preferred Chrome profile instance or None for load-balancing across all."""
         self._preferred_instance_id = (instance_id or "").strip() or None
         selected = self._instances.get(self._preferred_instance_id) if self._preferred_instance_id else None
-        if selected and _is_ws_connected(selected.get("ws")):
+        if selected and selected.get("ready", True) and _is_ws_connected(selected.get("ws")):
             self._activate_instance(self._preferred_instance_id, selected)
         elif self._preferred_instance_id:
             self._ws = None
@@ -87,12 +87,15 @@ class ExtensionBridge:
         self.active_instance_id = instance_id
         self._ws = entry["ws"]
         self._flow_key = entry.get("flow_key")
-        if self._flow_key:
+        if self._flow_key and entry.get("ready", True):
             self._connected.set()
         else:
             self._connected.clear()
 
-    def register_instance(self, instance_id: str, ws, instance_name: str = None, project_id: str = None):
+    def register_instance(
+        self, instance_id: str, ws, instance_name: str = None, project_id: str = None,
+        ready: bool = True, readiness_error: str = None,
+    ):
         instance_id = str(instance_id or "").strip()
         if not instance_id:
             instance_id = f"profile-{uuid.uuid4().hex[:6]}"
@@ -103,15 +106,26 @@ class ExtensionBridge:
             "name": (instance_name or previous.get("name") or f"Profile {instance_id[:6]}").strip(),
             "flow_key": previous.get("flow_key"),
             "project_id": project_id or previous.get("project_id"),
+            "ready": bool(ready),
+            "readiness_error": readiness_error,
             "last_active": time.time(),
             "busy": False
         }
         self._instances[instance_id] = entry
         log.info("Registered Chrome extension profile instance: %s (%s)", entry["name"], instance_id)
-        if instance_id == self._preferred_instance_id:
+        if entry.get("ready", True) and (
+            instance_id == self._preferred_instance_id or instance_id == self.active_instance_id
+        ):
             self._activate_instance(instance_id, entry)
-        elif self._preferred_instance_id is None and (self._ws is None or not _is_ws_connected(self._ws)):
+        elif entry.get("ready", True) and self._preferred_instance_id is None and (
+            self._ws is None or not _is_ws_connected(self._ws)
+        ):
             self._activate_instance(instance_id, entry)
+        elif not entry.get("ready", True) and instance_id == self.active_instance_id:
+            self._ws = None
+            self._flow_key = None
+            self.active_instance_id = None
+            self._connected.clear()
         return entry
 
     def unregister_instance(self, instance_id: str, ws):
@@ -164,7 +178,7 @@ class ExtensionBridge:
             entry["last_active"] = time.time()
         if instance_id == self.active_instance_id or self.active_instance_id is None:
             self._flow_key = flow_key
-            if flow_key:
+            if flow_key and (entry is None or entry.get("ready", True)):
                 self._connected.set()
 
     def update_instance_project(self, instance_id: str, project_id: str):
@@ -182,6 +196,8 @@ class ExtensionBridge:
                 "connected": entry.get("ws") is not None and _is_ws_connected(entry["ws"]),
                 "logged_in": bool(entry.get("flow_key")),
                 "project_id": entry.get("project_id"),
+                "ready": bool(entry.get("ready", True)),
+                "readiness_error": entry.get("readiness_error"),
                 "is_active": iid == self.active_instance_id,
                 "is_preferred": iid == self._preferred_instance_id,
             })
@@ -192,21 +208,27 @@ class ExtensionBridge:
 
         if specific_instance_id and specific_instance_id in self._instances:
             entry = self._instances[specific_instance_id]
-            if entry.get("ws") and _is_ws_connected(entry["ws"]):
+            if entry.get("ready", True) and entry.get("ws") and _is_ws_connected(entry["ws"]):
                 return entry["ws"], entry
 
         if self._preferred_instance_id:
             entry = self._instances.get(self._preferred_instance_id)
-            if entry and entry.get("ws") and _is_ws_connected(entry["ws"]):
+            if entry and entry.get("ready", True) and entry.get("ws") and _is_ws_connected(entry["ws"]):
                 return entry["ws"], entry
 
-        available = [e for e in self._instances.values() if e.get("ws") and _is_ws_connected(e["ws"])]
+        available = [
+            e for e in self._instances.values()
+            if e.get("ready", True) and e.get("ws") and _is_ws_connected(e["ws"])
+        ]
         if available:
             entry = available[self._rr_idx % len(available)]
             self._rr_idx += 1
             return entry["ws"], entry
 
-        if self._ws and _is_ws_connected(self._ws):
+        active_entry = self._instances.get(self.active_instance_id)
+        if self._ws and _is_ws_connected(self._ws) and (
+            active_entry is None or active_entry.get("ready", True)
+        ):
             return self._ws, None
 
         return None, None
@@ -383,7 +405,11 @@ class ExtensionBridge:
             iid = msg.get("instance_id") or instance_id or f"profile-{uuid.uuid4().hex[:6]}"
             name = msg.get("name") or f"Chrome Profile {iid[:6]}"
             project_id = msg.get("project_id")
-            self.register_instance(iid, ws, name, project_id)
+            self.register_instance(
+                iid, ws, name, project_id,
+                ready=msg.get("ready", True),
+                readiness_error=msg.get("readiness_error"),
+            )
             if msg.get("flow_key"):
                 self.record_instance_token(iid, msg["flow_key"])
 

@@ -44,8 +44,9 @@ def status_snapshot() -> dict:
     instances = _bridge.instance_snapshot()
     any_connected = len(instances) > 0
     any_logged_in = any(i["logged_in"] for i in instances)
+    any_ready = any(i.get("ready", True) and i["logged_in"] for i in instances)
 
-    if any_connected and any_logged_in:
+    if any_connected and any_ready:
         state = "ready"
     elif any_connected:
         state = "connected_no_login"

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from backend.film_stitcher import extract_continuity_frame
 from backend.scene_continuity import build_continuity_prompt, continuity_start_image
+from engine.omniflash.generators.i2v import generate_video_i2v
 
 
 class SceneContinuityTests(unittest.TestCase):
@@ -65,6 +66,34 @@ class SceneContinuityTests(unittest.TestCase):
         self.assertIn("literal opening frame", result)
         self.assertIn("Continue the same", result)
         self.assertTrue(result.startswith("She opens the door."))
+
+
+class ContinuityI2VContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_i2v_request_sends_previous_frame_as_start_image(self):
+        class Bridge:
+            def __init__(self):
+                self.body = None
+
+            async def api_request(self, endpoint, body, instance_id=None):
+                self.body = body
+                return {"status": 200, "data": {"media": [{"name": "video-media"}]}}
+
+        bridge = Bridge()
+        result = await generate_video_i2v(
+            bridge,
+            prompt="Continue walking.",
+            aspect="landscape",
+            project_id="project-1",
+            start_image_id="previous-final-frame",
+            duration=10,
+            instance_id="profile-1",
+        )
+
+        self.assertEqual(result, ["video-media"])
+        self.assertEqual(
+            bridge.body["requests"][0]["startImage"],
+            {"mediaId": "previous-final-frame"},
+        )
 
 
 if __name__ == "__main__":

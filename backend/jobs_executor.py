@@ -12,6 +12,7 @@ import uuid
 
 from . import settings
 from .bridge_manager import get_bridge, ensure_ready
+from .character_seed_guard import missing_character_seeds
 from .film_stitcher import extract_continuity_frame, stitch_scenes
 from .gallery_cleanup import cleanup_job_files, job_source_files
 from .media_download import resolve_exact_media_url, stream_download
@@ -505,9 +506,9 @@ async def execute_storyboard_job(
     if is_children:
         custom_template = settings.CHILDREN_CHARACTER_SHEET_TEMPLATE
 
-    if not enable_seed_image:
-        log_event(job_id, "⏭️ [Tahap 1/2] Pembuatan Gambar Anchor Seed Karakter di-bypass (Disabled oleh Settings)...")
-    elif theme_image_path and Path(theme_image_path).exists():
+    # The theme image is an additional visual guide; it must never replace the mandatory
+    # per-character anchor sheets.
+    if theme_image_path and Path(theme_image_path).exists():
         log_event(job_id, "📸 [5%] Mengunggah gambar referensi tema ke Google Flow...")
         try:
             ref_media_id = await upload_image(
@@ -516,11 +517,15 @@ async def execute_storyboard_job(
             log_event(job_id, f"✅ [5%] Gambar referensi berhasil diunggah ke Flow! (Media ID: {ref_media_id[:16]}...)")
         except Exception as ex:
             log_event(job_id, f"⚠️ Gagal mengunggah gambar referensi: {ex}. Melanjutkan tanpa Media ID...", level="warning")
+
+    characters = storyboard.get("characters") or []
+    if not characters:
+        char_desc = storyboard.get("consistent_characters") or storyboard.get("genre_style") or job_state["title"]
+        characters = [{"id": 1, "name": job_state["title"], "seed": storyboard.get("character_seed", 123456), "description": char_desc}]
+
+    if not enable_seed_image:
+        log_event(job_id, "⏭️ [Tahap 1/2] Pembuatan Gambar Anchor Seed Karakter di-bypass (Disabled oleh Settings)...")
     else:
-        characters = storyboard.get("characters") or []
-        if not characters:
-            char_desc = storyboard.get("consistent_characters") or storyboard.get("genre_style") or job_state["title"]
-            characters = [{"id": 1, "name": job_state["title"], "seed": storyboard.get("character_seed", 123456), "description": char_desc}]
 
         from omniflash.generators import generate_character_image
         first_target_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
@@ -571,10 +576,21 @@ async def execute_storyboard_job(
                     if try_cnt < 2:
                         await asyncio.sleep(2)
 
-        if character_media_ids:
+        missing_seeds = missing_character_seeds(characters, character_media_ids)
+        if missing_seeds:
+            missing_names = ", ".join(missing_seeds)
+            error_message = (
+                "Anchor seed karakter wajib tetapi gagal dibuat untuk: " + missing_names + ". "
+                "Job dihentikan sebelum render scene agar identitas karakter tidak berubah."
+            )
+            job_state["status"] = "failed"
+            job_state["error"] = error_message
+            log_event(job_id, f"🛑 {error_message}", level="error")
+            _save_history()
+            return
+
+        if character_media_ids and not ref_media_id:
             ref_media_id = list(character_media_ids.values())[0]
-        else:
-            log_event(job_id, "⚠️ Tidak ada anchor image karakter yang berhasil dibuat. Melanjutkan eksekusi dengan mode Text-to-Video...", level="warning")
 
     # Step 2: Render each scene video across connected Chrome profiles
     completed_scene_paths = []
@@ -629,7 +645,10 @@ async def execute_storyboard_job(
         }
         job_state["scenes"].append(scene_record)
 
-        snap_instances = [i for i in bridge.instance_snapshot() if i["connected"]]
+        snap_instances = [
+            i for i in bridge.instance_snapshot()
+            if i["connected"] and i.get("ready", True)
+        ]
         snap_instances.sort(key=lambda item: item.get("instance_id") != project_instance_id)
         if not snap_instances:
             log_event(job_id, f"❌ [Adegan {idx}/{total_scenes}] Gagal: Tidak ada akun profil Chrome terhubung yang siap (ready).", level="error")
