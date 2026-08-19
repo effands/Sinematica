@@ -346,7 +346,7 @@ async function notifyRegistration() {
   let flowTab = null;
   let readinessError = null;
   try {
-    flowTab = await FlowTab.ensureFlowTab(chrome);
+    flowTab = await FlowTab.findExistingFlowTab(chrome);
     await _detectProjectIdFromTabs();
   } catch (error) {
     readinessError = error?.message || String(error);

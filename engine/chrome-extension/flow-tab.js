@@ -17,10 +17,14 @@
     throw new Error('FLOW_TAB_LOAD_TIMEOUT');
   }
 
+  async function findExistingFlowTab(chromeApi) {
+    const tabs = await chromeApi.tabs.query({ url: '*://labs.google/*' });
+    return (tabs || []).find(item => item.active) || (tabs || [])[0] || null;
+  }
+
   async function ensureFlowTab(chromeApi, options = {}) {
     const wait = options.wait || defaultWait;
-    const tabs = await chromeApi.tabs.query({ url: '*://labs.google/*' });
-    let tab = (tabs || []).find(item => item.active) || (tabs || [])[0] || null;
+    let tab = await findExistingFlowTab(chromeApi);
     if (!tab) {
       try {
         tab = await chromeApi.tabs.create({ url: FLOW_URL, active: false });
@@ -42,5 +46,5 @@
     return { ready: true, error: null };
   }
 
-  return { ensureFlowTab, readinessState, waitForTabComplete };
+  return { ensureFlowTab, findExistingFlowTab, readinessState, waitForTabComplete };
 });

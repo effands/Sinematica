@@ -2,6 +2,25 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { ensureFlowTab, readinessState } = require('./flow-tab.js');
+const { findExistingFlowTab } = require('./flow-tab.js');
+
+test('readiness probe never creates a tab or window for a dormant profile', async () => {
+  let createCalls = 0;
+  const chromeApi = {
+    tabs: {
+      query: async () => [],
+      create: async () => { createCalls++; },
+    },
+    windows: {
+      create: async () => { createCalls++; },
+    },
+  };
+
+  const tab = await findExistingFlowTab(chromeApi);
+
+  assert.equal(tab, null);
+  assert.equal(createCalls, 0);
+});
 
 test('creates a Chrome window when tabs.create has no current window', async () => {
   const calls = [];
