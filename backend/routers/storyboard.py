@@ -132,12 +132,20 @@ async def generate_ai_storyboard(
     ugc_mode: bool = Form(False),
     children_mode: bool = Form(False),
     script_mode: bool = Form(False),
+    affiliate_enabled: bool = Form(False),
+    affiliate_name: str = Form(""),
+    affiliate_benefits: str = Form(""),
+    affiliate_cta: str = Form(""),
+    affiliate_style: str = Form("soft_selling"),
+    affiliate_scene_position: str = Form("auto"),
+    affiliate_reference_paths: str = Form("[]"),
     target_country: str = Form(""),
     dracin_theme: str = Form(""),
     fixed_scene_duration: Optional[int] = Form(None),
     target_total_duration: Optional[int] = Form(None),
     actor_ids: str = Form(""),
-    reference_images: List[UploadFile] = File(None)
+    reference_images: List[UploadFile] = File(None),
+    affiliate_images: List[UploadFile] = File(None),
 ):
     try:
         actor_paths = []
@@ -158,6 +166,37 @@ async def generate_ai_storyboard(
                     uploaded_paths.append(str(dest))
 
         saved_paths = actor_paths + uploaded_paths
+        try:
+            existing_affiliate_paths = json.loads(affiliate_reference_paths or "[]")
+        except json.JSONDecodeError:
+            existing_affiliate_paths = []
+        affiliate_paths = [
+            path for path in existing_affiliate_paths
+            if isinstance(path, str) and Path(path).exists()
+        ]
+        if affiliate_images:
+            for img in affiliate_images:
+                if img.filename:
+                    ext = Path(img.filename).suffix or ".jpg"
+                    dest = settings.UPLOADS_DIR / f"product_{uuid.uuid4().hex[:8]}{ext}"
+                    with open(dest, "wb") as buffer:
+                        shutil.copyfileobj(img.file, buffer)
+                    affiliate_paths.append(str(dest))
+
+        affiliate_position = (
+            int(affiliate_scene_position)
+            if str(affiliate_scene_position).isdigit()
+            else "auto"
+        )
+        affiliate_config = {
+            "enabled": bool(affiliate_enabled),
+            "name": affiliate_name.strip(),
+            "benefits": affiliate_benefits.strip(),
+            "cta": affiliate_cta.strip(),
+            "style": affiliate_style,
+            "scene_position": affiliate_position,
+            "reference_paths": affiliate_paths,
+        }
 
         storyboard = generate_storyboard(
             premise=premise,
@@ -171,6 +210,7 @@ async def generate_ai_storyboard(
             ugc_mode=ugc_mode,
             children_mode=children_mode,
             script_mode=script_mode,
+            affiliate_config=affiliate_config,
             target_country=target_country,
             dracin_theme=dracin_theme,
             fixed_scene_duration=fixed_scene_duration,

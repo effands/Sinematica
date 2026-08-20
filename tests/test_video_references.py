@@ -5,11 +5,18 @@ from backend.jobs_executor import (
     build_live_action_guard,
     choose_instance_for_project,
     fictionalize_character_names,
+    resolve_affiliate_scene_numbers,
     should_drop_character_references,
 )
 
 
 class VideoReferenceSelectionTests(unittest.TestCase):
+    def test_auto_affiliate_block_uses_two_middle_scenes(self):
+        self.assertEqual(resolve_affiliate_scene_numbers(12, "auto"), {6, 7})
+
+    def test_explicit_affiliate_position_uses_only_requested_scene(self):
+        self.assertEqual(resolve_affiliate_scene_numbers(12, 7), {7})
+
     def test_adult_mode_explicitly_forbids_cartoon_character_and_storyboard_images(self):
         guard = build_live_action_guard(children_mode=False)
         self.assertIn("LIVE-ACTION PHOTOGRAPHY ONLY", guard)
@@ -32,6 +39,17 @@ class VideoReferenceSelectionTests(unittest.TestCase):
                 continuity_media_id="last-frame",
             ),
             ["last-frame", "char-a", "char-b", "storyboard"],
+        )
+
+    def test_affiliate_product_images_follow_characters_and_precede_storyboard(self):
+        self.assertEqual(
+            build_video_reference_ids(
+                ["char-a"],
+                "storyboard",
+                continuity_media_id="last-frame",
+                product_media_ids=["product-front", "product-side"],
+            ),
+            ["last-frame", "char-a", "product-front", "product-side", "storyboard"],
         )
 
     def test_ingredient_limit_prioritizes_last_frame_then_characters(self):

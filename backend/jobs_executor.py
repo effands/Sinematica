@@ -332,7 +332,8 @@ def resolve_scene_characters(scene: Dict[str, Any], characters: List[Dict[str, A
 def build_video_reference_ids(character_ids: List[str], storyboard_media_id: Optional[str],
                               policy_attempt: int = 0, limit: int = 10,
                               drop_all_references: bool = False,
-                              continuity_media_id: Optional[str] = None) -> List[str]:
+                              continuity_media_id: Optional[str] = None,
+                              product_media_ids: Optional[List[str]] = None) -> List[str]:
     """Order Ingredients by continuity, identity, then scene composition."""
     if drop_all_references:
         return []
@@ -340,6 +341,9 @@ def build_video_reference_ids(character_ids: List[str], storyboard_media_id: Opt
     if continuity_media_id:
         refs.append(continuity_media_id)
     for media_id in character_ids:
+        if media_id and media_id not in refs and len(refs) < limit:
+            refs.append(media_id)
+    for media_id in product_media_ids or []:
         if media_id and media_id not in refs and len(refs) < limit:
             refs.append(media_id)
     if not refs and storyboard_media_id:
@@ -358,6 +362,15 @@ def build_live_action_guard(children_mode: bool) -> str:
         "fabric, cinematic camera capture. No cartoon, anime, illustration, painting, comic art, "
         "stylized 3D character, doll-like face, or cel shading."
     )
+
+
+def resolve_affiliate_scene_numbers(total_scenes: int, position: Any) -> set[int]:
+    """Resolve one explicit scene or a natural two-scene block around the midpoint."""
+    total = max(1, int(total_scenes or 1))
+    if isinstance(position, int) or str(position).isdigit():
+        return {max(1, min(total, int(position)))}
+    first = max(1, total // 2)
+    return {first, min(total, first + 1)}
 
 
 _REFERENCE_IMAGE_POLICY_CODES = (
@@ -559,6 +572,8 @@ async def execute_storyboard_job(
 
     # Step 1: Upload Reference Image, or Generate one Anchor Seed Image PER Character in Flow
     ref_media_id = None
+    affiliate_product = storyboard.get("affiliate_product") or {}
+    affiliate_media_ids: List[str] = []
     character_media_ids: Dict[Any, str] = {}
     character_image_urls: Dict[Any, str] = {}
     character_image_paths: Dict[Any, str] = {}
@@ -585,6 +600,21 @@ async def execute_storyboard_job(
             log_event(job_id, f"✅ [5%] Gambar referensi berhasil diunggah ke Flow! (Media ID: {ref_media_id[:16]}...)")
         except Exception as ex:
             log_event(job_id, f"⚠️ Gagal mengunggah gambar referensi: {ex}. Melanjutkan tanpa Media ID...", level="warning")
+
+    if affiliate_product.get("enabled"):
+        product_paths = [
+            path for path in affiliate_product.get("reference_paths") or []
+            if isinstance(path, str) and Path(path).exists()
+        ]
+        if product_paths:
+            log_event(job_id, f"🛍️ [5%] Mengunggah {len(product_paths)} referensi produk affiliate ke Ingredients...")
+            for product_path in product_paths:
+                try:
+                    affiliate_media_ids.append(await upload_image(
+                        bridge, product_path, project_id=project_id, instance_id=project_instance_id
+                    ))
+                except Exception as ex:
+                    log_event(job_id, f"⚠️ Referensi produk gagal diunggah ({ex}).", level="warning")
 
     characters = storyboard.get("characters") or []
     if not characters:
@@ -741,6 +771,9 @@ async def execute_storyboard_job(
     continuity_scene_number = None
     continuity_instance_id = None
     continuity_project_id = None
+    affiliate_scene_numbers = resolve_affiliate_scene_numbers(
+        total_scenes, affiliate_product.get("scene_position", "auto")
+    ) if affiliate_product.get("enabled") else set()
 
     for idx, sc in enumerate(scenes, start=1):
         if job_state.get("cancelled"):
@@ -751,6 +784,7 @@ async def execute_storyboard_job(
 
         job_state["current_scene"] = idx
         scene_title = sc.get("title", f"Adegan {idx}")
+        is_affiliate_scene = bool(sc.get("affiliate_scene")) or idx in affiliate_scene_numbers
         prompt = sc.get("prompt_for_flow", "")
         scene_duration = duration if force_uniform_duration else resolve_scene_duration(sc, duration)
         if scene_duration == 10 and not storyboard.get("script_mode"):
@@ -842,6 +876,8 @@ async def execute_storyboard_job(
             # faces and wardrobe and every scene ends up with different-looking characters.
             sb_chars = resolve_scene_characters(sc, storyboard.get("characters") or [], character_media_ids)
             sb_ref_ids = [c["media_id"] for c in sb_chars]
+            if is_affiliate_scene:
+                sb_ref_ids.extend(affiliate_media_ids)
             storyboard_prompt += build_sheet_manifest(sb_chars)
 
             who = ", ".join(f"{c['name']} ({c['matched_by']})" for c in sb_chars) or "tanpa karakter"
@@ -865,6 +901,11 @@ async def execute_storyboard_job(
                                character_image_urls.get(cname))
                         if src:
                             got = await asyncio.to_thread(fetch_image_bytes, src)
+                            if got:
+                                refs.append(got)
+                    if is_affiliate_scene:
+                        for product_path in affiliate_product.get("reference_paths") or []:
+                            got = await asyncio.to_thread(fetch_image_bytes, product_path)
                             if got:
                                 refs.append(got)
 
@@ -980,6 +1021,7 @@ async def execute_storyboard_job(
                         policy_attempt=policy_attempt,
                         drop_all_references=drop_all_scene_references,
                         continuity_media_id=available_continuity_id if owns_continuity else None,
+                        product_media_ids=affiliate_media_ids if is_affiliate_scene else None,
                     )
 
                     if owns_continuity:

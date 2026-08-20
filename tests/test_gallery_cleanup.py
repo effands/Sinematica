@@ -6,6 +6,15 @@ from backend.gallery_cleanup import cleanup_job_files, job_source_files
 
 
 class GalleryCleanupTests(unittest.TestCase):
+    def test_job_source_files_includes_affiliate_product_references(self):
+        self.assertEqual(
+            job_source_files(
+                None,
+                {"affiliate_product": {"reference_paths": ["one.png", "two.png"]}},
+            ),
+            ["one.png", "two.png"],
+        )
+
     def test_job_source_files_records_theme_and_music_without_duplicates(self):
         theme = "storage/uploads/ref_one.jpg"
 

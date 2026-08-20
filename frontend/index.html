@@ -250,6 +250,35 @@
                     <input type="number" id="characterSeedInput" placeholder="Seed" style="width: 100px; height: 44px; border-radius: 10px; padding: 0 10px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px;" />
                   </div>
                 </div>
+
+                <!-- Optional Affiliate Product Story Integration -->
+                <div class="form-group" style="margin:0; padding:14px; border-radius:14px; border:1px solid rgba(251,146,60,.3); background:rgba(251,146,60,.05);">
+                  <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; cursor:pointer; color:#fdba74; font-size:13px; font-weight:800;">
+                    <span>🛍️ Sisipkan Produk Affiliate dalam Cerita</span>
+                    <input type="checkbox" id="chkAffiliateMode" style="width:17px; height:17px; accent-color:#fb923c;">
+                  </label>
+                  <div id="affiliateOptionsPanel" style="display:none; margin-top:13px; gap:10px;">
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                      <input id="affiliateProductName" type="text" placeholder="Nama produk" style="height:42px; border-radius:10px; padding:0 11px; background:rgba(4,7,16,.8); border:1px solid rgba(251,146,60,.25); color:#fff;">
+                      <select id="affiliateStyle" style="height:42px; border-radius:10px; padding:0 11px; background:rgba(4,7,16,.8); border:1px solid rgba(251,146,60,.25); color:#fff;">
+                        <option value="soft_selling">Soft Selling Natural</option>
+                        <option value="review_dialogue">Review lewat Dialog</option>
+                        <option value="hard_cta">Promosi + CTA Langsung</option>
+                      </select>
+                    </div>
+                    <textarea id="affiliateBenefits" rows="2" placeholder="Manfaat utama produk yang boleh disebutkan..." style="width:100%; border-radius:10px; padding:10px 11px; background:rgba(4,7,16,.8); border:1px solid rgba(251,146,60,.25); color:#fff; resize:vertical;"></textarea>
+                    <div style="display:grid; grid-template-columns:1fr 130px; gap:10px;">
+                      <input id="affiliateCta" type="text" placeholder="CTA, contoh: cek keranjang kuning" style="height:42px; border-radius:10px; padding:0 11px; background:rgba(4,7,16,.8); border:1px solid rgba(251,146,60,.25); color:#fff;">
+                      <input id="affiliateScenePosition" type="number" min="1" placeholder="Auto tengah" title="Kosongkan agar otomatis memakai dua scene tengah" style="height:42px; border-radius:10px; padding:0 11px; background:rgba(4,7,16,.8); border:1px solid rgba(251,146,60,.25); color:#fff;">
+                    </div>
+                    <label style="display:flex; align-items:center; justify-content:center; gap:9px; min-height:46px; border:2px dashed rgba(251,146,60,.38); border-radius:11px; color:#fed7aa; font-size:12px; font-weight:700; cursor:pointer; padding:9px;">
+                      📦 Tambah Gambar Produk (bisa lebih dari satu)
+                      <input id="affiliateImageInput" type="file" accept="image/*" multiple style="display:none;">
+                    </label>
+                    <div id="affiliateImagePreview" style="display:flex; gap:7px; flex-wrap:wrap;"></div>
+                    <small style="color:#94a3b8; line-height:1.45;">Posisi kosong = otomatis dua scene tengah (contoh film 12 scene memakai scene 6–7). Produk tetap menjadi bagian dari alur, bukan iklan tempelan.</small>
+                  </div>
+                </div>
               </div>
 
               <!-- RIGHT COLUMN: Parameter Produksi -->
@@ -906,6 +935,6 @@
   </div>
 
   <script src="history_selection.js?v=1.0.0"></script>
-  <script src="app.js?v=1.3.15"></script>
+  <script src="app.js?v=1.3.16"></script>
 </body>
 </html>

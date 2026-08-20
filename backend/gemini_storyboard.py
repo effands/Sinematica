@@ -429,10 +429,12 @@ def generate_storyboard(
     fixed_scene_duration: Optional[int] = None,
     children_mode: bool = False,
     script_mode: bool = False,
+    affiliate_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Generate multi-scene structured storyboard JSON using the configured AI providers."""
 
     image_paths = image_paths or []
+    affiliate_config = dict(affiliate_config or {})
     scene_count = max(1, min(60, int(scene_count or 4)))
     cfg = settings.get_settings()
     seed = character_seed or random.randint(100000, 999999)
@@ -508,6 +510,20 @@ NASKAH ASLI YANG WAJIB DIPERTAHANKAN:
 --- SELESAI NASKAH ---
 """ if script_mode else ""
 
+    affiliate_rules = f"""
+MODE ADEGAN AFFILIATE OPSIONAL (WAJIB MENYATU DENGAN CERITA):
+- Produk: {affiliate_config.get('name') or 'Produk pengguna'}
+- Manfaat: {affiliate_config.get('benefits') or '-'}
+- CTA: {affiliate_config.get('cta') or '-'}
+- Gaya promosi: {affiliate_config.get('style') or 'soft_selling'}
+- Posisi: {affiliate_config.get('scene_position') or 'auto di tengah cerita'}
+Integrasikan produk sebagai properti/aktivitas/solusi yang logis dalam konflik yang sedang berlangsung;
+tidak boleh terasa seperti iklan yang ditempel. Produk tidak boleh mengubah plot utama, hubungan karakter,
+twist, atau ending. Scene sebelum affiliate harus mengantar penggunaannya dan scene setelahnya wajib
+melanjutkan konflik utama. Tandai HANYA scene promosi dengan `"affiliate_scene": true`; scene lain false.
+Pertahankan bentuk, kemasan, warna, label, dan proporsi produk dari gambar referensi yang dilampirkan.
+""" if affiliate_config.get("enabled") else ""
+
     if fixed_scene_duration:
         # User asked for one fixed clip length, so the film length stays predictable:
         # scene_count x fixed_scene_duration.
@@ -571,6 +587,7 @@ Tugas Anda adalah meracik **STORYBOARD SINEMATIK KONSISTEN BANYAK KARAKTER & DYN
 {POLICY_SAFE_RULES}
 {children_visual_rules}
 {script_mode_rules}
+{affiliate_rules}
 
 ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
 1. **Multi-Character Seed Matrix (Wajib)**: Dukung sampai 10 karakter berbeda dengan menyebutkan Seed ID unik masing-masing (misal: Main Hero Seed `{seed}`, Companion Seed `{seed+101}`, Rival Seed `{seed+202}`). Pertahankan ciri visual wajah dan baju di setiap adegan!
@@ -650,6 +667,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
   "scenes": [
     {{
       "scene_number": 1,
+      "affiliate_scene": false,
       "time_range": "0:00–0:02",
       "title": "Judul Adegan 1 (misal Opening Activity)",
       "action_summary": "Ringkasan aksi adegan dalam bahasa {target_lang}, panjangnya proporsional dengan durasi adegan",
@@ -673,6 +691,17 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
     user_contents = [system_prompt, f"Ide Cerita / Tema: {premise}"]
     user_contents.extend(pil_images)
 
+    affiliate_images = []
+    for path in affiliate_config.get("reference_paths") or []:
+        try:
+            if Path(path).exists():
+                affiliate_images.append(Image.open(path))
+        except Exception as ex:
+            log.warning("Gagal memuat referensi produk affiliate %s: %s", path, ex)
+    if affiliate_images:
+        user_contents.append("Gambar berikut adalah referensi produk affiliate, bukan referensi wajah karakter.")
+        user_contents.extend(affiliate_images)
+
     last_err = None
     try:
         # Gemini receives reference images; OpenAI-compatible fallbacks retain the
@@ -692,6 +721,8 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
         storyboard["script_mode"] = script_mode
         if script_mode:
             storyboard["source_script"] = premise
+        if affiliate_config.get("enabled"):
+            storyboard["affiliate_product"] = affiliate_config
         storyboard["generated_via"] = result.provider
         storyboard["generated_model"] = result.model
         return storyboard
@@ -716,6 +747,8 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
             storyboard["script_mode"] = script_mode
             if script_mode:
                 storyboard["source_script"] = premise
+            if affiliate_config.get("enabled"):
+                storyboard["affiliate_product"] = affiliate_config
             storyboard["generated_via"] = "web2api_fallback"
             log.info("Storyboard berhasil dibuat via fallback Web2API (%d adegan, seed %d)!",
                      len(storyboard.get("scenes", [])), seed)

@@ -6,6 +6,7 @@ let currentStoryboard = null;
 let currentJobId = null;
 let pollTimer = null;
 let selectedRefFiles = [];
+let selectedAffiliateProductFiles = [];
 let selectedRenderClips = []; // ordered {job_id, filename, label} picked from Gallery for Auto Render
 const selectedHistoryIndexes = new Set();
 
@@ -875,6 +876,7 @@ function initStoryboardForm() {
   const chkUgc = document.getElementById('chkUgcMode');
   const chkChildren = document.getElementById('chkChildrenMode');
   const chkScript = document.getElementById('chkScriptMode');
+  const chkAffiliate = document.getElementById('chkAffiliateMode');
   const modeBoxes = [chkMicro, chkUgc, chkChildren].filter(Boolean);
   modeBoxes.forEach(box => {
     box.addEventListener('change', () => {
@@ -910,6 +912,26 @@ function initStoryboardForm() {
         const submit = document.getElementById('generateStoryboardBtn');
         if (submit) submit.innerHTML = '✨ Generate AI Storyboard (Gemini 3.6 Flash)';
       }
+    });
+  }
+
+  if (chkAffiliate) {
+    chkAffiliate.addEventListener('change', () => {
+      const panel = document.getElementById('affiliateOptionsPanel');
+      if (panel) panel.style.display = chkAffiliate.checked ? 'grid' : 'none';
+    });
+  }
+
+  const affiliateImageInput = document.getElementById('affiliateImageInput');
+  if (affiliateImageInput) {
+    affiliateImageInput.addEventListener('change', event => {
+      selectedAffiliateProductFiles = Array.from(event.target.files || []);
+      const preview = document.getElementById('affiliateImagePreview');
+      if (!preview) return;
+      preview.innerHTML = selectedAffiliateProductFiles.map(file => {
+        const src = URL.createObjectURL(file);
+        return `<img src="${src}" alt="Referensi produk" title="${escapeHtml(file.name)}" style="width:54px; height:54px; object-fit:cover; border-radius:9px; border:1px solid rgba(251,146,60,.5);">`;
+      }).join('');
     });
   }
 
@@ -1087,6 +1109,20 @@ function initStoryboardForm() {
     const isUgc = document.getElementById('chkUgcMode') ? document.getElementById('chkUgcMode').checked : false;
     const isChildren = document.getElementById('chkChildrenMode') ? document.getElementById('chkChildrenMode').checked : false;
     const isScriptMode = chkScript ? chkScript.checked : false;
+    const isAffiliate = chkAffiliate ? chkAffiliate.checked : false;
+    const affiliateName = document.getElementById('affiliateProductName')?.value.trim() || '';
+    const existingAffiliatePaths = currentStoryboard?.affiliate_product?.name === affiliateName
+      ? (currentStoryboard.affiliate_product.reference_paths || [])
+      : [];
+
+    if (isAffiliate && !affiliateName) {
+      showToast('Isi nama produk affiliate terlebih dahulu.', 'warning');
+      return;
+    }
+    if (isAffiliate && !selectedAffiliateProductFiles.length && !existingAffiliatePaths.length) {
+      showToast('Tambahkan minimal satu gambar referensi produk affiliate.', 'warning');
+      return;
+    }
 
     const targetCountryEl = document.getElementById('targetCountryInput');
     const targetCountry = targetCountryEl ? targetCountryEl.value.trim() : '';
@@ -1109,6 +1145,19 @@ function initStoryboardForm() {
     formData.append('ugc_mode', isUgc);
     formData.append('children_mode', isChildren);
     formData.append('script_mode', isScriptMode);
+    formData.append('affiliate_enabled', isAffiliate);
+    if (isAffiliate) {
+      formData.append('affiliate_name', affiliateName);
+      formData.append('affiliate_benefits', document.getElementById('affiliateBenefits')?.value.trim() || '');
+      formData.append('affiliate_cta', document.getElementById('affiliateCta')?.value.trim() || '');
+      formData.append('affiliate_style', document.getElementById('affiliateStyle')?.value || 'soft_selling');
+      formData.append('affiliate_scene_position', document.getElementById('affiliateScenePosition')?.value || 'auto');
+      const existingPaths = selectedAffiliateProductFiles.length
+        ? []
+        : existingAffiliatePaths;
+      formData.append('affiliate_reference_paths', JSON.stringify(existingPaths));
+      selectedAffiliateProductFiles.forEach(file => formData.append('affiliate_images', file));
+    }
     if (seed) formData.append('character_seed', seed);
     if (consistentChar) formData.append('character_info', consistentChar);
     if (targetCountry) formData.append('target_country', targetCountry);
@@ -1623,6 +1672,14 @@ function bindStoryboardLiveEditing() {
       setChecked('chkChildrenMode', currentStoryboard.children_mode);
       setChecked('chkScriptMode', currentStoryboard.script_mode);
       document.getElementById('chkScriptMode')?.dispatchEvent(new Event('change'));
+      const affiliate = currentStoryboard.affiliate_product || {};
+      setChecked('chkAffiliateMode', !!affiliate.enabled);
+      document.getElementById('chkAffiliateMode')?.dispatchEvent(new Event('change'));
+      setVal(['affiliateProductName'], affiliate.name);
+      setVal(['affiliateBenefits'], affiliate.benefits);
+      setVal(['affiliateCta'], affiliate.cta);
+      setVal(['affiliateStyle'], affiliate.style);
+      if (affiliate.scene_position !== 'auto') setVal(['affiliateScenePosition'], affiliate.scene_position);
 
       form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
       showToast('Memulai regenerate full storyboard baru...', 'info');

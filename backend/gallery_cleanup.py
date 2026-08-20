@@ -15,10 +15,13 @@ class CleanupResult:
 
 def job_source_files(theme_image_path: str | None, storyboard: Mapping[str, Any]) -> list[str]:
     """Return stable, de-duplicated local source paths owned by a Gallery job."""
+    affiliate = storyboard.get("affiliate_product") or {}
+    affiliate_paths = affiliate.get("reference_paths") or [] if isinstance(affiliate, Mapping) else []
     candidates = (
         theme_image_path,
         storyboard.get("_theme_image_path"),
         storyboard.get("music_track_path"),
+        *affiliate_paths,
     )
     return list(dict.fromkeys(
         path for path in candidates if isinstance(path, str) and path.strip()
