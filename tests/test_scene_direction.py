@@ -1,6 +1,7 @@
 import unittest
 
 from backend.scene_direction import (
+    apply_no_branding_direction,
     build_speaker_lock,
     choose_shot_count,
     ensure_unique_character_signatures,
@@ -9,6 +10,15 @@ from backend.scene_direction import (
 
 
 class SceneDirectionTests(unittest.TestCase):
+    def test_no_branding_guard_is_explicit_and_idempotent(self):
+        once = apply_no_branding_direction("Cinematic palace scene.")
+        twice = apply_no_branding_direction(once)
+
+        self.assertIn("NO BROADCAST BRANDING", once)
+        self.assertIn("TV station logo", once)
+        self.assertIn("watermark", once)
+        self.assertEqual(twice, once)
+
     def test_shot_count_follows_scene_energy(self):
         self.assertEqual(choose_shot_count({"action_summary": "Pasukan menyerbu dalam perang besar"}), 5)
         self.assertEqual(choose_shot_count({"action_summary": "Maya menangis lalu berbisik jujur", "dialogue": [{}]}), 3)

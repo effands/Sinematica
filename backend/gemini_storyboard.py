@@ -567,6 +567,8 @@ ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
    Contoh SALAH: "stands in the ballroom looking sad" (statis, tidak ada perubahan — DILARANG).
    Sertakan kata kerja gerak eksplisit (slams, snatches, shoves, storms out, collapses, spins around, lunges). Jika UGC Mode aktif, akhiri prompt dengan Aesthetic Add-On yang 100% cocok dengan tema (Girly/Pastel untuk Beauty, Corporate Luxury untuk Working Girl, Travel Vacation untuk Travel, dll.).
 4b. **BAHASA AUDIO/DIALOG VIDEO (WAJIB)**: Jika ada karakter yang berbicara/bersuara di adegan tersebut, WAJIB sisipkan dialog ASLI dalam bahasa {target_lang} di dalam tanda kutip langsung di tengah `prompt_for_flow`. Format wajib: `speaking angrily in natural {target_lang}: "..."`.
+4c. **Tanpa Logo/Watermark (Wajib)**: Semua `prompt_for_flow` harus melarang logo stasiun TV, channel bug,
+   watermark, logo sponsor/platform, emblem jaringan, ticker berita, lower-third, dan branded overlay di seluruh frame.
 5. **Time Range Timestamp Wajib**: Sertakan field "time_range" pada setiap scene (contoh: "0:00–0:02", "0:02–0:04", "0:04–0:06", "0:06–0:08", "0:08–0:10" atau sesuai durasi).
 6. **Voiceover Narration**: Narasi dubbing bahasa {target_lang} & bahasa Inggris berdurasi sesuai adegan.
 {elegant_rules}
@@ -773,6 +775,8 @@ ATURAN UTAMA:
    - Karakter Info / Referensi Tambahan: {character_info}
 6. Gaya visual: cinematic music video, highly aesthetic, emotional grading, 8k resolution.
 7. SANGAT PENTING: Karakter TIDAK BOLEH bernyanyi, lip-sync, berbicara, atau menggerakkan bibir mengikuti lirik. Visual hanya berupa adegan dramatis/sinematik yang bisu. Karakter mengekspresikan makna lirik HANYA melalui ekspresi wajah, tatapan mata, bahasa tubuh, dan sinematografi. Jangan pernah memasukkan instruksi "singing", "lip-sync", atau "speaking" di dalam `prompt_for_flow`.
+8. Semua `prompt_for_flow` WAJIB melarang logo stasiun TV, channel bug, watermark, logo sponsor/platform,
+   ticker, lower-third, dan branded overlay di setiap frame.
 
 OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
 {{

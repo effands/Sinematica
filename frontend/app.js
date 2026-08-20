@@ -1462,7 +1462,8 @@ async function pollJobStatus(jobId) {
     const job = data.job;
     const logs = data.logs || [];
 
-    document.getElementById('executionStatusText').textContent = `Job ${job.job_id} — Status: ${job.status.toUpperCase()}`;
+    const timingText = job.processing_duration ? ` — Waktu proses: ${job.processing_duration}` : '';
+    document.getElementById('executionStatusText').textContent = `Job ${job.job_id} — Status: ${job.status.toUpperCase()}${timingText}`;
 
     const stopBtn = document.getElementById('btnStopExecution');
     if (stopBtn) {
@@ -1511,7 +1512,7 @@ async function pollJobStatus(jobId) {
     `).join('');
     logBody.scrollTop = logBody.scrollHeight;
 
-    if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+    if (job.status === 'completed' || job.status === 'completed_partial' || job.status === 'failed' || job.status === 'cancelled') {
       clearInterval(pollTimer);
       if (job.status === 'completed') {
         showToast('Film sinematik berhasil digabungkan!', 'success', 'Render Selesai');

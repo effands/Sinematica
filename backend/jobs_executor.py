@@ -14,12 +14,14 @@ from . import settings
 from .bridge_manager import get_bridge, ensure_ready
 from .character_seed_guard import missing_character_seeds
 from .film_stitcher import extract_continuity_frame, stitch_scenes
+from .execution_metrics import finish_job_timing
 from .gallery_cleanup import cleanup_job_files, job_source_files
 from .media_download import resolve_exact_media_url, stream_download
 from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
 from .scene_continuity import build_continuity_prompt, continuity_start_image
 from .scene_audio_direction import apply_scene_audio_direction, resolve_master_music_track
 from .scene_direction import (
+    apply_no_branding_direction,
     build_speaker_lock,
     choose_shot_count,
     ensure_unique_character_signatures,
@@ -169,6 +171,7 @@ def mark_render_job_completed(job_id: str, film_path: str):
         job["status"] = "completed"
         job["cinematic_film_path"] = film_path
         job["cinematic_film_url"] = f"/storage/jobs/{job_id}/{Path(film_path).name}"
+        finish_job_timing(job)
         _save_history()
 
 
@@ -444,6 +447,7 @@ async def execute_storyboard_job(
     scenes = storyboard.get("scenes", [])
     total_scenes = len(scenes)
 
+    started_at = time.time()
     job_state = {
         "job_id": job_id,
         "title": storyboard.get("film_title", "Sinematica Story"),
@@ -454,7 +458,8 @@ async def execute_storyboard_job(
         "scenes": [],
         "cinematic_film_path": None,
         "cancelled": False,
-        "created_at": time.time(),
+        "created_at": started_at,
+        "started_at": started_at,
         "created_at_formatted": time.strftime("%d %b %Y, %H:%M"),
     }
     _active_jobs[job_id] = job_state
@@ -652,6 +657,7 @@ async def execute_storyboard_job(
         prompt = apply_scene_audio_direction(
             prompt, sc, storyboard, music_video=music_video_mode
         )
+        prompt = apply_no_branding_direction(prompt)
 
         scene_record = {
             "scene_number": idx,
@@ -1068,6 +1074,7 @@ async def execute_storyboard_job(
             prompt = apply_scene_audio_direction(
                 revised, sc, storyboard, music_video=music_video_mode
             )
+            prompt = apply_no_branding_direction(prompt)
             sc["prompt_for_flow"] = prompt
             scene_record["prompt"] = prompt
             scene_record["prompt_rewritten"] = policy_attempt
@@ -1109,13 +1116,21 @@ async def execute_storyboard_job(
             job_state["cinematic_film_path"] = str(film_path)
             final_filename = os.path.basename(film_path)
             job_state["cinematic_film_url"] = f"/storage/jobs/{job_id}/{final_filename}"
-            log_event(job_id, "✅ [100%] SELURUH PROSES SELESAI! Film sinematik utuh & Subtitle SRT siap diputar di Galeri!")
             job_state["status"] = "completed"
+            finish_job_timing(job_state)
+            log_event(
+                job_id,
+                "✅ [100%] SELURUH PROSES SELESAI! Film sinematik utuh & Subtitle SRT siap diputar "
+                f"di Galeri. Waktu proses total: {job_state['processing_duration']}.",
+            )
         except Exception as ex:
             log_event(job_id, f"⚠️ Gagal menggabungkan film sinematik: {ex}", level="warning")
             job_state["status"] = "completed_partial"
     else:
         job_state["status"] = "failed"
         log_event(job_id, "❌ Job gagal: Tidak ada adegan yang berhasil dirender.", level="error")
+
+    if not job_state.get("completed_at"):
+        finish_job_timing(job_state)
 
     _save_history()

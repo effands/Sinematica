@@ -27,6 +27,19 @@ _EMOTIONAL_WORDS = (
     "menangis", "berbisik", "mengaku", "sedih", "patah hati", "perpisahan", "haru",
 )
 
+_NO_BRANDING_GUARD = (
+    "NO BROADCAST BRANDING: no TV station logo, channel bug, network emblem, watermark, sponsor logo, "
+    "platform mark, corner badge, news ticker, lower-third, or branded overlay anywhere in any frame."
+)
+
+
+def apply_no_branding_direction(prompt: str) -> str:
+    """Keep generated frames free of television and platform branding."""
+    text = (prompt or "").strip()
+    if "NO BROADCAST BRANDING:" in text:
+        return text
+    return f"{text}\n\n{_NO_BRANDING_GUARD}".strip()
+
 
 def choose_shot_count(scene: Dict[str, Any], prompt: str = "") -> int:
     """Choose 3, 4, or 5 shots from story energy, never by blind randomness."""
