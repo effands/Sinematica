@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="icon" type="image/x-icon" href="favicon.ico?v=1.2.0">
-  <link rel="stylesheet" href="style.css?v=1.3.1">
+  <link rel="stylesheet" href="style.css?v=1.3.2">
 </head>
 <body>
   <div class="app-container">
@@ -679,37 +679,58 @@
     
     <!-- Add Actor Modal -->
     <div class="modal-overlay" id="addActorModal">
-      <div class="modal-content" style="max-width: 500px; background: rgba(20, 29, 54, 0.95);">
-        <div class="modal-header">
-          <h3>Tambah Aktor Baru</h3>
-          <button class="modal-close" onclick="document.getElementById('addActorModal').classList.remove('active')">×</button>
-        </div>
-        <div class="modal-body">
-          <form id="addActorForm" class="modern-form" style="display: grid; gap: 16px;">
-            <div class="form-group">
-              <label style="color: #fff; font-size: 14px; margin-bottom: 6px; display: block;">Nama Aktor</label>
-              <input type="text" id="actorName" required style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff;">
+      <div class="actor-studio-modal">
+        <div class="actor-modal-header">
+          <div class="actor-modal-heading">
+            <div class="actor-modal-icon">🎭</div>
+            <div>
+              <h3>Tambah Karakter</h3>
+              <p>Kunci identitas visual karakter untuk seluruh adegan.</p>
             </div>
-            <div class="form-group">
-              <div style="display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;">
-                <label style="color: #fff; font-size: 14px; display: block;">Gambar Referensi Karakter</label>
-                <span id="actorImageCount" style="font-size: 12px; color: var(--neon-cyan);">0/4</span>
+          </div>
+          <button type="button" class="actor-modal-close" aria-label="Tutup" onclick="document.getElementById('addActorModal').classList.remove('active')">×</button>
+        </div>
+        <form id="addActorForm" class="actor-modal-form">
+          <div class="actor-modal-grid">
+            <div class="actor-identity-fields">
+              <div class="actor-field">
+                <label for="actorName">Nama karakter</label>
+                <input type="text" id="actorName" placeholder="Contoh: Son Goku" required>
+                <small>Nama ini menjadi label tetap untuk semua referensi.</small>
               </div>
-              <input type="file" id="actorImages" accept="image/jpeg,image/png,image/webp" multiple required style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff;">
-              <small style="display: block; margin-top: 6px; color: var(--text-muted);">Pilih 1–4 gambar milik karakter yang sama: wajah depan, sudut lain, kostum, atau ciri khas. Gambar pertama menjadi thumbnail utama.</small>
+              <div class="actor-field">
+                <label for="actorDesc">Deskripsi fisik</label>
+                <textarea id="actorDesc" rows="5" placeholder="Rambut, wajah, postur, pakaian, warna, aksesori, dan ciri khas." required></textarea>
+              </div>
+              <div class="actor-field">
+                <label for="actorSeed">Seed ID <span>Opsional</span></label>
+                <input type="number" id="actorSeed" placeholder="Dibuat otomatis jika kosong">
+              </div>
+            </div>
+
+            <div class="actor-reference-panel">
+              <div class="actor-reference-panel-header">
+                <div>
+                  <strong>Referensi visual</strong>
+                  <span>Gunakan gambar dari karakter yang sama</span>
+                </div>
+                <span id="actorImageCount">0/4</span>
+              </div>
+              <label class="actor-upload-dropzone" for="actorImages">
+                <span class="actor-upload-icon">＋</span>
+                <strong>Pilih gambar referensi</strong>
+                <span>Wajah depan, sudut lain, kostum, atau ciri khas</span>
+                <em>PNG, JPG, WEBP · Maks. 10 MB</em>
+              </label>
+              <input class="actor-file-input" type="file" id="actorImages" accept="image/jpeg,image/png,image/webp" multiple required>
               <div id="actorImagePreview" class="actor-reference-preview"></div>
             </div>
-            <div class="form-group">
-              <label style="color: #fff; font-size: 14px; margin-bottom: 6px; display: block;">Deskripsi Fisik</label>
-              <textarea id="actorDesc" rows="3" placeholder="Contoh: Pria berumur 30 tahun, rambut pendek hitam, berkacamata." required style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; resize: vertical;"></textarea>
-            </div>
-            <div class="form-group">
-              <label style="color: #fff; font-size: 14px; margin-bottom: 6px; display: block;">Seed ID (Opsional)</label>
-              <input type="number" id="actorSeed" placeholder="Biarkan kosong untuk generate acak" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff;">
-            </div>
-            <button type="submit" class="btn-primary" style="padding: 14px; font-size: 15px; border-radius: 12px; margin-top: 10px;">Simpan Aktor</button>
-          </form>
-        </div>
+          </div>
+          <div class="actor-modal-footer">
+            <button type="button" class="actor-modal-cancel" onclick="document.getElementById('addActorModal').classList.remove('active')">Batal</button>
+            <button type="submit" class="actor-modal-submit">Simpan Karakter</button>
+          </div>
+        </form>
       </div>
     </div>
 

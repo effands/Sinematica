@@ -22,6 +22,17 @@ class ActorReferenceUiTests(unittest.TestCase):
         self.assertIn("actor.image_url", js)
         self.assertIn("Referensi", js)
 
+    def test_actor_modal_uses_studio_layout_and_custom_dropzone(self):
+        html = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        css = (ROOT / "frontend" / "style.css").read_text(encoding="utf-8")
+        self.assertIn('class="actor-studio-modal"', html)
+        self.assertIn('class="actor-upload-dropzone"', html)
+        self.assertIn('class="actor-modal-grid"', html)
+        self.assertIn('class="actor-modal-footer"', html)
+        self.assertIn('class="actor-modal-cancel"', html)
+        self.assertIn(".actor-studio-modal", css)
+        self.assertIn("@media (max-width: 720px)", css)
+
 
 if __name__ == "__main__":
     unittest.main()
