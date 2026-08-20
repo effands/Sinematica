@@ -1,6 +1,8 @@
 """Sinematica Backend — ExtensionBridge Singleton Manager."""
 
+import asyncio
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -63,14 +65,17 @@ def status_snapshot() -> dict:
     }
 
 
-async def ensure_ready(timeout: int = 10) -> None:
-    bridge = get_bridge()
-    snap = status_snapshot()
-    if snap["state"] == "ready":
-        return
-    connected = await bridge.wait_for_extension(timeout=timeout)
-    if not connected:
-        raise RuntimeError(
-            "Belum ada Chrome extension Flow Agent yang terhubung atau ter-login. "
-            "Pastikan extension dimuat di Chrome (chrome://extensions) dan profil ter-login di labs.google/fx/tools/flow."
-        )
+async def ensure_ready(timeout: float = 30, poll_interval: float = 0.5) -> None:
+    """Wait through short extension reconnects until a profile is genuinely usable."""
+    get_bridge()
+    deadline = time.monotonic() + max(0, timeout)
+    while True:
+        if status_snapshot()["state"] == "ready":
+            return
+        if time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(max(0, poll_interval))
+    raise RuntimeError(
+        "Belum ada Chrome extension Flow Agent yang terhubung atau ter-login. "
+        "Pastikan extension dimuat di Chrome (chrome://extensions) dan profil ter-login di labs.google/fx/tools/flow."
+    )

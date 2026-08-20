@@ -480,7 +480,7 @@ async def execute_storyboard_job(
     log_event(job_id, f"🔌 [0%] Memeriksa kesiapan profil Chrome Agent terhubung...")
 
     try:
-        await ensure_ready(timeout=10)
+        await ensure_ready(timeout=30)
     except Exception as ex:
         job_state["status"] = "failed"
         job_state["error"] = str(ex)
