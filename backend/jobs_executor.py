@@ -564,12 +564,13 @@ async def execute_storyboard_job(
                     "recolour, substitute, or borrow traits from any other character."
                 )
 
-            for try_cnt in range(1, 3):
+            suppress_references = False
+            for try_cnt in range(1, 4):
                 try:
                     reference_media_ids = await upload_character_references(
                         bridge, owned_reference_paths, project_id, first_target_id
-                    ) if owned_reference_paths else []
-                    if owned_reference_paths and len(reference_media_ids) != len(owned_reference_paths):
+                    ) if owned_reference_paths and not suppress_references else []
+                    if owned_reference_paths and not suppress_references and len(reference_media_ids) != len(owned_reference_paths):
                         raise RuntimeError(
                             f"Hanya {len(reference_media_ids)}/{len(owned_reference_paths)} referensi "
                             f"karakter '{char_name}' berhasil diunggah."
@@ -620,21 +621,32 @@ async def execute_storyboard_job(
                         break
                 except Exception as ex:
                     log_event(job_id, f"⚠️ Gagal generate seed image karakter '{char_name}' (Percobaan {try_cnt}): {ex}.", level="warning")
-                    if try_cnt < 2:
+                    if try_cnt < 3:
                         if is_unsafe_generation_error(ex):
-                            char_prompt = build_safe_character_seed_prompt(
-                                char_name,
-                                char_desc,
-                                char_seed,
-                                has_references=bool(owned_reference_paths),
-                            )
-                            log_event(
-                                job_id,
-                                f"🛡️ Filter keamanan Flow menolak nama/prompt '{char_name}'. "
-                                "Percobaan berikutnya memakai identitas visual netral tanpa nama merek, "
-                                "dengan ciri fisik tetap dipertahankan.",
-                                level="warning",
-                            )
+                            if try_cnt == 1:
+                                char_prompt = build_safe_character_seed_prompt(
+                                    char_name, char_desc, char_seed,
+                                    has_references=bool(owned_reference_paths),
+                                )
+                                log_event(
+                                    job_id,
+                                    f"🛡️ Filter keamanan Flow menolak nama/prompt '{char_name}'. "
+                                    "Percobaan berikutnya menghapus nama inti dan memakai identitas visual netral.",
+                                    level="warning",
+                                )
+                            else:
+                                suppress_references = True
+                                char_prompt = build_safe_character_seed_prompt(
+                                    char_name, char_desc, char_seed,
+                                    distinct_reinterpretation=True,
+                                )
+                                log_event(
+                                    job_id,
+                                    f"🧬 Fallback netral '{char_name}' masih ditolak. Percobaan terakhir "
+                                    "memakai reinterpretasi orisinal dengan palet/kostum berbeda dan tanpa "
+                                    "referensi bermerek.",
+                                    level="warning",
+                                )
                         await asyncio.sleep(2)
 
         missing_seeds = missing_character_seeds(characters, character_media_ids)

@@ -33,6 +33,27 @@ class CharacterSeedFallbackTests(unittest.TestCase):
         )
         self.assertIn("attached reference images", prompt.lower())
 
+    def test_removes_base_name_when_character_has_parenthesized_locale(self):
+        prompt = build_safe_character_seed_prompt(
+            "Hulk (Indonesia)",
+            "Hulk is 30 years old with green skin and a huge muscular physique.",
+            685211,
+        )
+        self.assertNotIn("hulk", prompt.lower())
+
+    def test_distinct_reinterpretation_avoids_signature_colour_and_costume(self):
+        prompt = build_safe_character_seed_prompt(
+            "Hulk (Indonesia)",
+            "Hulk has bright green skin and torn purple pants.",
+            685211,
+            distinct_reinterpretation=True,
+        )
+        lowered = prompt.lower()
+        self.assertNotIn("hulk", lowered)
+        self.assertNotIn("green", lowered)
+        self.assertNotIn("purple", lowered)
+        self.assertIn("mineral-skinned fantasy guardian", lowered)
+
 
 if __name__ == "__main__":
     unittest.main()
