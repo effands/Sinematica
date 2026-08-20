@@ -13,7 +13,11 @@ import uuid
 from . import settings
 from .bridge_manager import get_bridge, ensure_ready
 from .character_seed_guard import missing_character_seeds
-from .character_seed_fallback import build_safe_character_seed_prompt, is_unsafe_generation_error
+from .character_seed_fallback import (
+    alternate_character_seed,
+    build_safe_character_seed_prompt,
+    is_unsafe_generation_error,
+)
 from .character_reference_flow import resolve_character_reference_paths, upload_character_references
 from .film_stitcher import extract_continuity_frame, stitch_scenes
 from .execution_metrics import finish_job_timing, record_output_file_size
@@ -565,7 +569,8 @@ async def execute_storyboard_job(
                 )
 
             suppress_references = False
-            for try_cnt in range(1, 4):
+            request_seed = char_seed
+            for try_cnt in range(1, 5):
                 try:
                     reference_media_ids = await upload_character_references(
                         bridge, owned_reference_paths, project_id, first_target_id
@@ -581,7 +586,7 @@ async def execute_storyboard_job(
                             f"🧩 [{5 + c_idx}%] Memakai {len(reference_media_ids)} image reference "
                             f"khusus untuk karakter '{char_name}'.",
                         )
-                    log_event(job_id, f"⏳ [{5 + c_idx}%] Mengirim request character seed image '{char_name}' (Seed: {char_seed}) [Percobaan {try_cnt}]...")
+                    log_event(job_id, f"⏳ [{5 + c_idx}%] Mengirim request character seed image '{char_name}' (Seed: {request_seed}) [Percobaan {try_cnt}]...")
                     img_res = await generate_character_image(
                         bridge, prompt=char_prompt, aspect="portrait", project_id=project_id,
                         instance_id=first_target_id,
@@ -621,7 +626,7 @@ async def execute_storyboard_job(
                         break
                 except Exception as ex:
                     log_event(job_id, f"⚠️ Gagal generate seed image karakter '{char_name}' (Percobaan {try_cnt}): {ex}.", level="warning")
-                    if try_cnt < 3:
+                    if try_cnt < 4:
                         if is_unsafe_generation_error(ex):
                             if try_cnt == 1:
                                 char_prompt = build_safe_character_seed_prompt(
@@ -634,7 +639,7 @@ async def execute_storyboard_job(
                                     "Percobaan berikutnya menghapus nama inti dan memakai identitas visual netral.",
                                     level="warning",
                                 )
-                            else:
+                            elif try_cnt == 2:
                                 suppress_references = True
                                 char_prompt = build_safe_character_seed_prompt(
                                     char_name, char_desc, char_seed,
@@ -645,6 +650,20 @@ async def execute_storyboard_job(
                                     f"🧬 Fallback netral '{char_name}' masih ditolak. Percobaan terakhir "
                                     "memakai reinterpretasi orisinal dengan palet/kostum berbeda dan tanpa "
                                     "referensi bermerek.",
+                                    level="warning",
+                                )
+                            else:
+                                suppress_references = True
+                                request_seed = alternate_character_seed(char_seed)
+                                char_prompt = build_safe_character_seed_prompt(
+                                    char_name, char_desc, request_seed,
+                                    minimal_reinterpretation=True,
+                                )
+                                log_event(
+                                    job_id,
+                                    f"🆘 Reinterpretasi '{char_name}' masih ditolak. Percobaan final "
+                                    "memakai identitas manusia generik, prompt minimal, dan seed alternatif; "
+                                    "hasil tetap dipetakan ke peran karakter asli.",
                                     level="warning",
                                 )
                         await asyncio.sleep(2)

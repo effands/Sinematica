@@ -1,6 +1,7 @@
 import unittest
 
 from backend.character_seed_fallback import (
+    alternate_character_seed,
     build_safe_character_seed_prompt,
     is_unsafe_generation_error,
 )
@@ -24,8 +25,8 @@ class CharacterSeedFallbackTests(unittest.TestCase):
         self.assertNotIn("hulk", prompt.lower())
         self.assertIn("giant green muscular superhero", prompt.lower())
         self.assertIn("685211", prompt)
-        self.assertIn("neutral", prompt.lower())
-        self.assertIn("unbranded", prompt.lower())
+        self.assertIn("original", prompt.lower())
+        self.assertIn("calm", prompt.lower())
 
     def test_reference_instruction_is_kept_when_images_are_attached(self):
         prompt = build_safe_character_seed_prompt(
@@ -53,6 +54,23 @@ class CharacterSeedFallbackTests(unittest.TestCase):
         self.assertNotIn("green", lowered)
         self.assertNotIn("purple", lowered)
         self.assertIn("mineral-skinned fantasy guardian", lowered)
+
+    def test_minimal_reinterpretation_drops_all_original_visual_traits(self):
+        prompt = build_safe_character_seed_prompt(
+            "Hulk",
+            "Hulk has bright green skin, a huge body, torn purple pants and an angry face.",
+            999,
+            minimal_reinterpretation=True,
+        )
+        lowered = prompt.lower()
+        for rejected_term in ("hulk", "green", "purple", "huge", "angry"):
+            self.assertNotIn(rejected_term, lowered)
+        self.assertIn("adult indonesian fitness trainer", lowered)
+        self.assertIn("999", prompt)
+
+    def test_alternate_seed_is_deterministic_for_numeric_and_text_input(self):
+        self.assertEqual(alternate_character_seed(685111), 693030)
+        self.assertEqual(alternate_character_seed("custom"), alternate_character_seed("custom"))
 
 
 if __name__ == "__main__":
