@@ -801,6 +801,33 @@ button {
   margin: 0;
 }
 
+.gallery-clips-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  padding-right: 5px;
+  overscroll-behavior: contain;
+  grid-auto-rows: var(--clip-row-height, 172px);
+  max-height: calc((var(--clip-row-height, 172px) * 2) + 8px);
+}
+
+.gallery-clips-grid .clip-thumb {
+  min-height: 0;
+}
+
+.gallery-clips-grid::-webkit-scrollbar {
+  width: 7px;
+}
+
+.gallery-clips-grid::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.45);
+  border-radius: 999px;
+}
+
 /* Cute AI Loading Animation Styles */
 @keyframes spinCute {
   0% { transform: rotate(0deg); }

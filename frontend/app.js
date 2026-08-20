@@ -1720,7 +1720,7 @@ async function refreshGallery() {
         ` : ''}
 
         <h5 style="margin-top: 14px; font-size: 13px; color: var(--neon-cyan);">🎞️ Klip Adegan (${(item.clips || []).length} Scene) — klik untuk preview:</h5>
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-top: 8px;">
+        <div class="gallery-clips-grid" style="--clip-row-height: ${item.aspect_ratio === 'portrait' ? '172px' : '96px'};">
           ${(item.clips || []).map((c, i) => `
             <div class="clip-thumb" data-url="${c.url}" data-label="${escapeHtml(item.title || 'Film')} — Adegan ${i + 1}" title="Klik untuk preview Adegan ${i + 1}"
                  style="position: relative; cursor: pointer; border: 1px solid var(--glass-border); border-radius: 8px; overflow: hidden; background: #04070f; aspect-ratio: ${item.aspect_ratio === 'portrait' ? '9 / 16' : '16 / 9'};">
