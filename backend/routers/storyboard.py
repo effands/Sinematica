@@ -12,11 +12,12 @@ import subprocess
 import json
 
 from .. import settings
+from ..storyboard_actor_references import attach_character_references, select_actor_references
 
 router = APIRouter(prefix="/api/storyboard", tags=["Storyboard"])
 log = logging.getLogger("sinematica.routers.storyboard")
 
-def _inject_actors_info(actor_ids: str, character_info: str, saved_paths: List[str]) -> str:
+def _inject_actors_info(actor_ids: str, character_info: str, saved_paths: List[str]):
     if not actor_ids:
         return character_info
     
@@ -32,17 +33,11 @@ def _inject_actors_info(actor_ids: str, character_info: str, saved_paths: List[s
         with open(actors_db, "r", encoding="utf-8") as f:
             all_actors = json.load(f)
             
-        selected = [a for a in all_actors if a["id"] in actor_ids_list]
+        updated_info, selected = select_actor_references(actor_ids, character_info, all_actors)
         if not selected:
             return character_info
-            
-        appended_info = "\n\nDAFTAR AKTOR SPESIFIK (PASTIKAN MENGGUNAKAN SEED MEREKA UNTUK KARAKTER INI):\n"
-        for idx, a in enumerate(selected):
-            appended_info += f"- Aktor {idx+1} ({a['name']}): Seed={a['seed']}, Deskripsi Fisik={a['description']}\n"
-            if a.get("image_path") and Path(a["image_path"]).exists():
-                saved_paths.append(a["image_path"])
-                
-        return character_info + appended_info
+        saved_paths.extend(path for item in selected for path in item.get("paths") or [] if Path(path).exists())
+        return updated_info
     except Exception as ex:
         log.warning("Gagal memuat aktor: %s", ex)
         return character_info
@@ -141,8 +136,12 @@ async def generate_ai_storyboard(
     reference_images: List[UploadFile] = File(None)
 ):
     try:
-        saved_paths = []
-        character_info = _inject_actors_info(actor_ids, character_info, saved_paths)
+        actor_paths = []
+        uploaded_paths = []
+        actors_db = settings.DATA_DIR / "actors.json"
+        all_actors = json.loads(actors_db.read_text(encoding="utf-8")) if actors_db.exists() else []
+        character_info, selected_actors = select_actor_references(actor_ids, character_info, all_actors)
+        actor_paths.extend(path for item in selected_actors for path in item.get("paths") or [] if Path(path).exists())
         
         if reference_images:
             for img in reference_images:
@@ -152,7 +151,9 @@ async def generate_ai_storyboard(
                     dest = settings.UPLOADS_DIR / file_name
                     with open(dest, "wb") as buffer:
                         shutil.copyfileobj(img.file, buffer)
-                    saved_paths.append(str(dest))
+                    uploaded_paths.append(str(dest))
+
+        saved_paths = actor_paths + uploaded_paths
 
         storyboard = generate_storyboard(
             premise=premise,
@@ -170,11 +171,12 @@ async def generate_ai_storyboard(
             fixed_scene_duration=fixed_scene_duration,
             target_total_duration=target_total_duration
         )
+        storyboard = attach_character_references(storyboard, selected_actors)
 
         return {
             "success": True,
             "storyboard": storyboard,
-            "reference_images": saved_paths,
+            "reference_images": uploaded_paths,
         }
     except Exception as ex:
         log.error("Error generating storyboard: %s", ex, exc_info=True)
@@ -190,8 +192,10 @@ async def generate_mv_storyboard(
     audio_file: UploadFile = File(...)
 ):
     try:
-        saved_paths = []
-        character_info = _inject_actors_info(actor_ids, character_info, saved_paths)
+        actors_db = settings.DATA_DIR / "actors.json"
+        all_actors = json.loads(actors_db.read_text(encoding="utf-8")) if actors_db.exists() else []
+        character_info, selected_actors = select_actor_references(actor_ids, character_info, all_actors)
+        saved_paths = [path for item in selected_actors for path in item.get("paths") or [] if Path(path).exists()]
         
         ext = Path(audio_file.filename).suffix or ".mp3"
         file_name = f"music_{uuid.uuid4().hex[:8]}{ext}"
@@ -219,6 +223,7 @@ async def generate_mv_storyboard(
             character_info=character_info,
             image_paths=saved_paths
         )
+        storyboard = attach_character_references(storyboard, selected_actors)
         
         # Inject the audio path so jobs_executor can use it
         storyboard["music_track_path"] = str(dest)

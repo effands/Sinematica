@@ -591,6 +591,8 @@ PARAMETIK REQUEST (WAJIB 100% PATUH & RELEVAN):
    Field "visual_signature" WAJIB berisi kombinasi permanen yang unik dan mudah terlihat: warna/siluet pakaian,
    satu aksesori khas, serta rambut/usia/ciri wajah. Tidak boleh ada dua karakter dengan warna dominan,
    aksesori, siluet, dan ciri wajah yang mudah tertukar. Signature ini tidak boleh berubah antaradegan.
+   Jika daftar aktor spesifik memberikan `source_actor_id`, salin ID tersebut PERSIS ke karakter yang sesuai;
+   jangan menukar, menerjemahkan, atau mengarang ID baru.
 8. **Character Tagging Per Adegan (Wajib)**: Di setiap scene, isi "characters_in_scene" dengan daftar "id" karakter.
 9. **Speaker Lock (Wajib)**: Jika ada ucapan, isi array "dialogue" dengan speaker_id, kalimat persis, dan posisi
    layar. Hanya karakter tersebut yang boleh menggerakkan bibir saat kalimatnya; semua non-speaker menutup mulut
@@ -610,6 +612,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
     {{
       "id": 1,
       "name": "Nama Karakter",
+      "source_actor_id": "ID aktor persis dari daftar aktor spesifik, atau kosong jika bukan aktor tersimpan",
       "seed": {seed},
       "description": "Deskripsi visual lengkap",
       "visual_signature": "Kombinasi pakaian, aksesori, rambut/usia/ciri wajah yang permanen dan unik"
@@ -789,6 +792,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
     {{
       "id": 1,
       "name": "Nama Karakter Utama",
+      "source_actor_id": "ID aktor persis dari daftar aktor spesifik, atau kosong",
       "seed": {seed},
       "description": "Deskripsi visual karakter"
     }}
