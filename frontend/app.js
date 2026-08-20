@@ -851,7 +851,8 @@ function initDropzone() {
 }
 
 function renderImagePreviews() {
-  const list = document.getElementById('refImageList');
+  const list = document.getElementById('imagePreviewList');
+  if (!list) return;
   list.innerHTML = '';
 
   selectedRefFiles.forEach(file => {
