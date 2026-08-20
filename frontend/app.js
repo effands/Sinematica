@@ -183,12 +183,35 @@ function initSeoKitModal() {
       modal.classList.add('active');
 
       body.innerHTML = `
-        <div style="text-align: center; padding: 40px;">
-          <div style="font-size: 32px; margin-bottom: 12px;" class="pulse">🪄</div>
-          <h4 style="color: var(--neon-cyan); font-size: 16px; margin-bottom: 6px;">Meracik YouTube SEO & Marketing Kit...</h4>
-          <p style="font-size: 12px; color: var(--text-secondary);">Generating 3 Judul SEO (90-100 kar), Deskripsi 3 Paragraf, Prompt Thumbnail 16:9 & 10 Tags Kata Kunci</p>
+        <div class="seo-loading-state">
+          <div class="seo-loader-orbit" aria-hidden="true">
+            <span class="seo-loader-wand">🪄</span>
+          </div>
+          <h4>Meracik YouTube SEO & Marketing Kit<span class="seo-loading-dots"></span></h4>
+          <p id="seoLoadingStatus">AI sedang membaca judul dan premis film</p>
+          <div class="seo-loading-track"><span></span></div>
+          <small id="seoLoadingElapsed">Berjalan 0 detik</small>
         </div>
       `;
+
+      const loadingStartedAt = Date.now();
+      const loadingMessages = [
+        'AI sedang membaca judul dan premis film',
+        'Menganalisis kata kunci dan daya tarik penonton',
+        'Merancang judul, deskripsi, thumbnail, dan tags',
+        'Merapikan hasil SEO agar siap disalin'
+      ];
+      let loadingStep = 0;
+      const loadingTimer = window.setInterval(() => {
+        const elapsed = Math.floor((Date.now() - loadingStartedAt) / 1000);
+        const elapsedEl = document.getElementById('seoLoadingElapsed');
+        const statusEl = document.getElementById('seoLoadingStatus');
+        if (elapsedEl) elapsedEl.textContent = `Berjalan ${elapsed} detik`;
+        if (statusEl && elapsed > 0 && elapsed % 4 === 0) {
+          loadingStep = (loadingStep + 1) % loadingMessages.length;
+          statusEl.textContent = loadingMessages[loadingStep];
+        }
+      }, 1000);
 
       try {
         const res = await fetch('/api/storyboard/seo_kit', {
@@ -216,12 +239,19 @@ function initSeoKitModal() {
           tags_csv: rawKit.tags_csv || rawKit.tags || ''
         };
 
+        window.clearInterval(loadingTimer);
+
         body.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 16px;">
             <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
               <h4 style="color: var(--neon-cyan); font-size: 14px; margin-bottom: 8px;">🎯 3 Pilihan Judul Video YouTube Full SEO (90-100 Karakter):</h4>
               <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: var(--text-primary); line-height: 1.6;">
-                ${(kit.seo_titles || []).map(t => `<li style="margin-bottom: 6px;"><b>${t}</b> <span style="font-size: 11px; color: var(--text-muted);">(${t.length} kar)</span></li>`).join('')}
+                ${(kit.seo_titles || []).map((t, index) => `
+                  <li class="seo-title-row">
+                    <span><b>${escapeHtml(t)}</b> <span style="font-size: 11px; color: var(--text-muted);">(${t.length} kar)</span></span>
+                    <button type="button" class="btn-copy-seo-title" data-index="${index}" title="Salin judul ${index + 1}" aria-label="Salin judul ${index + 1}">📋</button>
+                  </li>
+                `).join('')}
               </ol>
             </div>
 
@@ -256,6 +286,14 @@ function initSeoKitModal() {
           showToast('Deskripsi YouTube berhasil di-copy!', 'success');
         });
 
+        body.querySelectorAll('.btn-copy-seo-title').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const title = (kit.seo_titles || [])[Number(btn.getAttribute('data-index'))] || '';
+            navigator.clipboard.writeText(title);
+            showToast('Judul SEO berhasil di-copy!', 'success');
+          });
+        });
+
         document.getElementById('btnCopyThumbPrompt').addEventListener('click', () => {
           navigator.clipboard.writeText(kit.thumbnail_prompt || '');
           showToast('Prompt thumbnail berhasil di-copy!', 'success');
@@ -267,6 +305,7 @@ function initSeoKitModal() {
         });
 
       } catch (err) {
+        window.clearInterval(loadingTimer);
         body.innerHTML = `<div style="color: #f43f5e; padding: 20px; text-align: center;">Gagal generate SEO kit: ${err.message}</div>`;
       }
     }

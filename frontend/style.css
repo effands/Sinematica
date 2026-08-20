@@ -1270,6 +1270,124 @@ button {
   100% { background-position: 200px 0; }
 }
 
+.seo-loading-state {
+  text-align: center;
+  padding: 42px 24px 36px;
+}
+
+.seo-loader-orbit {
+  position: relative;
+  width: 66px;
+  height: 66px;
+  margin: 0 auto 18px;
+  border: 3px solid rgba(56, 189, 248, 0.13);
+  border-top-color: #38bdf8;
+  border-right-color: #a855f7;
+  border-radius: 50%;
+  animation: seoOrbitSpin 1s linear infinite;
+  box-shadow: 0 0 24px rgba(56, 189, 248, 0.16);
+}
+
+.seo-loader-wand {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 27px;
+  animation: seoOrbitCounterSpin 1s linear infinite, seoWandPulse 1.2s ease-in-out infinite;
+}
+
+.seo-loading-state h4 {
+  margin: 0 0 7px;
+  color: var(--neon-cyan);
+  font-size: 16px;
+}
+
+.seo-loading-state p {
+  min-height: 18px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: opacity 0.2s ease;
+}
+
+.seo-loading-track {
+  width: min(330px, 86%);
+  height: 5px;
+  margin: 18px auto 10px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.seo-loading-track span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0ea5e9, #a855f7, #38bdf8);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.65);
+  animation: seoProgressSweep 1.35s ease-in-out infinite;
+}
+
+.seo-loading-state small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seo-loading-dots::after {
+  content: '';
+  animation: seoDots 1.4s steps(4, end) infinite;
+}
+
+.seo-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.seo-title-row > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-copy-seo-title {
+  flex: 0 0 auto;
+  width: 27px;
+  height: 27px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 7px;
+  background: rgba(56, 189, 248, 0.1);
+  color: #bae6fd;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.btn-copy-seo-title:hover {
+  transform: translateY(-1px);
+  background: rgba(56, 189, 248, 0.22);
+}
+
+@keyframes seoOrbitSpin { to { transform: rotate(360deg); } }
+@keyframes seoOrbitCounterSpin { to { transform: rotate(-360deg); } }
+@keyframes seoWandPulse { 50% { filter: drop-shadow(0 0 9px #a855f7); transform: scale(1.12); } }
+@keyframes seoProgressSweep {
+  0% { transform: translateX(-115%); }
+  100% { transform: translateX(340%); }
+}
+@keyframes seoDots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75%, 100% { content: '...'; }
+}
+
 /* Sleek Futuristic Neon Scrollbars for Modal & Containers */
 ::-webkit-scrollbar {
   width: 8px;
