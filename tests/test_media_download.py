@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.media_download import resolve_exact_media_url, stream_download
+from backend.media_download import resolve_exact_media_url, resolve_exact_media_url_with_retry, stream_download
 
 
 class _Response:
@@ -78,6 +78,28 @@ class ExactFlowMediaUrlTests(unittest.IsolatedAsyncioTestCase):
         result = await resolve_exact_media_url(Bridge(), "expected-media-id", "project-1")
 
         self.assertEqual(result, "https://flow-content.google/v/opaque-signed-token?Expires=123")
+
+    async def test_retries_until_flow_publishes_the_signed_url(self):
+        class Bridge:
+            def __init__(self):
+                self.calls = 0
+
+            async def trpc_request(self, *_args, **_kwargs):
+                self.calls += 1
+                if self.calls < 3:
+                    return {"status": 404, "error": "Requested entity was not found."}
+                return {
+                    "status": 200,
+                    "responseUrl": "https://flow-content.google/v/final-signed-token?Expires=123",
+                }
+
+        bridge = Bridge()
+        result = await resolve_exact_media_url_with_retry(
+            bridge, "expected-media-id", "project-1", "profile-2", attempts=3, delay=0
+        )
+
+        self.assertEqual(result, "https://flow-content.google/v/final-signed-token?Expires=123")
+        self.assertEqual(bridge.calls, 3)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Direct, streamed media downloads that avoid large base64 WebSocket transfers."""
 
+import asyncio
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import quote, urlparse
@@ -46,6 +47,20 @@ async def resolve_exact_media_url(
     ):
         return response_url
     return _find_exact_url(result, media_id)
+
+
+async def resolve_exact_media_url_with_retry(
+    bridge, media_id: str, project_id: str = "", instance_id: str = None,
+    *, attempts: int = 4, delay: float = 2.0,
+) -> str:
+    """Wait briefly for Flow to publish the signed CDN URL after a completed render."""
+    for attempt in range(1, max(1, attempts) + 1):
+        exact_url = await resolve_exact_media_url(bridge, media_id, project_id, instance_id)
+        if exact_url:
+            return exact_url
+        if attempt < attempts:
+            await asyncio.sleep(delay)
+    return ""
 
 
 def stream_download(

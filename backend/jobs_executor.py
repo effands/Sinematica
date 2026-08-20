@@ -17,7 +17,7 @@ from .character_reference_flow import resolve_character_reference_paths, upload_
 from .film_stitcher import extract_continuity_frame, stitch_scenes
 from .execution_metrics import finish_job_timing, record_output_file_size
 from .gallery_cleanup import cleanup_job_files, job_source_files
-from .media_download import resolve_exact_media_url, stream_download
+from .media_download import resolve_exact_media_url_with_retry, stream_download
 from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
 from .scene_continuity import build_continuity_prompt, continuity_start_image
 from .scene_audio_direction import apply_scene_audio_direction, resolve_master_music_track
@@ -406,7 +406,7 @@ async def download_file(
         download_url = url
         if media_id and hasattr(bridge, "trpc_request"):
             try:
-                exact_url = await resolve_exact_media_url(
+                exact_url = await resolve_exact_media_url_with_retry(
                     bridge, media_id.rsplit("/", 1)[-1], project_id or "", instance_id
                 )
                 if exact_url:
@@ -426,7 +426,7 @@ async def download_file(
             except Exception as ex:
                 log.warning("Unduhan langsung MP4 gagal; mencoba profil Chrome: %s", ex)
         result = await bridge.download_url_with_retry(
-            download_url, instance_id=instance_id, attempts=2, delay=1.0
+            download_url, instance_id=instance_id, timeout=60, attempts=1, delay=0
         )
         with open(dest_path, "wb") as out:
             out.write(result["data"])
