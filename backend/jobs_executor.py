@@ -25,7 +25,7 @@ from .execution_metrics import finish_job_timing, record_output_file_size
 from .gallery_cleanup import cleanup_job_files, job_source_files
 from .media_download import resolve_exact_media_url_with_retry, stream_download
 from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
-from .scene_continuity import build_continuity_prompt, continuity_start_image
+from .scene_continuity import continuity_start_image
 from .scene_audio_direction import apply_scene_audio_direction, resolve_master_music_track
 from .scene_direction import (
     apply_no_branding_direction,
@@ -35,7 +35,7 @@ from .scene_direction import (
 )
 from .storyboard_image import fetch_image_bytes, generate_storyboard_sheet
 
-from omniflash.generators import upload_image, generate_video_i2v, poll_video_status
+from omniflash.generators import upload_image, poll_video_status
 
 
 class _SheetAlreadyBuilt(Exception):
@@ -331,16 +331,33 @@ def resolve_scene_characters(scene: Dict[str, Any], characters: List[Dict[str, A
 
 def build_video_reference_ids(character_ids: List[str], storyboard_media_id: Optional[str],
                               policy_attempt: int = 0, limit: int = 10,
-                              drop_all_references: bool = False) -> List[str]:
-    """Keep identity sheets first; storyboard may only use an empty Flow slot."""
+                              drop_all_references: bool = False,
+                              continuity_media_id: Optional[str] = None) -> List[str]:
+    """Order Ingredients by continuity, identity, then scene composition."""
     if drop_all_references:
         return []
-    refs = list(dict.fromkeys(mid for mid in character_ids if mid))[:limit]
+    refs = []
+    if continuity_media_id:
+        refs.append(continuity_media_id)
+    for media_id in character_ids:
+        if media_id and media_id not in refs and len(refs) < limit:
+            refs.append(media_id)
     if not refs and storyboard_media_id:
         return [storyboard_media_id]
     if policy_attempt == 0 and storyboard_media_id and storyboard_media_id not in refs and len(refs) < limit:
         refs.append(storyboard_media_id)
-    return refs
+    return refs[:limit]
+
+
+def build_live_action_guard(children_mode: bool) -> str:
+    """Prevent adult/live-action projects from drifting into illustrated output."""
+    if children_mode:
+        return ""
+    return (
+        "\n\nLIVE-ACTION PHOTOGRAPHY ONLY: real human actors, natural skin pores, realistic hair and "
+        "fabric, cinematic camera capture. No cartoon, anime, illustration, painting, comic art, "
+        "stylized 3D character, doll-like face, or cel shading."
+    )
 
 
 _REFERENCE_IMAGE_POLICY_CODES = (
@@ -591,6 +608,7 @@ async def execute_storyboard_job(
             char_desc = char.get('description', '')
 
             char_prompt = custom_template.replace("{char_name}", char_name).replace("{char_seed}", str(char_seed)).replace("{char_desc}", char_desc)
+            char_prompt += build_live_action_guard(is_children)
             owned_reference_paths = resolve_character_reference_paths(char, storyboard)
             if owned_reference_paths:
                 char_prompt += (
@@ -735,7 +753,7 @@ async def execute_storyboard_job(
         scene_title = sc.get("title", f"Adegan {idx}")
         prompt = sc.get("prompt_for_flow", "")
         scene_duration = duration if force_uniform_duration else resolve_scene_duration(sc, duration)
-        if scene_duration == 10:
+        if scene_duration == 10 and not storyboard.get("script_mode"):
             shot_count = choose_shot_count(sc, prompt)
             log_event(
                 job_id,
@@ -799,10 +817,9 @@ async def execute_storyboard_job(
         # used ALONGSIDE the character seed image(s) as a second reference for the video render below.
         storyboard_media_id = None
         if enable_scene_storyboard_image:
-            is_cartoon = is_children or any(
-                any(kw in str(c.get("description") or "").lower() for kw in ("animal", "rabbit", "kelinci", "squirrel", "tupai", "3d", "kartun", "cartoon", "hewan", "fabel"))
-                for c in (storyboard.get("characters") or [])
-            )
+            # Cartoon sheets are an explicit production mode. Keyword guessing caused
+            # live-action drama characters to be rendered as illustrations.
+            is_cartoon = is_children
             scene_storyboard_template = (settings.CHILDREN_SCENE_STORYBOARD_TEMPLATE if is_cartoon
                                          else (cfg.get("scene_storyboard_template") or settings.DEFAULT_SCENE_STORYBOARD_TEMPLATE))
             sb_fields = {
@@ -817,6 +834,7 @@ async def execute_storyboard_job(
             storyboard_prompt = scene_storyboard_template
             for token, value in sb_fields.items():
                 storyboard_prompt = storyboard_prompt.replace(token, value)
+            storyboard_prompt += build_live_action_guard(is_children)
             _sb_manifest_slot = True  # manifest appended once the sheet list is known
             sb_target_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
 
@@ -942,7 +960,6 @@ async def execute_storyboard_job(
                 target_name = chosen["name"]
                 owns_continuity = (
                     available_continuity_id
-                    and policy_attempt == 0
                     and not drop_all_scene_references
                     and target_instance_id == continuity_instance_id
                 )
@@ -962,38 +979,17 @@ async def execute_storyboard_job(
                         storyboard_media_id,
                         policy_attempt=policy_attempt,
                         drop_all_references=drop_all_scene_references,
+                        continuity_media_id=available_continuity_id if owns_continuity else None,
                     )
 
-                    # A real end-frame is stronger than an ordinary visual reference: use it
-                    # as the literal I2V start frame before trying the legacy reference modes.
                     if owns_continuity:
-                        continuity_prompt = build_continuity_prompt(prompt, available_continuity_id)
-                        try:
-                            from omniflash.generators import generate_video_i2v
-                            log_event(
-                                job_id,
-                                f"🔗 [Adegan {idx}/{total_scenes}] Melanjutkan frame akhir adegan "
-                                f"{idx - 1} sebagai frame pembuka literal...",
-                                profile=target_name,
-                            )
-                            media_ids = await generate_video_i2v(
-                                bridge=bridge,
-                                prompt=continuity_prompt,
-                                aspect=aspect_ratio,
-                                project_id=inst_project_id,
-                                start_image_id=available_continuity_id,
-                                duration=scene_duration,
-                                instance_id=target_instance_id,
-                            )
-                        except Exception as continuity_err:
-                            log_event(
-                                job_id,
-                                f"⚠️ [{target_name}] Continuity I2V gagal ({continuity_err}). "
-                                "Kembali ke referensi karakter/storyboard biasa...",
-                                level="warning",
-                                profile=target_name,
-                            )
-                            media_ids = None
+                        log_event(
+                            job_id,
+                            f"🔗 [Adegan {idx}/{total_scenes}] Ingredients continuity aktif: frame akhir "
+                            f"adegan {idx - 1} ditempatkan pertama, lalu {len(character_ref_ids)} seed "
+                            "karakter dan storyboard terakhir.",
+                            profile=target_name,
+                        )
 
                     if drop_all_scene_references:
                         log_event(
@@ -1016,9 +1012,7 @@ async def execute_storyboard_job(
                     # Reference mode ("Ingredients") reads sheets as style/identity guides.
                     # Start-image mode would paste the sheet in as the literal opening frame,
                     # so any scene carrying the storyboard sheet must go through R2V.
-                    if not media_ids and (
-                        len(scene_ref_ids) >= 2 or storyboard_media_id in scene_ref_ids
-                    ):
+                    if not media_ids and scene_ref_ids:
                         try:
                             from omniflash.generators import generate_video_r2v
                             media_ids = await generate_video_r2v(
@@ -1031,41 +1025,7 @@ async def execute_storyboard_job(
                                 instance_id=target_instance_id
                             )
                         except Exception as r2v_err:
-                            log_event(job_id, f"⚠️ [{target_name}] Kendala R2V multi-image ({r2v_err}). Otomatis fallback coba I2V/T2V...", level="warning", profile=target_name)
-                            media_ids = None
-
-                    # Fall back to a start image only with a real cinematic frame — never the sheet.
-                    i2v_candidates = [mid for mid in scene_ref_ids if mid != storyboard_media_id]
-                    if not media_ids and i2v_candidates:
-                        try:
-                            from omniflash.generators import generate_video_i2v
-                            media_ids = await generate_video_i2v(
-                                bridge=bridge,
-                                prompt=prompt,
-                                aspect=aspect_ratio,
-                                project_id=inst_project_id,
-                                start_image_id=i2v_candidates[-1],
-                                duration=scene_duration,
-                                instance_id=target_instance_id
-                            )
-                        except Exception as i2v_err:
-                            log_event(job_id, f"⚠️ [{target_name}] Kendala I2V image ({i2v_err}). Otomatis fallback ke T2V...", level="warning", profile=target_name)
-                            media_ids = None
-
-                    if not media_ids and ref_media_id and not drop_all_scene_references:
-                        try:
-                            from omniflash.generators import generate_video_i2v
-                            media_ids = await generate_video_i2v(
-                                bridge=bridge,
-                                prompt=prompt,
-                                aspect=aspect_ratio,
-                                project_id=inst_project_id,
-                                start_image_id=ref_media_id,
-                                duration=scene_duration,
-                                instance_id=target_instance_id
-                            )
-                        except Exception as i2v_err2:
-                            log_event(job_id, f"⚠️ [{target_name}] Kendala I2V ref_media ({i2v_err2}). Otomatis fallback ke T2V...", level="warning", profile=target_name)
+                            log_event(job_id, f"⚠️ [{target_name}] Kendala Ingredients multi-image ({r2v_err}). Otomatis fallback ke T2V...", level="warning", profile=target_name)
                             media_ids = None
 
                     if not media_ids:

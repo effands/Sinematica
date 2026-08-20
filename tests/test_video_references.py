@@ -2,6 +2,7 @@ import unittest
 
 from backend.jobs_executor import (
     build_video_reference_ids,
+    build_live_action_guard,
     choose_instance_for_project,
     fictionalize_character_names,
     should_drop_character_references,
@@ -9,10 +10,39 @@ from backend.jobs_executor import (
 
 
 class VideoReferenceSelectionTests(unittest.TestCase):
+    def test_adult_mode_explicitly_forbids_cartoon_character_and_storyboard_images(self):
+        guard = build_live_action_guard(children_mode=False)
+        self.assertIn("LIVE-ACTION PHOTOGRAPHY ONLY", guard)
+        self.assertIn("no cartoon", guard.lower())
+
+    def test_children_mode_does_not_receive_live_action_guard(self):
+        self.assertEqual(build_live_action_guard(children_mode=True), "")
+
     def test_all_character_sheets_and_storyboard_fit_up_to_ten(self):
         self.assertEqual(
             build_video_reference_ids(["char-a", "char-b", "char-c"], "storyboard"),
             ["char-a", "char-b", "char-c", "storyboard"],
+        )
+
+    def test_continuity_frame_is_first_and_storyboard_is_last_ingredient(self):
+        self.assertEqual(
+            build_video_reference_ids(
+                ["char-a", "char-b"],
+                "storyboard",
+                continuity_media_id="last-frame",
+            ),
+            ["last-frame", "char-a", "char-b", "storyboard"],
+        )
+
+    def test_ingredient_limit_prioritizes_last_frame_then_characters(self):
+        self.assertEqual(
+            build_video_reference_ids(
+                ["char-a", "char-b", "char-c"],
+                "storyboard",
+                continuity_media_id="last-frame",
+                limit=3,
+            ),
+            ["last-frame", "char-a", "char-b"],
         )
 
     def test_ten_character_sheets_take_priority_over_storyboard(self):

@@ -783,6 +783,7 @@ function initStoryboardForm() {
   const chkMicro = document.getElementById('chkMicrodramaMode');
   const chkUgc = document.getElementById('chkUgcMode');
   const chkChildren = document.getElementById('chkChildrenMode');
+  const chkScript = document.getElementById('chkScriptMode');
   const modeBoxes = [chkMicro, chkUgc, chkChildren].filter(Boolean);
   modeBoxes.forEach(box => {
     box.addEventListener('change', () => {
@@ -790,6 +791,36 @@ function initStoryboardForm() {
       if (box.checked) modeBoxes.forEach(other => { if (other !== box) other.checked = false; });
     });
   });
+
+  if (chkScript) {
+    chkScript.addEventListener('change', () => {
+      const label = document.getElementById('premiseInputLabel');
+      const input = document.getElementById('premiseInput');
+      const hint = document.getElementById('scriptModeHint');
+      const autoButton = document.getElementById('autoSuggestBtn');
+      if (chkScript.checked) {
+        if (label) label.textContent = '📄 Script Lengkap (alur & dialog tidak diubah):';
+        if (input) {
+          input.rows = 14;
+          input.placeholder = 'Tempel script lengkap di sini: episode, lokasi, aksi, karakter, dan dialog...';
+        }
+        if (hint) hint.style.display = 'block';
+        if (autoButton) autoButton.disabled = true;
+        const submit = document.getElementById('generateStoryboardBtn');
+        if (submit) submit.innerHTML = '📄 Format Script & Buat Storyboard Render';
+      } else {
+        if (label) label.textContent = '📝 Tema Singkat / Ide Utama Film (Bahasa Indonesia):';
+        if (input) {
+          input.rows = 5;
+          input.placeholder = 'Ketik tema singkat di sini (contoh: Kisah petualangan pendekar wanita di kota cyberpunk berhujan neon)...';
+        }
+        if (hint) hint.style.display = 'none';
+        if (autoButton) autoButton.disabled = false;
+        const submit = document.getElementById('generateStoryboardBtn');
+        if (submit) submit.innerHTML = '✨ Generate AI Storyboard (Gemini 3.6 Flash)';
+      }
+    });
+  }
 
   const presetSelect = document.getElementById('durationPresetSelect');
   const sceneInput = document.getElementById('sceneCountInput');
@@ -964,6 +995,7 @@ function initStoryboardForm() {
     const isMicro = document.getElementById('chkMicrodramaMode') ? document.getElementById('chkMicrodramaMode').checked : false;
     const isUgc = document.getElementById('chkUgcMode') ? document.getElementById('chkUgcMode').checked : false;
     const isChildren = document.getElementById('chkChildrenMode') ? document.getElementById('chkChildrenMode').checked : false;
+    const isScriptMode = chkScript ? chkScript.checked : false;
 
     const targetCountryEl = document.getElementById('targetCountryInput');
     const targetCountry = targetCountryEl ? targetCountryEl.value.trim() : '';
@@ -985,6 +1017,7 @@ function initStoryboardForm() {
     formData.append('microdrama_mode', isMicro);
     formData.append('ugc_mode', isUgc);
     formData.append('children_mode', isChildren);
+    formData.append('script_mode', isScriptMode);
     if (seed) formData.append('character_seed', seed);
     if (consistentChar) formData.append('character_info', consistentChar);
     if (targetCountry) formData.append('target_country', targetCountry);
@@ -1001,12 +1034,16 @@ function initStoryboardForm() {
 
     const btn = form.querySelector('button[type="submit"]');
     btn.disabled = true;
-    btn.innerHTML = '⚡ Generating Storyboard (Gemini 3.6 Flash)...';
+    btn.innerHTML = isScriptMode
+      ? '⚙️ Memformat Script Tanpa Mengubah Cerita...'
+      : '⚡ Generating Storyboard (Gemini 3.6 Flash)...';
 
     try {
       showCuteAiLoading(
-        '🎬 Generating Storyboard Sinematik...',
-        `Sedang meracik ${sceneCount} adegan 10s dengan multi-angle camera & seed karakter konsisten...`
+        isScriptMode ? '📄 Memformat Script untuk Render...' : '🎬 Generating Storyboard Sinematik...',
+        isScriptMode
+          ? `Membagi script menjadi ${sceneCount} adegan teknis tanpa mengubah alur atau dialog...`
+          : `Sedang meracik ${sceneCount} adegan dengan multi-angle camera & seed karakter konsisten...`
       );
 
       showToast('Merancang alur adegan dan prompt sinematik dengan Gemini 3.6 Flash...', 'info', 'Gemini AI Studio');
@@ -1031,6 +1068,7 @@ function initStoryboardForm() {
       currentStoryboard.microdrama_mode = isMicro;
       currentStoryboard.ugc_mode = isUgc;
       currentStoryboard.children_mode = isChildren;
+      currentStoryboard.script_mode = isScriptMode;
       if (data.reference_images && data.reference_images.length) {
         currentStoryboard._theme_image_path = data.reference_images[0];
       }
@@ -1048,7 +1086,9 @@ function initStoryboardForm() {
     } finally {
       hideCuteAiLoading();
       btn.disabled = false;
-      btn.innerHTML = '✨ Generate AI Storyboard (Gemini 3.6 Flash)';
+      btn.innerHTML = isScriptMode
+        ? '📄 Format Script & Buat Storyboard Render'
+        : '✨ Generate AI Storyboard (Gemini 3.6 Flash)';
     }
   });
 
@@ -1490,6 +1530,8 @@ function bindStoryboardLiveEditing() {
       setChecked('chkMicrodramaMode', currentStoryboard.microdrama_mode);
       setChecked('chkUgcMode', currentStoryboard.ugc_mode);
       setChecked('chkChildrenMode', currentStoryboard.children_mode);
+      setChecked('chkScriptMode', currentStoryboard.script_mode);
+      document.getElementById('chkScriptMode')?.dispatchEvent(new Event('change'));
 
       form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
       showToast('Memulai regenerate full storyboard baru...', 'info');

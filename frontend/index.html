@@ -217,8 +217,15 @@
 
                 <!-- Tema & Premis -->
                 <div class="form-group" style="margin: 0;">
-                  <label style="font-size: 14px; font-weight: 700; color: var(--neon-cyan); margin-bottom: 8px; display: block;">📝 Tema Singkat / Ide Utama Film (Bahasa Indonesia):</label>
+                  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; flex-wrap:wrap;">
+                    <label id="premiseInputLabel" style="font-size: 14px; font-weight: 700; color: var(--neon-cyan); margin:0;">📝 Tema Singkat / Ide Utama Film (Bahasa Indonesia):</label>
+                    <label style="display:flex; align-items:center; gap:7px; padding:6px 10px; border-radius:999px; border:1px solid rgba(56,189,248,.35); background:rgba(56,189,248,.08); color:#bae6fd; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;" title="AI hanya memformat naskah menjadi prompt teknis tanpa mengubah alur dan dialog">
+                      <input type="checkbox" id="chkScriptMode" style="accent-color:var(--neon-cyan); width:15px; height:15px;">
+                      📄 Pakai Script Sendiri
+                    </label>
+                  </div>
                   <textarea id="premiseInput" rows="5" placeholder="Ketik tema singkat di sini (contoh: Kisah petualangan pendekar wanita di kota cyberpunk berhujan neon)..." required style="width: 100%; border-radius: 12px; padding: 16px; font-size: 14px; line-height: 1.6; background: rgba(4, 7, 16, 0.7); border: 1px solid rgba(56, 189, 248, 0.25); color: #ffffff; font-family: var(--font-body); transition: all 0.3s;"></textarea>
+                  <small id="scriptModeHint" style="display:none; color:#7dd3fc; margin-top:7px; line-height:1.45;">Alur dan dialog dipertahankan. AI hanya membagi scene dan menambahkan arahan teknis kamera, blocking, pencahayaan, serta durasi.</small>
                 </div>
 
                 <!-- Dropzone Gambar Referensi -->

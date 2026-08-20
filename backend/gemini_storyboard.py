@@ -427,7 +427,8 @@ def generate_storyboard(
     dracin_theme: str = "",
     target_total_duration: Optional[int] = None,
     fixed_scene_duration: Optional[int] = None,
-    children_mode: bool = False
+    children_mode: bool = False,
+    script_mode: bool = False,
 ) -> Dict[str, Any]:
     """Generate multi-scene structured storyboard JSON using the configured AI providers."""
 
@@ -489,6 +490,23 @@ anamorphic lens, teal-and-orange grading, human child characters.
     action_density_rules = CHILDREN_ACTION_RULES if children_mode else ADULT_ACTION_RULES
     local_realism_rules = "" if children_mode else build_local_realism_rules(target_country)
     target_lang = "Indonesia"
+
+    script_mode_rules = f"""
+MODE SCRIPT SENDIRI — FORMATTER TEKNIS SAJA (PRIORITAS TERTINGGI):
+Naskah di bawah adalah karya final pengguna. DILARANG mengubah alur, dialog, urutan kejadian,
+hubungan karakter, twist, lokasi, atau akhir cerita. Jangan menambah konflik, tokoh, dialog,
+kejadian, maupun ending baru. Tugas Anda HANYA:
+1. Membagi naskah secara berurutan menjadi tepat {scene_count} scene render.
+2. Menyalin dialog asli secara VERBATIM ke field `dialogue` dan `prompt_for_flow`.
+3. Mengubah arahan visual menjadi prompt teknis Bahasa Inggris untuk Google Flow—kamera, blocking,
+   pencahayaan, kontinuitas, dan durasi—tanpa menulis ulang isi cerita.
+4. Jika satu bagian terlalu panjang, pecah secara kronologis; jangan meringkas atau membuang kejadian.
+
+NASKAH ASLI YANG WAJIB DIPERTAHANKAN:
+--- MULAI NASKAH ---
+{premise}
+--- SELESAI NASKAH ---
+""" if script_mode else ""
 
     if fixed_scene_duration:
         # User asked for one fixed clip length, so the film length stays predictable:
@@ -552,6 +570,7 @@ Tugas Anda adalah meracik **STORYBOARD SINEMATIK KONSISTEN BANYAK KARAKTER & DYN
 {local_realism_rules}
 {POLICY_SAFE_RULES}
 {children_visual_rules}
+{script_mode_rules}
 
 ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
 1. **Multi-Character Seed Matrix (Wajib)**: Dukung sampai 10 karakter berbeda dengan menyebutkan Seed ID unik masing-masing (misal: Main Hero Seed `{seed}`, Companion Seed `{seed+101}`, Rival Seed `{seed+202}`). Pertahankan ciri visual wajah dan baju di setiap adegan!
@@ -670,6 +689,9 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
         storyboard["characters"] = ensure_unique_character_signatures(storyboard.get("characters") or [])
         storyboard["character_seed"] = seed
         storyboard["children_mode"] = children_mode
+        storyboard["script_mode"] = script_mode
+        if script_mode:
+            storyboard["source_script"] = premise
         storyboard["generated_via"] = result.provider
         storyboard["generated_model"] = result.model
         return storyboard
@@ -691,6 +713,9 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
             storyboard["characters"] = ensure_unique_character_signatures(storyboard.get("characters") or [])
             storyboard["character_seed"] = seed
             storyboard["children_mode"] = children_mode
+            storyboard["script_mode"] = script_mode
+            if script_mode:
+                storyboard["source_script"] = premise
             storyboard["generated_via"] = "web2api_fallback"
             log.info("Storyboard berhasil dibuat via fallback Web2API (%d adegan, seed %d)!",
                      len(storyboard.get("scenes", [])), seed)
