@@ -1463,7 +1463,8 @@ async function pollJobStatus(jobId) {
     const logs = data.logs || [];
 
     const timingText = job.processing_duration ? ` — Waktu proses: ${job.processing_duration}` : '';
-    document.getElementById('executionStatusText').textContent = `Job ${job.job_id} — Status: ${job.status.toUpperCase()}${timingText}`;
+    const sizeText = job.output_size_display ? ` — Ukuran: ${job.output_size_display}` : '';
+    document.getElementById('executionStatusText').textContent = `Job ${job.job_id} — Status: ${job.status.toUpperCase()}${timingText}${sizeText}`;
 
     const stopBtn = document.getElementById('btnStopExecution');
     if (stopBtn) {

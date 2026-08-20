@@ -1,6 +1,7 @@
 """Timing fields shared by automatic and manual render jobs."""
 
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 
@@ -23,4 +24,13 @@ def finish_job_timing(job: Dict[str, Any], now: Optional[float] = None) -> Dict[
     job["completed_at"] = finished
     job["processing_seconds"] = elapsed
     job["processing_duration"] = format_elapsed(elapsed)
+    return job
+
+
+def record_output_file_size(job: Dict[str, Any], output_path) -> Dict[str, Any]:
+    size_bytes = Path(output_path).stat().st_size
+    size_mb = round(size_bytes / (1024 * 1024), 2)
+    job["output_size_bytes"] = size_bytes
+    job["output_size_mb"] = size_mb
+    job["output_size_display"] = f"{size_bytes / (1024 * 1024):.2f} MB"
     return job

@@ -14,7 +14,7 @@ from . import settings
 from .bridge_manager import get_bridge, ensure_ready
 from .character_seed_guard import missing_character_seeds
 from .film_stitcher import extract_continuity_frame, stitch_scenes
-from .execution_metrics import finish_job_timing
+from .execution_metrics import finish_job_timing, record_output_file_size
 from .gallery_cleanup import cleanup_job_files, job_source_files
 from .media_download import resolve_exact_media_url, stream_download
 from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
@@ -171,6 +171,7 @@ def mark_render_job_completed(job_id: str, film_path: str):
         job["status"] = "completed"
         job["cinematic_film_path"] = film_path
         job["cinematic_film_url"] = f"/storage/jobs/{job_id}/{Path(film_path).name}"
+        record_output_file_size(job, film_path)
         finish_job_timing(job)
         _save_history()
 
@@ -1117,11 +1118,13 @@ async def execute_storyboard_job(
             final_filename = os.path.basename(film_path)
             job_state["cinematic_film_url"] = f"/storage/jobs/{job_id}/{final_filename}"
             job_state["status"] = "completed"
+            record_output_file_size(job_state, film_path)
             finish_job_timing(job_state)
             log_event(
                 job_id,
                 "✅ [100%] SELURUH PROSES SELESAI! Film sinematik utuh & Subtitle SRT siap diputar "
-                f"di Galeri. Waktu proses total: {job_state['processing_duration']}.",
+                f"di Galeri. Waktu proses total: {job_state['processing_duration']}; "
+                f"ukuran file: {job_state['output_size_display']}.",
             )
         except Exception as ex:
             log_event(job_id, f"⚠️ Gagal menggabungkan film sinematik: {ex}", level="warning")
