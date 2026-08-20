@@ -7,6 +7,7 @@ let currentJobId = null;
 let pollTimer = null;
 let selectedRefFiles = [];
 let selectedRenderClips = []; // ordered {job_id, filename, label} picked from Gallery for Auto Render
+const selectedHistoryIndexes = new Set();
 
 // Groups terminal log lines into a small set of colors: error/warning (from backend level),
 // success (completion messages), profile (Chrome worker actions), or default system info.
@@ -399,6 +400,9 @@ function initStoryboardHistoryModal() {
   const modal = document.getElementById('storyboardHistoryModal');
   const openBtn = document.getElementById('btnOpenHistoryModalBtn');
   const closeBtn = document.getElementById('closeHistoryModalBtn');
+  const selectAll = document.getElementById('selectAllHistoryCheckbox');
+  const deleteSelected = document.getElementById('deleteSelectedHistoryBtn');
+  const refresh = document.getElementById('refreshHistoryTabBtn');
 
   if (closeBtn && modal) {
     closeBtn.addEventListener('click', () => modal.classList.remove('active'));
@@ -409,6 +413,69 @@ function initStoryboardHistoryModal() {
       const navItem = document.querySelector('.nav-item[data-tab="tab-history"]');
       if (navItem) navItem.click();
     });
+  }
+
+  if (refresh) {
+    refresh.addEventListener('click', () => {
+      selectedHistoryIndexes.clear();
+      renderHistoryTab();
+    });
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      const cards = document.querySelectorAll('#historyTabBody .history-select-checkbox');
+      selectedHistoryIndexes.clear();
+      if (selectAll.checked) {
+        cards.forEach(box => selectedHistoryIndexes.add(Number(box.dataset.index)));
+      }
+      cards.forEach(box => { box.checked = selectAll.checked; });
+      updateHistorySelectionControls(cards.length);
+    });
+  }
+
+  if (deleteSelected) {
+    deleteSelected.addEventListener('click', () => {
+      let history = [];
+      try {
+        history = JSON.parse(localStorage.getItem('sinematica_storyboard_history') || '[]');
+      } catch (_) {}
+      const indexes = StoryboardHistorySelection.normalizeSelectedIndexes(
+        selectedHistoryIndexes, history.length
+      );
+      if (!indexes.length) return;
+
+      showCustomConfirm(
+        'Hapus Storyboard Terpilih',
+        `Hapus permanen ${indexes.length} storyboard terpilih dari Scene Master?`,
+        `Ya, Hapus ${indexes.length}`,
+        '🗑️',
+        () => {
+          const remaining = StoryboardHistorySelection.removeSelectedHistory(history, indexes);
+          localStorage.setItem('sinematica_storyboard_history', JSON.stringify(remaining));
+          selectedHistoryIndexes.clear();
+          showToast(`${indexes.length} storyboard berhasil dihapus.`, 'success');
+          renderHistoryTab();
+        }
+      );
+    });
+  }
+}
+
+function updateHistorySelectionControls(totalItems) {
+  const selectAll = document.getElementById('selectAllHistoryCheckbox');
+  const deleteSelected = document.getElementById('deleteSelectedHistoryBtn');
+  const selectedCount = selectedHistoryIndexes.size;
+  if (selectAll) {
+    selectAll.checked = totalItems > 0 && selectedCount === totalItems;
+    selectAll.indeterminate = selectedCount > 0 && selectedCount < totalItems;
+    selectAll.disabled = totalItems === 0;
+  }
+  if (deleteSelected) {
+    deleteSelected.disabled = selectedCount === 0;
+    deleteSelected.textContent = `🗑️ Hapus Terpilih (${selectedCount})`;
+    deleteSelected.style.opacity = selectedCount ? '1' : '.45';
+    deleteSelected.style.cursor = selectedCount ? 'pointer' : 'not-allowed';
   }
 }
 
@@ -421,7 +488,15 @@ function renderHistoryTab() {
     history = JSON.parse(localStorage.getItem('sinematica_storyboard_history') || '[]');
   } catch (_) {}
 
+  const normalizedSelection = StoryboardHistorySelection.normalizeSelectedIndexes(
+    selectedHistoryIndexes, history.length
+  );
+  selectedHistoryIndexes.clear();
+  normalizedSelection.forEach(index => selectedHistoryIndexes.add(index));
+
   if (history.length === 0) {
+    selectedHistoryIndexes.clear();
+    updateHistorySelectionControls(0);
     container.innerHTML = `
       <div class="empty-state" style="padding: 60px 20px;">
         <div class="empty-icon" style="font-size: 48px; margin-bottom: 12px;">📜</div>
@@ -435,7 +510,8 @@ function renderHistoryTab() {
   container.innerHTML = `
     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 24px;">
       ${history.map((item, idx) => `
-        <div class="history-item-card" style="position: relative; background: linear-gradient(145deg, rgba(12, 18, 36, 0.85), rgba(20, 29, 54, 0.75)); border: 1px solid rgba(56, 189, 248, 0.25); padding: 24px; border-radius: 18px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; justify-content: space-between; transition: all 0.3s ease; height: 100%;">
+        <div class="history-item-card" data-index="${idx}" style="position: relative; background: linear-gradient(145deg, rgba(12, 18, 36, 0.85), rgba(20, 29, 54, 0.75)); border: 1px solid ${selectedHistoryIndexes.has(idx) ? 'rgba(56, 189, 248, .85)' : 'rgba(56, 189, 248, 0.25)'}; padding: 24px; border-radius: 18px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; justify-content: space-between; transition: all 0.3s ease; height: 100%;">
+          <input type="checkbox" class="history-select-checkbox" data-index="${idx}" ${selectedHistoryIndexes.has(idx) ? 'checked' : ''} aria-label="Pilih ${escapeHtml(item.film_title || 'storyboard')}" style="position:absolute; top:20px; left:18px; width:17px; height:17px; accent-color:var(--neon-cyan); cursor:pointer; z-index:2;">
           
           <!-- Floating Top-Right Delete X Icon Button -->
           <button type="button" class="btn-delete-history-tab-item" data-index="${idx}" title="Hapus dari Riwayat" style="position: absolute; top: 16px; right: 16px; width: 30px; height: 30px; border-radius: 50%; background: rgba(244, 63, 94, 0.15); border: 1px solid rgba(244, 63, 94, 0.4); color: #f43f5e; font-size: 13px; font-weight: 800; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
@@ -444,7 +520,7 @@ function renderHistoryTab() {
 
           <div>
             <!-- Header: Title & Badges -->
-            <div style="margin-bottom: 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 12px; padding-right: 36px;">
+            <div style="margin-bottom: 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 12px; padding-right: 36px; padding-left: 28px;">
               <h4 style="color: #ffffff; font-size: 17px; font-weight: 800; margin: 0 0 8px 0; font-family: var(--font-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(item.film_title || 'Film Sinematik')}">🎬 ${escapeHtml(item.film_title || 'Film Sinematik')}</h4>
               
               <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
@@ -475,6 +551,19 @@ function renderHistoryTab() {
     </div>
   `;
 
+  container.querySelectorAll('.history-select-checkbox').forEach(box => {
+    box.addEventListener('change', () => {
+      const index = Number(box.dataset.index);
+      if (box.checked) selectedHistoryIndexes.add(index);
+      else selectedHistoryIndexes.delete(index);
+      const card = box.closest('.history-item-card');
+      if (card) card.style.borderColor = box.checked
+        ? 'rgba(56, 189, 248, .85)'
+        : 'rgba(56, 189, 248, .25)';
+      updateHistorySelectionControls(history.length);
+    });
+  });
+
   container.querySelectorAll('.btn-delete-history-tab-item').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -489,6 +578,7 @@ function renderHistoryTab() {
             let h = JSON.parse(localStorage.getItem('sinematica_storyboard_history') || '[]');
             h.splice(idx, 1);
             localStorage.setItem('sinematica_storyboard_history', JSON.stringify(h));
+            selectedHistoryIndexes.clear();
             showToast('Item berhasil dihapus dari riwayat!', 'success');
             renderHistoryTab();
           } catch (err) {
@@ -512,6 +602,7 @@ function renderHistoryTab() {
       }
     });
   });
+  updateHistorySelectionControls(history.length);
 }
 
 function initFleetTestPrompt() {
