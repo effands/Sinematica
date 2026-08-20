@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import urllib.request
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -329,14 +330,45 @@ def resolve_scene_characters(scene: Dict[str, Any], characters: List[Dict[str, A
 
 
 def build_video_reference_ids(character_ids: List[str], storyboard_media_id: Optional[str],
-                              policy_attempt: int = 0, limit: int = 10) -> List[str]:
+                              policy_attempt: int = 0, limit: int = 10,
+                              drop_all_references: bool = False) -> List[str]:
     """Keep identity sheets first; storyboard may only use an empty Flow slot."""
+    if drop_all_references:
+        return []
     refs = list(dict.fromkeys(mid for mid in character_ids if mid))[:limit]
     if not refs and storyboard_media_id:
         return [storyboard_media_id]
     if policy_attempt == 0 and storyboard_media_id and storyboard_media_id not in refs and len(refs) < limit:
         refs.append(storyboard_media_id)
     return refs
+
+
+_REFERENCE_IMAGE_POLICY_CODES = (
+    "PUBLIC_ERROR_PROMINENT_PEOPLE_FILTER_FAILED",
+    "PUBLIC_ERROR_IP_INPUT_IMAGE",
+)
+
+
+def should_drop_character_references(rejection_reason: str, policy_attempt: int,
+                                     max_policy_rewrites: int) -> bool:
+    """Use prompt-only mode on the final retry when Flow rejects an input image."""
+    reason = rejection_reason or ""
+    is_reference_rejection = any(code in reason for code in _REFERENCE_IMAGE_POLICY_CODES)
+    return is_reference_rejection and policy_attempt >= max_policy_rewrites
+
+
+def fictionalize_character_names(prompt: str, character_names: List[str]) -> str:
+    """Remove potentially protected names while keeping stable aliases for the scene."""
+    rewritten = prompt or ""
+    unique_names = list(dict.fromkeys(name.strip() for name in character_names if name and name.strip()))
+    for index, name in enumerate(unique_names):
+        alias = f"Fictional Character {chr(ord('A') + index)}"
+        rewritten = re.sub(re.escape(name), alias, rewritten, flags=re.IGNORECASE)
+    return (
+        rewritten.rstrip()
+        + "\n\nUse entirely original fictional adult characters with non-celebrity faces. "
+        "Do not imitate any real person, public figure, actor, protected character, brand, or franchise."
+    )
 
 
 def choose_instance_for_project(instances: List[Dict[str, Any]], project_id: Optional[str]) -> Optional[str]:
@@ -882,6 +914,10 @@ async def execute_storyboard_job(
         # cannot leave the whole film waiting at 95%.
         max_policy_rewrites = int(cfg.get("max_policy_rewrites", 2) or 0)
         policy_attempt = 0
+        drop_all_scene_references = False
+        scene_characters_for_retry = resolve_scene_characters(
+            sc, storyboard.get("characters") or [], character_media_ids
+        )
         available_continuity_id = continuity_start_image(
             continuity_media_id, continuity_scene_number, idx
         )
@@ -907,6 +943,7 @@ async def execute_storyboard_job(
                 owns_continuity = (
                     available_continuity_id
                     and policy_attempt == 0
+                    and not drop_all_scene_references
                     and target_instance_id == continuity_instance_id
                 )
                 inst_project_id = (
@@ -918,10 +955,13 @@ async def execute_storyboard_job(
 
                 try:
                     media_ids = None
-                    v_chars = resolve_scene_characters(sc, storyboard.get("characters") or [], character_media_ids)
+                    v_chars = scene_characters_for_retry
                     character_ref_ids = [c["media_id"] for c in v_chars if c.get("media_id")]
                     scene_ref_ids = build_video_reference_ids(
-                        character_ref_ids, storyboard_media_id, policy_attempt=policy_attempt
+                        character_ref_ids,
+                        storyboard_media_id,
+                        policy_attempt=policy_attempt,
+                        drop_all_references=drop_all_scene_references,
                     )
 
                     # A real end-frame is stronger than an ordinary visual reference: use it
@@ -955,7 +995,16 @@ async def execute_storyboard_job(
                             )
                             media_ids = None
 
-                    if policy_attempt >= 1 and character_ref_ids:
+                    if drop_all_scene_references:
+                        log_event(
+                            job_id,
+                            f"🧑‍🎨 [Adegan {idx}/{total_scenes}] Retry final tanpa image reference: "
+                            "sheet/storyboard dianggap menyerupai tokoh terkenal; memakai prompt-only "
+                            "dengan karakter fiktif generik.",
+                            level="warning",
+                            profile=target_name,
+                        )
+                    elif policy_attempt >= 1 and character_ref_ids:
                         log_event(
                             job_id,
                             f"🛡️ [Adegan {idx}/{total_scenes}] Retry aman: tetap memakai "
@@ -967,7 +1016,9 @@ async def execute_storyboard_job(
                     # Reference mode ("Ingredients") reads sheets as style/identity guides.
                     # Start-image mode would paste the sheet in as the literal opening frame,
                     # so any scene carrying the storyboard sheet must go through R2V.
-                    if not media_ids and (len(scene_ref_ids) >= 2 or storyboard_media_id):
+                    if not media_ids and (
+                        len(scene_ref_ids) >= 2 or storyboard_media_id in scene_ref_ids
+                    ):
                         try:
                             from omniflash.generators import generate_video_r2v
                             media_ids = await generate_video_r2v(
@@ -1001,7 +1052,7 @@ async def execute_storyboard_job(
                             log_event(job_id, f"⚠️ [{target_name}] Kendala I2V image ({i2v_err}). Otomatis fallback ke T2V...", level="warning", profile=target_name)
                             media_ids = None
 
-                    if not media_ids and ref_media_id:
+                    if not media_ids and ref_media_id and not drop_all_scene_references:
                         try:
                             from omniflash.generators import generate_video_i2v
                             media_ids = await generate_video_i2v(
@@ -1142,6 +1193,9 @@ async def execute_storyboard_job(
                 break
 
             policy_attempt += 1
+            drop_all_scene_references = should_drop_character_references(
+                policy_rejection, policy_attempt, max_policy_rewrites
+            )
             log_event(job_id, f"🧠 [Adegan {idx}/{total_scenes}] Prompt/gambar ditolak filter. Meminta provider AI utama meracik prompt alternatif (percobaan {policy_attempt}/{max_policy_rewrites})...")
 
             from .gemini_storyboard import sanitize_prompt_for_policy
@@ -1154,6 +1208,11 @@ async def execute_storyboard_job(
                 revised, sc, storyboard, music_video=music_video_mode
             )
             prompt = apply_no_branding_direction(prompt)
+            if drop_all_scene_references:
+                prompt = fictionalize_character_names(
+                    prompt,
+                    [c.get("name", "") for c in scene_characters_for_retry],
+                )
             sc["prompt_for_flow"] = prompt
             scene_record["prompt"] = prompt
             scene_record["prompt_rewritten"] = policy_attempt
