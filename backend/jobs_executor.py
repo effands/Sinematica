@@ -13,6 +13,7 @@ import uuid
 from . import settings
 from .bridge_manager import get_bridge, ensure_ready
 from .character_seed_guard import missing_character_seeds
+from .character_reference_flow import resolve_character_reference_paths, upload_character_references
 from .film_stitcher import extract_continuity_frame, stitch_scenes
 from .execution_metrics import finish_job_timing, record_output_file_size
 from .gallery_cleanup import cleanup_job_files, job_source_files
@@ -552,11 +553,41 @@ async def execute_storyboard_job(
             char_desc = char.get('description', '')
 
             char_prompt = custom_template.replace("{char_name}", char_name).replace("{char_seed}", str(char_seed)).replace("{char_desc}", char_desc)
+            owned_reference_paths = resolve_character_reference_paths(char, storyboard)
+            if owned_reference_paths:
+                char_prompt += (
+                    "\n\nATTACHED CHARACTER REFERENCES ARE THE SINGLE SOURCE OF TRUTH for this character's "
+                    "face, hairstyle, body shape, costume silhouette, colour palette, accessories, and "
+                    "distinctive marks. Combine the views into one consistent identity; do not redesign, "
+                    "recolour, substitute, or borrow traits from any other character."
+                )
 
             for try_cnt in range(1, 3):
                 try:
+                    reference_media_ids = await upload_character_references(
+                        bridge, owned_reference_paths, project_id, first_target_id
+                    ) if owned_reference_paths else []
+                    if owned_reference_paths and len(reference_media_ids) != len(owned_reference_paths):
+                        raise RuntimeError(
+                            f"Hanya {len(reference_media_ids)}/{len(owned_reference_paths)} referensi "
+                            f"karakter '{char_name}' berhasil diunggah."
+                        )
+                    if reference_media_ids:
+                        log_event(
+                            job_id,
+                            f"🧩 [{5 + c_idx}%] Memakai {len(reference_media_ids)} image reference "
+                            f"khusus untuk karakter '{char_name}'.",
+                        )
                     log_event(job_id, f"⏳ [{5 + c_idx}%] Mengirim request character seed image '{char_name}' (Seed: {char_seed}) [Percobaan {try_cnt}]...")
-                    img_res = await generate_character_image(bridge, prompt=char_prompt, aspect="portrait", project_id=project_id, instance_id=first_target_id)
+                    img_res = await generate_character_image(
+                        bridge, prompt=char_prompt, aspect="portrait", project_id=project_id,
+                        instance_id=first_target_id,
+                        reference_media_ids=reference_media_ids or None,
+                    )
+                    if reference_media_ids and not img_res.get("reference_applied"):
+                        raise RuntimeError(
+                            f"Google Flow tidak menerapkan image reference karakter '{char_name}'."
+                        )
                     media_id = img_res.get("media_id")
                     if media_id:
                         character_media_ids[char_id] = media_id
