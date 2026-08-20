@@ -463,6 +463,7 @@ async def execute_storyboard_job(
         "created_at": started_at,
         "started_at": started_at,
         "created_at_formatted": time.strftime("%d %b %Y, %H:%M"),
+        "initial_prompt": storyboard.get("premise") or storyboard.get("theme") or "",
     }
     _active_jobs[job_id] = job_state
 

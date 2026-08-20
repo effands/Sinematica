@@ -1671,6 +1671,7 @@ async function refreshGallery() {
 
     const container = document.getElementById('galleryContainer');
     const items = data.gallery || [];
+    const galleryPrompts = new Map(items.map(item => [String(item.job_id), item.initial_prompt || '']));
     const selectAllCb = document.getElementById('gallerySelectAllCheckbox');
     if (selectAllCb) selectAllCb.checked = false;
     updateGalleryDeleteSelectedButton();
@@ -1704,7 +1705,18 @@ async function refreshGallery() {
         <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);">
           <span class="badge-status badge-ready" style="font-size: 10px; padding: 2px 7px; background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.3); color: #38bdf8;">${item.aspect_ratio === 'portrait' ? '📱 Short 9:16' : '🖥️ Landscape 16:9'}</span>
           <span class="badge-status ${item.status === 'completed' ? 'badge-ready' : 'badge-noauth'}" style="font-size: 10px; padding: 2px 7px;">${(item.status || 'UNKNOWN').toUpperCase()}</span>
+          ${item.total_duration != null ? `<span class="gallery-meta-chip">🎞️ ${Number(item.total_duration)}s</span>` : ''}
+          ${item.output_size_display ? `<span class="gallery-meta-chip">💾 ${escapeHtml(item.output_size_display)}</span>` : ''}
+          ${item.processing_duration ? `<span class="gallery-meta-chip">⏱️ ${escapeHtml(item.processing_duration)}</span>` : ''}
           <span style="font-size: 11px; color: var(--text-muted); margin-left: auto;">📅 ${item.created_at_formatted || 'Tersimpan'}</span>
+        </div>
+
+        <div class="gallery-idea-box">
+          <div class="gallery-idea-heading">
+            <span>💡 Prompt / Ide Awal</span>
+            <button type="button" class="btn-copy-gallery-prompt" data-jobid="${item.job_id}" ${item.initial_prompt ? '' : 'disabled'}>📋 Salin</button>
+          </div>
+          <p title="${escapeHtml(item.initial_prompt || '')}">${escapeHtml(item.initial_prompt || 'Ide awal belum tersimpan untuk video lama ini.')}</p>
         </div>
 
         ${item.cinematic_film_url ? `
@@ -1755,6 +1767,15 @@ async function refreshGallery() {
     // Attach listeners for single job edit, deletion and checkbox change
     container.querySelectorAll('.gallery-item-checkbox').forEach(cb => {
       cb.addEventListener('change', updateGalleryDeleteSelectedButton);
+    });
+
+    container.querySelectorAll('.btn-copy-gallery-prompt').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const prompt = galleryPrompts.get(String(btn.getAttribute('data-jobid'))) || '';
+        if (!prompt) return;
+        await navigator.clipboard.writeText(prompt);
+        showToast('Prompt / ide awal berhasil disalin!', 'success');
+      });
     });
 
     // Auto Render sequencer: clip selection preserves click order across jobs

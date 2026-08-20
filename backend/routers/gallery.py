@@ -10,6 +10,7 @@ import shutil
 from .. import settings
 from ..jobs_executor import list_jobs, get_job_status, delete_job, delete_multiple_jobs, update_job, create_render_job, mark_render_job_completed
 from ..film_stitcher import stitch_scenes, stitch_scenes_with_transition
+from ..gallery_metadata import gallery_metadata
 
 router = APIRouter(prefix="/api/gallery", tags=["Gallery & Sequencer"])
 
@@ -76,7 +77,8 @@ def get_gallery_items():
             "clips": clips,
             "cinematic_film_url": cinematic_film,
             "created_at": created_ts,
-            "created_at_formatted": created_fmt
+            "created_at_formatted": created_fmt,
+            **gallery_metadata(job),
         })
 
     return {"gallery": gallery_data}
