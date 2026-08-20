@@ -168,6 +168,32 @@ function hideCuteAiLoading() {
   if (modal) modal.classList.remove('active');
 }
 
+function seoStorageKey(jobId) {
+  return `sinematica_seo_kit_${jobId}`;
+}
+
+function bindSeoCopyActions(body, kit) {
+  body.querySelector('#btnCopyDescription')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(kit.description || '');
+    showToast('Deskripsi YouTube berhasil di-copy!', 'success');
+  });
+  body.querySelectorAll('.btn-copy-seo-title').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const title = (kit.seo_titles || [])[Number(btn.getAttribute('data-index'))] || '';
+      navigator.clipboard.writeText(title);
+      showToast('Judul SEO berhasil di-copy!', 'success');
+    });
+  });
+  body.querySelector('#btnCopyThumbPrompt')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(kit.thumbnail_prompt || '');
+    showToast('Prompt thumbnail berhasil di-copy!', 'success');
+  });
+  body.querySelector('#btnCopyTags')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(kit.tags_csv || '');
+    showToast('10 Tags kata kunci berhasil di-copy!', 'success');
+  });
+}
+
 function initSeoKitModal() {
   const modal = document.getElementById('seoKitModal');
   const closeBtn = document.getElementById('closeSeoModalBtn');
@@ -177,8 +203,9 @@ function initSeoKitModal() {
   }
 
   document.addEventListener('click', async (e) => {
-    if (e.target && e.target.classList.contains('btn-generate-seo')) {
+    if (e.target && (e.target.classList.contains('btn-generate-seo') || e.target.classList.contains('btn-regenerate-seo'))) {
       const filmTitle = e.target.getAttribute('data-title') || 'Film Sinematik';
+      const jobId = e.target.getAttribute('data-jobid') || '';
       const body = document.getElementById('seoModalBody');
       modal.classList.add('active');
 
@@ -281,33 +308,26 @@ function initSeoKitModal() {
           </div>
         `;
 
-        document.getElementById('btnCopyDescription').addEventListener('click', () => {
-          navigator.clipboard.writeText(kit.description || '');
-          showToast('Deskripsi YouTube berhasil di-copy!', 'success');
-        });
-
-        body.querySelectorAll('.btn-copy-seo-title').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const title = (kit.seo_titles || [])[Number(btn.getAttribute('data-index'))] || '';
-            navigator.clipboard.writeText(title);
-            showToast('Judul SEO berhasil di-copy!', 'success');
-          });
-        });
-
-        document.getElementById('btnCopyThumbPrompt').addEventListener('click', () => {
-          navigator.clipboard.writeText(kit.thumbnail_prompt || '');
-          showToast('Prompt thumbnail berhasil di-copy!', 'success');
-        });
-
-        document.getElementById('btnCopyTags').addEventListener('click', () => {
-          navigator.clipboard.writeText(kit.tags_csv || '');
-          showToast('10 Tags kata kunci berhasil di-copy!', 'success');
-        });
+        bindSeoCopyActions(body, kit);
+        if (jobId) {
+          localStorage.setItem(seoStorageKey(jobId), JSON.stringify({ kit, html: body.innerHTML }));
+          refreshGallery();
+        }
 
       } catch (err) {
         window.clearInterval(loadingTimer);
         body.innerHTML = `<div style="color: #f43f5e; padding: 20px; text-align: center;">Gagal generate SEO kit: ${err.message}</div>`;
       }
+    }
+
+    if (e.target && e.target.classList.contains('btn-view-seo')) {
+      const jobId = e.target.getAttribute('data-jobid') || '';
+      const saved = JSON.parse(localStorage.getItem(seoStorageKey(jobId)) || 'null');
+      if (!saved?.kit || !saved?.html) return;
+      const body = document.getElementById('seoModalBody');
+      body.innerHTML = saved.html;
+      modal.classList.add('active');
+      bindSeoCopyActions(body, saved.kit);
     }
   });
 }
@@ -1777,7 +1797,14 @@ async function refreshGallery() {
               <a href="${item.cinematic_film_url}" download class="btn-primary" style="flex: 1; text-align: center; text-decoration: none; font-size: 13px;">⬇️ Download Movie MP4</a>
               ${item.srt_subtitles_url ? `<a href="${item.srt_subtitles_url}" download class="btn-secondary" style="text-align: center; text-decoration: none; font-size: 13px;">💬 Subtitle SRT</a>` : ''}
             </div>
-            <button type="button" class="btn-secondary btn-generate-seo" data-title="${item.title || 'Film Sinematik'}" style="margin-top: 10px; width: 100%; border-color: var(--neon-purple); color: #e9d5ff; font-size: 13px;">🚀 Generate YouTube SEO Kit (Judul, Deskripsi, Thumbnail & Tags)</button>
+            ${localStorage.getItem(seoStorageKey(item.job_id)) ? `
+              <div class="gallery-seo-actions">
+                <button type="button" class="btn-secondary btn-view-seo" data-jobid="${item.job_id}">👁️ View SEO</button>
+                <button type="button" class="btn-secondary btn-regenerate-seo" data-jobid="${item.job_id}" data-title="${escapeHtml(item.title || 'Film Sinematik')}">🔄 Regenerate</button>
+              </div>
+            ` : `
+              <button type="button" class="btn-secondary btn-generate-seo" data-jobid="${item.job_id}" data-title="${escapeHtml(item.title || 'Film Sinematik')}" style="margin-top: 10px; width: 100%; border-color: var(--neon-purple); color: #e9d5ff; font-size: 13px;">🚀 Generate YouTube SEO Kit (Judul, Deskripsi, Thumbnail & Tags)</button>
+            `}
           </div>
         ` : ''}
 

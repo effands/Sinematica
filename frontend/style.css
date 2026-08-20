@@ -1374,6 +1374,29 @@ button {
   background: rgba(56, 189, 248, 0.22);
 }
 
+.gallery-seo-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.gallery-seo-actions button {
+  width: 100%;
+  padding: 9px 8px;
+  font-size: 12px;
+}
+
+.gallery-seo-actions .btn-view-seo {
+  border-color: rgba(56, 189, 248, 0.48);
+  color: #bae6fd;
+}
+
+.gallery-seo-actions .btn-regenerate-seo {
+  border-color: rgba(168, 85, 247, 0.5);
+  color: #e9d5ff;
+}
+
 @keyframes seoOrbitSpin { to { transform: rotate(360deg); } }
 @keyframes seoOrbitCounterSpin { to { transform: rotate(-360deg); } }
 @keyframes seoWandPulse { 50% { filter: drop-shadow(0 0 9px #a855f7); transform: scale(1.12); } }
