@@ -1,0 +1,96 @@
+"""Stable character identity, speaker ownership, and per-clip shot direction."""
+
+from copy import deepcopy
+from typing import Any, Dict, List
+
+
+_SIGNATURES = (
+    "crimson outer garment, angular collar, and a jade pendant",
+    "cobalt-blue outer garment, rounded collar, and a silver hairpin",
+    "emerald-green outer garment, high collar, and a dark leather wrist cuff",
+    "ivory outer garment, asymmetric lapel, and round spectacles",
+    "deep-violet outer garment, structured shoulders, and a small gold brooch",
+    "amber outer garment, narrow lapel, and a carved wooden bracelet",
+    "charcoal outer garment, broad collar, and a red signet ring",
+    "teal outer garment, pleated sleeves, and a pearl drop earring",
+    "rust-orange outer garment, wrapped collar, and a black stone pendant",
+    "white-and-navy outer garment, straight collar, and a brass wristwatch",
+)
+
+_ACTION_WORDS = (
+    "war", "battle", "fight", "chase", "attack", "ambush", "explosion", "combat",
+    "perang", "bertempur", "bertarung", "berkelahi", "menyerbu", "penyerbuan",
+    "mengejar", "kejar", "serangan", "ledakan", "baku tembak",
+)
+_EMOTIONAL_WORDS = (
+    "cry", "cries", "weeps", "whisper", "confess", "grief", "heartbreak", "farewell",
+    "menangis", "berbisik", "mengaku", "sedih", "patah hati", "perpisahan", "haru",
+)
+
+
+def choose_shot_count(scene: Dict[str, Any], prompt: str = "") -> int:
+    """Choose 3, 4, or 5 shots from story energy, never by blind randomness."""
+    text = " ".join(str(scene.get(k) or "") for k in ("title", "action_summary", "dialogue"))
+    text = f"{text} {prompt}".lower()
+    if any(word in text for word in _ACTION_WORDS):
+        return 5
+    speech_present = bool(scene.get("dialogue")) or any(
+        marker in text for marker in ('"', "speaks", "speaking", "says", "shouts", "berkata", "berbicara")
+    )
+    if any(word in text for word in _EMOTIONAL_WORDS) or speech_present:
+        return 3
+    return 4
+
+
+def timeline_markers(count: int) -> List[str]:
+    markers = {
+        3: ["0-3.3 seconds", "3.3-6.6 seconds", "6.6-10 seconds"],
+        4: ["0-2.5 seconds", "2.5-5 seconds", "5-7.5 seconds", "7.5-10 seconds"],
+        5: ["0-2 seconds", "2-4 seconds", "4-6 seconds", "6-8 seconds", "8-10 seconds"],
+    }
+    return markers[count]
+
+
+def ensure_unique_character_signatures(characters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Give every registry entry a stable, non-interchangeable visual signature."""
+    result = deepcopy(characters or [])
+    used = set()
+    for index, character in enumerate(result):
+        signature = str(character.get("visual_signature") or "").strip()
+        if not signature or signature.casefold() in used:
+            signature = _SIGNATURES[index % len(_SIGNATURES)]
+            if signature.casefold() in used:
+                signature = f"{signature}, identity variant {index + 1}"
+        used.add(signature.casefold())
+        character["visual_signature"] = signature
+        description = str(character.get("description") or character.get("desc") or "").strip()
+        if signature.casefold() not in description.casefold():
+            description = f"{description} Permanent visual signature: {signature}.".strip()
+        character["description"] = description
+    return result
+
+
+def build_speaker_lock(scene: Dict[str, Any], characters: List[Dict[str, Any]]) -> str:
+    """Bind each exact line to one named face; prevent dialogue-role swapping."""
+    dialogue = scene.get("dialogue") or []
+    if not isinstance(dialogue, list) or not dialogue:
+        return ""
+    by_id = {str(c.get("id")): c for c in characters or []}
+    lines = []
+    for turn in dialogue:
+        if not isinstance(turn, dict) or not str(turn.get("line") or "").strip():
+            continue
+        character = by_id.get(str(turn.get("speaker_id"))) or {}
+        name = character.get("name") or f"character {turn.get('speaker_id')}"
+        signature = character.get("visual_signature") or character.get("description") or "registered appearance"
+        position = turn.get("screen_position") or "the established screen position"
+        exact_line = str(turn["line"]).replace('"', "'")
+        lines.append(f'- {name} ({signature}), at {position}, alone speaks exactly: "{exact_line}"')
+    if not lines:
+        return ""
+    return (
+        "SPEAKER LOCK — preserve dialogue ownership across every cut:\n"
+        + "\n".join(lines)
+        + "\nDuring each line, all non-speakers keep their mouths closed and only react physically. "
+          "Never transfer a line, voice, or lip movement to another face."
+    )

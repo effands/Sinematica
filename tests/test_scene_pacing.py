@@ -9,17 +9,16 @@ from backend.scene_pacing import (
 
 
 class DenseScenePromptTests(unittest.TestCase):
-    def test_ten_second_dialogue_scene_gets_three_timed_beats_and_two_turns(self):
+    def test_ten_second_emotional_dialogue_scene_gets_three_timed_beats(self):
         result = densify_flow_prompt(
             'A 10-second shot. Raka speaking angrily: "Kembalikan surat itu!"',
             {"action_summary": "Raka confronts Bambang"},
             10,
         )
 
-        self.assertIn("0-2.5 seconds", result)
-        self.assertIn("2.5-5 seconds", result)
-        self.assertIn("5-7.5 seconds", result)
-        self.assertIn("7.5-10 seconds", result)
+        self.assertIn("0-3.3 seconds", result)
+        self.assertIn("3.3-6.6 seconds", result)
+        self.assertIn("6.6-10 seconds", result)
         self.assertIn("at least two distinct short speaking turns", result)
         self.assertIn("No silent staring", result)
         self.assertIn("at least two linked physical actions in every beat", result)
@@ -42,10 +41,9 @@ class DenseScenePromptTests(unittest.TestCase):
         class Result:
             provider = "deepseek"
             text = (
-                '{"prompt_for_flow":"A 10-second four-shot sequence. 0-2.5 seconds: WIDE ANGLE, Arif slams '
-                'the phone and shouts \\"Bank menolak!\\" 2.5-5 seconds: OTS SHOT, Sinta pushes a contract '
-                'and replies \\"Tandatangani ini.\\" 5-7.5 seconds: INSERT SHOT, Arif signs the contract. '
-                '7.5-10 seconds: CLOSE-UP, Arif tears the old letter and exits."}'
+                '{"prompt_for_flow":"A 10-second three-shot sequence. 0-3.3 seconds: WIDE ANGLE, Arif slams '
+                'the phone and shouts \\"Bank menolak!\\" 3.3-6.6 seconds: OTS SHOT, Sinta pushes a contract '
+                'and replies \\"Tandatangani ini.\\" 6.6-10 seconds: CLOSE-UP, Arif signs and exits."}'
             )
 
         def generator(request, json_output=False):
@@ -61,13 +59,12 @@ class DenseScenePromptTests(unittest.TestCase):
         )
 
         self.assertEqual(provider, "deepseek")
-        self.assertIn("0-2.5 seconds", rewritten)
-        self.assertIn("2.5-5 seconds", rewritten)
-        self.assertIn("5-7.5 seconds", rewritten)
-        self.assertIn("7.5-10 seconds", rewritten)
+        self.assertIn("0-3.3 seconds", rewritten)
+        self.assertIn("3.3-6.6 seconds", rewritten)
+        self.assertIn("6.6-10 seconds", rewritten)
         self.assertIn('"Tandatangani ini."', rewritten)
         self.assertIn("write two short spoken lines", calls[0][0])
-        self.assertIn("FOUR SHOTS", calls[0][0])
+        self.assertIn("THREE SHOTS", calls[0][0])
         self.assertIn("SAME location and SAME continuous time window", calls[0][0])
         self.assertNotIn("one continuous scene/location", calls[0][0])
         self.assertTrue(calls[0][1])
@@ -86,12 +83,14 @@ class DenseScenePromptTests(unittest.TestCase):
                 "previous_scene_title": "Koridor Kantor",
                 "previous_scene_action": "Sari berjalan menuju pintu ruang arsip.",
                 "previous_scene_prompt": "Sari stops outside the archive door.",
+                "previous_scene_end_state": "Sari's right hand grips the archive-door handle.",
             },
             10,
             generator=generator,
         )
 
         self.assertIn("Previous 10-second video", calls[0])
+        self.assertIn("right hand grips the archive-door handle", calls[0])
         self.assertIn("instead of\nteleporting", calls[0])
 
 

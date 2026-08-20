@@ -19,6 +19,11 @@ from .media_download import resolve_exact_media_url, stream_download
 from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
 from .scene_continuity import build_continuity_prompt, continuity_start_image
 from .scene_audio_direction import apply_scene_audio_direction, resolve_master_music_track
+from .scene_direction import (
+    build_speaker_lock,
+    choose_shot_count,
+    ensure_unique_character_signatures,
+)
 from .storyboard_image import fetch_image_bytes, generate_storyboard_sheet
 
 from omniflash.generators import upload_image, generate_video_i2v, poll_video_status
@@ -523,6 +528,8 @@ async def execute_storyboard_job(
     if not characters:
         char_desc = storyboard.get("consistent_characters") or storyboard.get("genre_style") or job_state["title"]
         characters = [{"id": 1, "name": job_state["title"], "seed": storyboard.get("character_seed", 123456), "description": char_desc}]
+    characters = ensure_unique_character_signatures(characters)
+    storyboard["characters"] = characters
 
     if not enable_seed_image:
         log_event(job_id, "⏭️ [Tahap 1/2] Pembuatan Gambar Anchor Seed Karakter di-bypass (Disabled oleh Settings)...")
@@ -613,9 +620,10 @@ async def execute_storyboard_job(
         prompt = sc.get("prompt_for_flow", "")
         scene_duration = duration if force_uniform_duration else resolve_scene_duration(sc, duration)
         if scene_duration == 10:
+            shot_count = choose_shot_count(sc, prompt)
             log_event(
                 job_id,
-                f"⚡ [Adegan {idx}/{total_scenes}] Membagi 10 detik menjadi 4 shot/mini-adegan multi-angle yang padat...",
+                f"⚡ [Adegan {idx}/{total_scenes}] Menyusun {shot_count} shot/mini-beat multi-angle yang padat...",
             )
             pacing_scene = dict(sc)
             if idx > 1:
@@ -623,6 +631,7 @@ async def execute_storyboard_job(
                 pacing_scene["previous_scene_title"] = previous_scene.get("title") or ""
                 pacing_scene["previous_scene_action"] = previous_scene.get("action_summary") or ""
                 pacing_scene["previous_scene_prompt"] = previous_scene.get("prompt_for_flow") or ""
+                pacing_scene["previous_scene_end_state"] = previous_scene.get("end_state") or ""
             prompt, pacing_provider = await asyncio.to_thread(
                 rewrite_dense_prompt_with_ai,
                 prompt,
@@ -633,8 +642,12 @@ async def execute_storyboard_job(
             log_event(
                 job_id,
                 f"✅ [Adegan {idx}/{total_scenes}] Prompt padat selesai via {pacing_provider}: "
-                "4 shot berbeda, aksi berantai, dialog berbalas, dan kontinuitas terkunci.",
+                f"{shot_count} shot berbeda, aksi berantai, dialog terkunci, dan kontinuitas tersambung.",
             )
+
+        speaker_lock = build_speaker_lock(sc, characters)
+        if speaker_lock:
+            prompt = f"{prompt.rstrip()}\n\n{speaker_lock}"
 
         prompt = apply_scene_audio_direction(
             prompt, sc, storyboard, music_video=music_video_mode

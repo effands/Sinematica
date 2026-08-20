@@ -11,6 +11,7 @@ import google.generativeai as genai
 from PIL import Image
 
 from . import settings
+from .scene_direction import ensure_unique_character_signatures
 from .text_generation import generate_text
 
 log = logging.getLogger("sinematica.storyboard")
@@ -27,8 +28,8 @@ ADULT_ACTION_RULES = """ATURAN KEPADATAN AKSI (WAJIB — INI YANG MEMBUAT CERITA
    menjadi latar sambil tokoh melakukan aksi dramatis yang sesungguhnya.
 3. **Mulai dari tengah aksi (start late, end early).** Buang basa-basi pembuka. Adegan dimulai tepat saat
    konflik sudah berjalan, dan dipotong tepat setelah titik baliknya — jangan menunggu tokoh datang lalu duduk.
-3a. **Khusus adegan 10 detik, WAJIB tiga beat bertimestamp di dalam `prompt_for_flow`:** `0-3 seconds`
-   aksi/konflik langsung dimulai; `3-7 seconds` ada balasan atau counter-action; `7-10 seconds` ada reveal,
+3a. **Khusus adegan 10 detik, gunakan 3–5 shot bertimestamp:** 3 untuk dialog/emosi, 4 untuk drama normal,
+   5 untuk aksi/perang/kejaran. Setiap shot memuat minimal dua aksi terkait dan shot terakhir berisi reveal,
    keputusan, benturan, atau reaksi tajam yang mengubah situasi. Tidak boleh ada slow motion, tatapan diam,
    pose beku, jalan kosong, atau jeda tanpa aksi. Jika ada dialog, wajib minimal DUA giliran bicara pendek
    yang dipisahkan reaksi fisik/counter-action—bukan satu kalimat yang dipanjangkan selama sepuluh detik.
@@ -553,11 +554,11 @@ ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
    memindahkan tokoh bolak-balik ke lokasi jauh pada setiap adegan. Jika cerita memang harus pindah lokasi,
    adegan sebelum/sesudahnya WAJIB menunjukkan jembatan visual yang masuk akal (keluar pintu, masuk kendaraan,
    tiba di lobi/gerbang), bukan teleportasi atau lompatan waktu mendadak.
-3a. **Empat Shot Dalam Satu Video 10 Detik (Default Semua Niche)**: Setiap `prompt_for_flow` berdurasi 10 detik
-   harus berisi 4 shot/mini-beat pada penanda 0-2.5s, 2.5-5s, 5-7.5s, dan 7.5-10s. Keempatnya adalah sudut
-   kamera berbeda dari SATU kejadian berantai di SATU lokasi dan SATU rentang waktu kontinu—bukan empat
-   adegan cerita yang berpindah ruangan/kota/waktu. Aturan ini berlaku untuk drama, cerita anak, komedi,
-   romansa, horor aman, aksi aman, edukasi, UGC, dan seluruh kategori lain.
+3a. **Tiga Sampai Lima Shot Dalam Satu Video 10 Detik**: Pilih berdasarkan isi, bukan acak buta: 3 shot
+   untuk dialog/emosi (0-3.3s, 3.3-6.6s, 6.6-10s), 4 shot untuk drama normal (0-2.5s, 2.5-5s,
+   5-7.5s, 7.5-10s), dan 5 shot untuk aksi/perang/kejaran/konflik cepat (0-2s, 2-4s, 4-6s, 6-8s,
+   8-10s). Semua shot adalah sudut kamera berbeda dari SATU kejadian berantai di SATU lokasi dan waktu
+   kontinu—bukan adegan cerita terpisah. Setiap beat wajib mengandung minimal dua aksi fisik terkait.
 4. **Flow Prompt Professional**: Setiap `prompt_for_flow` ditulis dalam Bahasa Inggris yang murni visual, mendetail (Karakter & Seed IDs + Multi-Angle Camera Shot + Aksi Tokoh + Studio 8K Lighting).
 4a. **AKSI HARUS TERJADI DI DALAM KLIP (Wajib)**: `prompt_for_flow` WAJIB mendeskripsikan gerakan yang benar-benar
    berlangsung selama klip, bukan pose diam atau tablo. Tuliskan progresi jelas memakai penanda urutan waktu
@@ -585,7 +586,16 @@ PARAMETIK REQUEST (WAJIB 100% PATUH & RELEVAN):
    gaya rambut, warna kulit, bentuk mata/alis/hidung, perkiraan usia dan postur tubuh, pakaian lengkap beserta
    warna, bahan, dan potongannya, alas kaki, aksesoris (kacamata, jam, perhiasan, hijab), serta ciri khas unik
    (tahi lalat, bekas luka, tato). Minimal 2-3 kalimat padat per karakter, bukan sekadar "wanita muda cantik".
+   Field "visual_signature" WAJIB berisi kombinasi permanen yang unik dan mudah terlihat: warna/siluet pakaian,
+   satu aksesori khas, serta rambut/usia/ciri wajah. Tidak boleh ada dua karakter dengan warna dominan,
+   aksesori, siluet, dan ciri wajah yang mudah tertukar. Signature ini tidak boleh berubah antaradegan.
 8. **Character Tagging Per Adegan (Wajib)**: Di setiap scene, isi "characters_in_scene" dengan daftar "id" karakter.
+9. **Speaker Lock (Wajib)**: Jika ada ucapan, isi array "dialogue" dengan speaker_id, kalimat persis, dan posisi
+   layar. Hanya karakter tersebut yang boleh menggerakkan bibir saat kalimatnya; semua non-speaker menutup mulut
+   dan hanya bereaksi secara fisik. Jangan pernah memindahkan dialog atau suara ke wajah lain.
+10. **State Continuity (Wajib)**: Isi "start_state" dan "end_state" dengan posisi tubuh, tangan, properti,
+   arah pandang, dan lokasi persis. start_state adegan N+1 harus melanjutkan end_state adegan N kecuali ada
+   transisi visual eksplisit.
 
 OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
 {{
@@ -599,7 +609,8 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "id": 1,
       "name": "Nama Karakter",
       "seed": {seed},
-      "description": "Deskripsi visual lengkap"
+      "description": "Deskripsi visual lengkap",
+      "visual_signature": "Kombinasi pakaian, aksesori, rambut/usia/ciri wajah yang permanen dan unik"
     }}
   ],
   "scenes": [
@@ -610,6 +621,9 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "action_summary": "Ringkasan aksi adegan dalam bahasa {target_lang}, panjangnya proporsional dengan durasi adegan",
       "shot_type": "Framing baku, pilih SATU: Extreme Wide Shot / Wide Shot / Medium Shot / Medium Close Up / Close Up / Extreme Close Up / Over-The-Shoulder / Point of View",
       "characters_in_scene": [1],
+      "dialogue": [{{"speaker_id": 1, "line": "Kalimat persis", "screen_position": "left/center/right"}}],
+      "start_state": "Posisi tubuh, tangan, properti, arah pandang, dan lokasi pada frame awal",
+      "end_state": "Posisi tubuh, tangan, properti, arah pandang, dan lokasi pada frame akhir",
       "prompt_for_flow": "Detailed English video prompt for Google Flow ending with Girly Aesthetic Add-On: pastel aesthetic, luxury lifestyle mood, cinematic bokeh lights, realistic skin texture, soft shadows, glossy lighting, premium social media content, smooth motion blur, high fashion composition, realistic environment details",
       "text_overlay": "WAJIB DIISI di semua mode: teks overlay pendek bahasa {target_lang} (maks 6 kata) yang muncul di layar untuk adegan ini",
       "camera_movement": "Pergerakan kamera saja, terpisah dari shot_type (misal: Slow push-in, Handheld tracking, Static locked-off)",
@@ -638,6 +652,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
                 f"Provider menghasilkan {actual_scene_count} scene, seharusnya tepat {scene_count} scene."
             )
         storyboard["raw_response"] = text_resp
+        storyboard["characters"] = ensure_unique_character_signatures(storyboard.get("characters") or [])
         storyboard["character_seed"] = seed
         storyboard["children_mode"] = children_mode
         storyboard["generated_via"] = result.provider
@@ -658,6 +673,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
                     f"Fallback menghasilkan {actual_scene_count} scene, seharusnya tepat {scene_count} scene."
                 )
             storyboard["raw_response"] = web_txt
+            storyboard["characters"] = ensure_unique_character_signatures(storyboard.get("characters") or [])
             storyboard["character_seed"] = seed
             storyboard["children_mode"] = children_mode
             storyboard["generated_via"] = "web2api_fallback"

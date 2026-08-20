@@ -5,6 +5,8 @@ import logging
 import re
 from typing import Any, Dict
 
+from .scene_direction import choose_shot_count, timeline_markers
+
 
 log = logging.getLogger("sinematica.scene_pacing")
 
@@ -31,11 +33,9 @@ def _extract_json(raw: str) -> Dict[str, Any]:
     return json.loads(text)
 
 
-def _has_required_timeline(prompt: str, dialogue_required: bool) -> bool:
+def _has_required_timeline(prompt: str, dialogue_required: bool, markers) -> bool:
     lowered = (prompt or "").lower()
-    if not all(marker in lowered for marker in (
-        "0-2.5 seconds", "2.5-5 seconds", "5-7.5 seconds", "7.5-10 seconds",
-    )):
+    if not all(marker in lowered for marker in markers):
         return False
     if dialogue_required:
         quoted = re.findall(r'(["\']).+?\1', prompt or "")
@@ -56,6 +56,9 @@ def rewrite_dense_prompt_with_ai(
     if int(duration) != 10:
         return prompt, "unchanged"
     dialogue_required = has_dialogue(scene, prompt)
+    shot_count = choose_shot_count(scene, prompt)
+    markers = timeline_markers(shot_count)
+    count_word = {3: "THREE", 4: "FOUR", 5: "FIVE"}[shot_count]
     if generator is None:
         from .text_generation import generate_text
         generator = generate_text
@@ -78,6 +81,7 @@ Previous 10-second video:
 - Title: {scene.get('previous_scene_title') or ''}
 - Final action/location context: {scene.get('previous_scene_action') or ''}
 - Previous visual prompt: {scene.get('previous_scene_prompt') or ''}
+- Exact final physical state: {scene.get('previous_scene_end_state') or ''}
 The new video must begin from a plausible continuation of that final physical situation. If the
 story truly changes location, show an explicit exit/arrival/doorway/vehicle transition instead of
 teleporting characters to a distant place.
@@ -87,18 +91,17 @@ teleporting characters to a distant place.
 {{"prompt_for_flow":"..."}}
 
 Hard requirements:
-- Duration remains exactly 10 seconds, structured as FOUR SHOTS / mini-beats connected by clean hard cuts
-  or motivated match cuts. These are four camera views of ONE continuous event, not four separate story scenes.
-- Use the literal timeline markers `0-2.5 seconds:`, `2.5-5 seconds:`, `5-7.5 seconds:`,
-  and `7.5-10 seconds:`.
+- Duration remains exactly 10 seconds, structured as {count_word} SHOTS / mini-beats connected by clean hard
+  cuts or motivated match cuts. These are {shot_count} camera views of ONE continuous event, not separate story scenes.
+- Use these literal timeline markers: {', '.join(f'`{m}:`' for m in markers)}.
 - Every shot must use a visibly different framing/angle (for example: wide master, over-the-shoulder,
   insert/detail, close-up/reaction) and name that angle explicitly.
 - Every shot must contain a different, specific character action that advances the same event.
 - Put at least two linked physical actions in every beat. No static hold may last longer than 0.5 seconds.
-- The fourth shot must end on a decision, reveal, interruption, reversal, or completed action.
+- The final shot must end on a decision, reveal, interruption, reversal, or completed action.
 - Maintain strict continuity across cuts: identical faces, wardrobe, props, location, screen direction,
   and cause-and-effect. Never reset character positions without showing the movement.
-- All four shots remain in the SAME location and SAME continuous time window. Never jump rooms, buildings,
+- All shots remain in the SAME location and SAME continuous time window. Never jump rooms, buildings,
   cities, day/night, or story time inside this 10-second generation.
 - Character action/dialogue is the main content. Camera, lighting, transitions, particles, facial holds,
   and visual effects are supporting details only and may not occupy a beat.
@@ -116,7 +119,7 @@ Original prompt:
     try:
         result = generator(request, json_output=True)
         rewritten = str(_extract_json(result.text).get("prompt_for_flow") or "").strip()
-        if _has_required_timeline(rewritten, dialogue_required):
+        if _has_required_timeline(rewritten, dialogue_required, markers):
             return rewritten, result.provider
         log.warning("Provider %s returned a sparse 10-second rewrite; using local guard.", result.provider)
     except Exception as ex:
@@ -129,6 +132,15 @@ def densify_flow_prompt(prompt: str, scene: Dict[str, Any], duration: int) -> st
     if int(duration) != 10:
         return prompt
 
+    shot_count = choose_shot_count(scene, prompt)
+    markers = timeline_markers(shot_count)
+    angles = ("WIDE/MASTER", "OVER-THE-SHOULDER", "INSERT/DETAIL", "MEDIUM TRACKING", "CLOSE-UP/REACTION")
+    selected = angles[:shot_count - 1] + (angles[-1],)
+    beats = "; ".join(
+        f"{marker} {angle} SHOT: perform two linked physical actions that advance the event"
+        for marker, angle in zip(markers, selected)
+    )
+
     dialogue_rule = ""
     if has_dialogue(scene, prompt):
         dialogue_rule = (
@@ -138,15 +150,12 @@ def densify_flow_prompt(prompt: str, scene: Dict[str, Any], duration: int) -> st
         )
 
     guard = (
-        "MANDATORY DENSE 10-SECOND FOUR-SHOT SEQUENCE: 0-2.5 seconds WIDE/MASTER SHOT: begin "
-        "mid-action; 2.5-5 seconds OVER-THE-SHOULDER SHOT: a reply or counter-action changes the "
-        "situation; 5-7.5 seconds INSERT/DETAIL SHOT: a prop interaction or decisive physical action "
-        "advances the event; 7.5-10 seconds CLOSE-UP/REACTION SHOT: deliver a reveal, decision, impact, "
-        "or sharp reaction and cut immediately. Connect shots with clean hard cuts or motivated match "
-        "cuts. All four shots show ONE continuous event in the SAME location and SAME time window; they are "
+        f"MANDATORY DENSE 10-SECOND {shot_count}-SHOT SEQUENCE: {beats}. The final shot must deliver a "
+        "reveal, decision, impact, or sharp reaction and cut immediately. Connect shots with clean hard "
+        f"cuts. All {shot_count} shots show ONE continuous event in the SAME location and SAME time window; they are "
         "camera-angle changes, not separate story scenes. Preserve identical faces, wardrobe, props, location, "
         "screen direction, and cause-and-effect. "
-        "Keep hands, faces, bodies, props, and camera purposefully active across all four shots. "
+        "Keep hands, faces, bodies, props, and camera purposefully active across all shots. "
         "Use at least two linked physical actions in every beat. No static hold may last longer than 0.5 seconds. "
         "No silent staring, idle pauses, frozen posing, slow empty walking, prolonged establishing "
         "shots, or dead air. Do not use slow motion."
