@@ -808,6 +808,29 @@ button {
   margin-top: 12px;
 }
 
+.aspect-default-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.aspect-default-option input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #38bdf8;
+  cursor: pointer;
+}
+
+.aspect-default-option:has(input:checked) span {
+  color: #7dd3fc;
+}
+
 .actor-studio-modal {
   width: min(760px, calc(100vw - 32px));
   max-height: min(760px, calc(100dvh - 32px));

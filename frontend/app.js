@@ -31,7 +31,35 @@ document.addEventListener('DOMContentLoaded', () => {
   renderHistoryTab();
   initCustomAlertModal();
   loadLastStoryboard();
+  initAspectRatioDefault();
 });
+
+function initAspectRatioDefault() {
+  const select = document.getElementById('aspectSelect');
+  const checkbox = document.getElementById('aspectDefaultCheckbox');
+  if (!select || !checkbox) return;
+
+  const storageKey = 'sinematica_default_aspect_ratio';
+  const saved = localStorage.getItem(storageKey);
+  if (saved === 'portrait' || saved === 'landscape') {
+    select.value = saved;
+    checkbox.checked = true;
+  }
+
+  checkbox.addEventListener('change', () => {
+    if (checkbox.checked) {
+      localStorage.setItem(storageKey, select.value);
+      showToast(`Default video diatur ke ${select.value === 'portrait' ? 'Short 9:16' : 'Landscape 16:9'}.`, 'success');
+    } else {
+      localStorage.removeItem(storageKey);
+      showToast('Default aspect ratio dinonaktifkan.', 'info');
+    }
+  });
+
+  select.addEventListener('change', () => {
+    if (checkbox.checked) localStorage.setItem(storageKey, select.value);
+  });
+}
 
 // Toast Notifications Helper
 function showToast(message, type = 'info', title = '') {
