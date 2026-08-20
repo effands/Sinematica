@@ -2137,6 +2137,50 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   // Actor Registry Logic
+  const MAX_ACTOR_REFERENCE_IMAGES = 4;
+  let selectedActorReferenceFiles = [];
+  let actorPreviewUrls = [];
+
+  const actorImagesInput = document.getElementById('actorImages');
+  const actorImagePreview = document.getElementById('actorImagePreview');
+  const actorImageCount = document.getElementById('actorImageCount');
+
+  const renderActorImagePreview = () => {
+      actorPreviewUrls.forEach(url => URL.revokeObjectURL(url));
+      actorPreviewUrls = [];
+      if (actorImageCount) actorImageCount.textContent = `${selectedActorReferenceFiles.length}/${MAX_ACTOR_REFERENCE_IMAGES}`;
+      if (!actorImagePreview) return;
+      actorImagePreview.innerHTML = selectedActorReferenceFiles.map((file, index) => {
+          const url = URL.createObjectURL(file);
+          actorPreviewUrls.push(url);
+          return `<div class="actor-reference-preview-item">
+              <img src="${url}" alt="Referensi ${index + 1}">
+              ${index === 0 ? '<span class="actor-reference-primary">Utama</span>' : ''}
+              <button type="button" class="actor-reference-remove" data-index="${index}" title="Hapus gambar">×</button>
+          </div>`;
+      }).join('');
+  };
+
+  if (actorImagesInput) {
+      actorImagesInput.addEventListener('change', () => {
+          const chosen = Array.from(actorImagesInput.files || []);
+          if (chosen.length > MAX_ACTOR_REFERENCE_IMAGES) {
+              showToast(`Maksimal ${MAX_ACTOR_REFERENCE_IMAGES} gambar untuk satu karakter.`, 'warning');
+          }
+          selectedActorReferenceFiles = chosen.slice(0, MAX_ACTOR_REFERENCE_IMAGES);
+          renderActorImagePreview();
+      });
+  }
+  if (actorImagePreview) {
+      actorImagePreview.addEventListener('click', (event) => {
+          const button = event.target.closest('.actor-reference-remove');
+          if (!button) return;
+          selectedActorReferenceFiles.splice(Number(button.dataset.index), 1);
+          if (actorImagesInput) actorImagesInput.value = '';
+          renderActorImagePreview();
+      });
+  }
+
   const fetchActors = async () => {
       try {
           const res = await fetch('/api/actors');
@@ -2161,12 +2205,20 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       
       actors.forEach(actor => {
+          const actorImages = (actor.images && actor.images.length)
+              ? actor.images
+              : (actor.image_url ? [{ url: actor.image_url, primary: true }] : []);
+          const primaryImage = actorImages[0] ? actorImages[0].url : '';
+          const secondaryImages = actorImages.slice(1, 4);
           const card = document.createElement('div');
           card.style = "background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;";
           card.innerHTML = `
-            <img src="${actor.image_url}" alt="${actor.name}" style="width: 100%; height: 200px; object-fit: cover;">
+            <img src="${primaryImage}" alt="${actor.name}" style="width: 100%; height: 200px; object-fit: cover;">
+            ${secondaryImages.length ? `<div class="actor-card-reference-strip">${secondaryImages.map((image, index) =>
+                `<img src="${image.url}" alt="Referensi ${index + 2} ${actor.name}">`).join('')}</div>` : ''}
             <div style="padding: 16px;">
                 <h4 style="margin: 0 0 8px 0; color: #fff;">${actor.name}</h4>
+                <span class="actor-reference-count">${actorImages.length} Referensi</span>
                 <p style="margin: 0 0 12px 0; color: #aaa; font-size: 13px; min-height: 40px;">${actor.description}</p>
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-family: monospace;">Seed: ${actor.seed}</span>
@@ -2190,7 +2242,7 @@ document.addEventListener('DOMContentLoaded', () => {
               html += `
               <label style="display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.3); padding: 6px 12px; border-radius: 20px; cursor: pointer;">
                   <input type="checkbox" value="${actor.id}" style="accent-color: #38bdf8;">
-                  <img src="${actor.image_url}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover;">
+                  <img src="${(actor.images && actor.images[0] ? actor.images[0].url : actor.image_url)}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover;">
                   <span style="color: #fff; font-size: 13px;">${actor.name}</span>
               </label>
               `;
@@ -2221,14 +2273,12 @@ document.addEventListener('DOMContentLoaded', () => {
           const name = document.getElementById('actorName').value;
           const desc = document.getElementById('actorDesc').value;
           const seed = document.getElementById('actorSeed').value;
-          const image = document.getElementById('actorImage').files[0];
-          
-          if(!image) return showToast("Foto wajaah wajib diunggah", "error");
+          if(!selectedActorReferenceFiles.length) return showToast("Minimal satu gambar referensi karakter wajib diunggah", "error");
           
           const formData = new FormData();
           formData.append('name', name);
           formData.append('description', desc);
-          formData.append('image_file', image);
+          selectedActorReferenceFiles.forEach(image => formData.append('image_files', image));
           if (seed) formData.append('seed', parseInt(seed));
           
           try {
@@ -2237,6 +2287,8 @@ document.addEventListener('DOMContentLoaded', () => {
                   showToast("Aktor berhasil didaftarkan!", "success");
                   document.getElementById('addActorModal').classList.remove('active');
                   addActorForm.reset();
+                  selectedActorReferenceFiles = [];
+                  renderActorImagePreview();
                   fetchActors();
               }
           } catch(err) {
