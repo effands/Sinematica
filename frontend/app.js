@@ -301,7 +301,7 @@ function initSeoKitModal() {
         body.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 16px;">
             <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
-              <h4 style="color: var(--neon-cyan); font-size: 14px; margin-bottom: 8px;">🎯 3 Pilihan Judul Video YouTube Full SEO (90-100 Karakter):</h4>
+              <h4 style="color: var(--neon-cyan); font-size: 14px; margin-bottom: 8px;">🎯 3 Pilihan Judul YouTube SEO Natural:</h4>
               <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: var(--text-primary); line-height: 1.6;">
                 ${(kit.seo_titles || []).map((t, index) => `
                   <li class="seo-title-row">

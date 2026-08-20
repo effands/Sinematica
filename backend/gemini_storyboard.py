@@ -346,13 +346,15 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa teks tambahan di luar JSON):
 
 
 def generate_youtube_metadata(film_title: str, premise: str) -> Dict[str, Any]:
-    """Generate 3 SEO titles (90-100 chars), 3-paragraph description with CTA & hashtags, thumbnail prompt, and 10 long-tail tags."""
+    """Generate readable, keyword-led YouTube metadata with theme-aware hashtags."""
     prompt = f"""
 Anda adalah YouTube SEO Specialist & Content Strategist Terkemuka.
 Berdasarkan judul film "{film_title}" dan premis cerita: "{premise}", rancangkan kit publikasi YouTube lengkap:
 
-1. **3 Pilihan Judul SEO Maksimal (Wajib 90-100 Karakter)**:
-   - Kapital dominan, penuh kata kunci pencarian tinggi, sangat memancing klik (CTR tinggi).
+1. **3 Pilihan Judul SEO Natural (Ideal 60-90 Karakter termasuk hashtag)**:
+   - Gunakan kapitalisasi normal yang nyaman dibaca; DILARANG menulis seluruh judul dengan HURUF KAPITAL.
+   - Letakkan keyword pencarian utama dekat awal judul, lalu tambahkan hook spesifik yang menarik tanpa terasa spam.
+   - Wajib akhiri setiap judul dengan 1-2 hashtag populer yang benar-benar relevan dengan tema/karakter video.
 2. **Deskripsi YouTube (3 Paragraf Struktur Rapi)**:
    - Paragraf 1: Hook pembuka & rangkuman cerita film.
    - Paragraf 2: Penjelasan teknologi AI sinematik yang digunakan.
@@ -366,9 +368,9 @@ Berdasarkan judul film "{film_title}" dan premis cerita: "{premise}", rancangkan
 OUTPUT WAJIB FORMAT JSON VALID:
 {{
   "titles": [
-    "JUDUL 1 (90-100 KARAKTER)",
-    "JUDUL 2 (90-100 KARAKTER)",
-    "JUDUL 3 (90-100 KARAKTER)"
+    "Judul SEO natural 1 #TemaUtama #Karakter",
+    "Judul SEO natural 2 #TemaUtama #Karakter",
+    "Judul SEO natural 3 #TemaUtama #Karakter"
   ],
   "description": "Paragraf 1...\\n\\nParagraf 2...\\n\\nParagraf 3...\\n\\n👉 Subscribe & Like...\\n\\n#Hashtag1 #Hashtag2",
   "thumbnail_prompt": "High-impact 16:9 YouTube thumbnail prompt in English...",
@@ -378,6 +380,8 @@ OUTPUT WAJIB FORMAT JSON VALID:
     try:
         result = generate_text(prompt, json_output=True)
         parsed = json.loads(_extract_json_text(result.text))
+        from .youtube_seo import normalize_seo_titles
+        parsed["titles"] = normalize_seo_titles(parsed.get("titles"), film_title)
         parsed["generated_via"] = result.provider
         return parsed
     except Exception as ex:
@@ -387,20 +391,26 @@ OUTPUT WAJIB FORMAT JSON VALID:
             try:
                 parsed = json.loads(_extract_json_text(web_txt))
                 if parsed.get("titles"):
+                    from .youtube_seo import normalize_seo_titles
+                    parsed["titles"] = normalize_seo_titles(parsed.get("titles"), film_title)
                     log.info("Metadata YouTube berhasil via fallback Web2API!")
                     return parsed
             except Exception as w_ex:
                 log.warning("Fallback Web2API mengembalikan JSON metadata tidak valid: %s", w_ex)
-        return {
+        fallback = {
             "titles": [
-                f"FILM AI SINEMATIK: {film_title.upper()} - CARA BUAT VIDEO KONSISTEN DENGAN GOOGLE FLOW OMNI",
-                f"TUTORIAL GOOGLE FLOW OMNI: CARA MEMBUAT {film_title.upper()} KONSISTEN FULL MOVIE 2026",
-                f"CARA GENERATE ANIMASI AI SINEMATIK KONSISTEN: {film_title.upper()} GEMINI 3.6 FLASH"
+                f"{film_title}: Pertarungan sinematik dengan alur paling menegangkan",
+                f"{film_title}: Siapa yang akan memenangkan pertarungan luar biasa ini?",
+                f"Saksikan {film_title}, kisah aksi sinematik yang penuh kejutan"
             ],
             "description": f"Saksikan film AI sinematik {film_title}. Cerita ini menceritakan tentang {premise}.\n\nDibuat secara otomatis menggunakan Gemini 3.6 Flash dan Google Flow Omni.\n\nJangan lupa Like, Comment, dan Subscribe untuk konten AI sinematik lainnya!\n\n#FilmAI #GoogleFlow #Gemini36Flash #AIVideoGenerator #TutorialAI",
             "thumbnail_prompt": f"Dramatic cinematic movie thumbnail for {film_title}, 16:9 aspect ratio, 8k resolution, glowing neon title text, highly detailed photorealistic character.",
             "tags": "cara buat film ai, tutorial google flow omni, generate video ai konsisten, karakter ai tetap konsisten, buat film ai 10 menit, gemini 36 flash storyboard, ai video generator gratis, tutorial ai sinematik indonesia, multi angle kamera ai, workflow otomatisasi film ai"
         }
+        from .youtube_seo import normalize_seo_titles, theme_hashtags
+        fallback["titles"] = normalize_seo_titles(fallback["titles"], film_title)
+        fallback["description"] = fallback["description"].rsplit("\n\n", 1)[0] + "\n\n" + " ".join(theme_hashtags(film_title, limit=5))
+        return fallback
 
 
 def generate_storyboard(
