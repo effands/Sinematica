@@ -66,6 +66,19 @@ class ExactFlowMediaUrlTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "")
 
+    async def test_accepts_trusted_response_url_even_when_cdn_path_omits_media_id(self):
+        class Bridge:
+            async def trpc_request(self, *_args, **_kwargs):
+                return {
+                    "status": 200,
+                    "data": {"url": "https://labs.google/fx/api/trpc/media.getMediaUrlRedirect"},
+                    "responseUrl": "https://flow-content.google/v/opaque-signed-token?Expires=123",
+                }
+
+        result = await resolve_exact_media_url(Bridge(), "expected-media-id", "project-1")
+
+        self.assertEqual(result, "https://flow-content.google/v/opaque-signed-token?Expires=123")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from typing import Callable, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 
 _MEDIA_REDIRECT_ENDPOINT = "https://labs.google/fx/api/trpc/media.getMediaUrlRedirect"
@@ -38,6 +38,13 @@ async def resolve_exact_media_url(
         timeout=20,
         instance_id=instance_id,
     )
+    response_url = str((result or {}).get("responseUrl") or "")
+    parsed = urlparse(response_url)
+    if int((result or {}).get("status") or 0) == 200 and parsed.scheme == "https" and (
+        parsed.hostname == "flow-content.google"
+        or str(parsed.hostname or "").endswith(".googleusercontent.com")
+    ):
+        return response_url
     return _find_exact_url(result, media_id)
 
 
