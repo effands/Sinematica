@@ -13,6 +13,7 @@ import uuid
 from . import settings
 from .bridge_manager import get_bridge, ensure_ready
 from .character_seed_guard import missing_character_seeds
+from .character_seed_fallback import build_safe_character_seed_prompt, is_unsafe_generation_error
 from .character_reference_flow import resolve_character_reference_paths, upload_character_references
 from .film_stitcher import extract_continuity_frame, stitch_scenes
 from .execution_metrics import finish_job_timing, record_output_file_size
@@ -620,6 +621,20 @@ async def execute_storyboard_job(
                 except Exception as ex:
                     log_event(job_id, f"⚠️ Gagal generate seed image karakter '{char_name}' (Percobaan {try_cnt}): {ex}.", level="warning")
                     if try_cnt < 2:
+                        if is_unsafe_generation_error(ex):
+                            char_prompt = build_safe_character_seed_prompt(
+                                char_name,
+                                char_desc,
+                                char_seed,
+                                has_references=bool(owned_reference_paths),
+                            )
+                            log_event(
+                                job_id,
+                                f"🛡️ Filter keamanan Flow menolak nama/prompt '{char_name}'. "
+                                "Percobaan berikutnya memakai identitas visual netral tanpa nama merek, "
+                                "dengan ciri fisik tetap dipertahankan.",
+                                level="warning",
+                            )
                         await asyncio.sleep(2)
 
         missing_seeds = missing_character_seeds(characters, character_media_ids)
