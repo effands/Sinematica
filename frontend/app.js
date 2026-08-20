@@ -178,6 +178,8 @@ function bindSeoCopyActions(body, kit) {
     showToast('Deskripsi YouTube berhasil di-copy!', 'success');
   });
   body.querySelectorAll('.btn-copy-seo-title').forEach(btn => {
+    // Upgrade cached SEO HTML that still contains the old clipboard emoji.
+    btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
     btn.addEventListener('click', () => {
       const title = (kit.seo_titles || [])[Number(btn.getAttribute('data-index'))] || '';
       navigator.clipboard.writeText(title);
@@ -276,7 +278,9 @@ function initSeoKitModal() {
                 ${(kit.seo_titles || []).map((t, index) => `
                   <li class="seo-title-row">
                     <span><b>${escapeHtml(t)}</b> <span style="font-size: 11px; color: var(--text-muted);">(${t.length} kar)</span></span>
-                    <button type="button" class="btn-copy-seo-title" data-index="${index}" title="Salin judul ${index + 1}" aria-label="Salin judul ${index + 1}">📋</button>
+                    <button type="button" class="btn-copy-seo-title" data-index="${index}" title="Salin judul ${index + 1}" aria-label="Salin judul ${index + 1}">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>
+                    </button>
                   </li>
                 `).join('')}
               </ol>
