@@ -94,6 +94,7 @@ Hard requirements:
 - Every shot must use a visibly different framing/angle (for example: wide master, over-the-shoulder,
   insert/detail, close-up/reaction) and name that angle explicitly.
 - Every shot must contain a different, specific character action that advances the same event.
+- Put at least two linked physical actions in every beat. No static hold may last longer than 0.5 seconds.
 - The fourth shot must end on a decision, reveal, interruption, reversal, or completed action.
 - Maintain strict continuity across cuts: identical faces, wardrobe, props, location, screen direction,
   and cause-and-effect. Never reset character positions without showing the movement.
@@ -146,6 +147,7 @@ def densify_flow_prompt(prompt: str, scene: Dict[str, Any], duration: int) -> st
         "camera-angle changes, not separate story scenes. Preserve identical faces, wardrobe, props, location, "
         "screen direction, and cause-and-effect. "
         "Keep hands, faces, bodies, props, and camera purposefully active across all four shots. "
+        "Use at least two linked physical actions in every beat. No static hold may last longer than 0.5 seconds. "
         "No silent staring, idle pauses, frozen posing, slow empty walking, prolonged establishing "
         "shots, or dead air. Do not use slow motion."
         + dialogue_rule

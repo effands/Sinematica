@@ -18,6 +18,7 @@ from .gallery_cleanup import cleanup_job_files, job_source_files
 from .media_download import resolve_exact_media_url, stream_download
 from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
 from .scene_continuity import build_continuity_prompt, continuity_start_image
+from .scene_audio_direction import apply_scene_audio_direction, resolve_master_music_track
 from .storyboard_image import fetch_image_bytes, generate_storyboard_sheet
 
 from omniflash.generators import upload_image, generate_video_i2v, poll_video_status
@@ -594,6 +595,7 @@ async def execute_storyboard_job(
 
     # Step 2: Render each scene video across connected Chrome profiles
     completed_scene_paths = []
+    music_video_mode = bool(storyboard.get("music_track_path"))
     continuity_media_id = None
     continuity_scene_number = None
     continuity_instance_id = None
@@ -633,6 +635,10 @@ async def execute_storyboard_job(
                 f"✅ [Adegan {idx}/{total_scenes}] Prompt padat selesai via {pacing_provider}: "
                 "4 shot berbeda, aksi berantai, dialog berbalas, dan kontinuitas terkunci.",
             )
+
+        prompt = apply_scene_audio_direction(
+            prompt, sc, storyboard, music_video=music_video_mode
+        )
 
         scene_record = {
             "scene_number": idx,
@@ -1046,9 +1052,11 @@ async def execute_storyboard_job(
                 log_event(job_id, f"⚠️ [Adegan {idx}/{total_scenes}] Gemini tidak berhasil meracik prompt alternatif. Adegan dilewati.", level="warning")
                 break
 
-            prompt = revised
-            sc["prompt_for_flow"] = revised
-            scene_record["prompt"] = revised
+            prompt = apply_scene_audio_direction(
+                revised, sc, storyboard, music_video=music_video_mode
+            )
+            sc["prompt_for_flow"] = prompt
+            scene_record["prompt"] = prompt
             scene_record["prompt_rewritten"] = policy_attempt
             log_event(job_id, f"✍️ [Adegan {idx}/{total_scenes}] Prompt alternatif siap. Mengulang render adegan ini...")
 
@@ -1079,7 +1087,7 @@ async def execute_storyboard_job(
 
             film_path = stitch_scenes(job_dir, completed_scene_paths, output_filename="cinematic_film.mp4")
 
-            music_track = cfg.get("music_track_path")
+            music_track = resolve_master_music_track(storyboard, cfg)
             if music_track and os.path.exists(music_track):
                 log_event(job_id, "🎵 [98%] Menyatukan audio track musik latar dengan video klip...")
                 from .film_stitcher import mux_audio_to_video

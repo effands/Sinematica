@@ -22,6 +22,8 @@ class DenseScenePromptTests(unittest.TestCase):
         self.assertIn("7.5-10 seconds", result)
         self.assertIn("at least two distinct short speaking turns", result)
         self.assertIn("No silent staring", result)
+        self.assertIn("at least two linked physical actions in every beat", result)
+        self.assertIn("No static hold may last longer than 0.5 seconds", result)
 
     def test_non_ten_second_prompt_is_not_changed(self):
         prompt = "A 6-second tracking shot."
