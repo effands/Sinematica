@@ -51,8 +51,9 @@ class AutoSuggestRequest(BaseModel):
 
 
 class SEOKitRequest(BaseModel):
-    title: str
-    premise: str
+    title: Optional[str] = ""
+    film_title: Optional[str] = ""
+    premise: Optional[str] = ""
 
 
 class RegenerateSceneRequest(BaseModel):
@@ -68,10 +69,12 @@ from ..gemini_storyboard import generate_storyboard, auto_suggest_details, gener
 
 @router.post("/seo_kit")
 def generate_seo_metadata_kit(req: SEOKitRequest):
-    if not req.title:
-        req.title = "Film AI Sinematik"
+    title = req.title or req.film_title or "Film AI Sinematik"
     try:
-        data = generate_youtube_metadata(req.title, req.premise or req.title)
+        data = generate_youtube_metadata(title, req.premise or title)
+        # Keep both key shapes so cached/older frontends remain compatible.
+        data["seo_titles"] = data.get("seo_titles") or data.get("titles") or []
+        data["tags_csv"] = data.get("tags_csv") or data.get("tags") or ""
         return {"success": True, "seo_kit": data}
     except Exception as ex:
         log.error("Error generating SEO kit: %s", ex)

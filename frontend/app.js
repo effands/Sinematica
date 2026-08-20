@@ -195,15 +195,26 @@ function initSeoKitModal() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            film_title: filmTitle,
+            title: filmTitle,
             premise: currentStoryboard ? currentStoryboard.genre_style : filmTitle
           })
         });
 
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Gagal generate SEO kit');
+        if (!res.ok) {
+          const detail = data.detail;
+          const message = Array.isArray(detail)
+            ? detail.map(item => item.msg || JSON.stringify(item)).join('; ')
+            : (typeof detail === 'object' && detail !== null ? JSON.stringify(detail) : detail);
+          throw new Error(message || 'Gagal generate SEO kit');
+        }
 
-        const kit = data.seo_kit || {};
+        const rawKit = data.seo_kit || {};
+        const kit = {
+          ...rawKit,
+          seo_titles: rawKit.seo_titles || rawKit.titles || [],
+          tags_csv: rawKit.tags_csv || rawKit.tags || ''
+        };
 
         body.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 16px;">
