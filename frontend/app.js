@@ -1128,6 +1128,9 @@ function initStoryboardForm() {
     const targetCountryEl = document.getElementById('targetCountryInput');
     const targetCountry = targetCountryEl ? targetCountryEl.value.trim() : '';
 
+    const targetLanguageEl = document.getElementById('targetLanguageInput');
+    const targetLanguage = targetLanguageEl ? targetLanguageEl.value.trim() : 'Indonesia';
+
     const dracinThemeEl = document.getElementById('dracinThemeSelect');
     const dracinTheme = dracinThemeEl ? dracinThemeEl.value : '';
 
@@ -1142,6 +1145,9 @@ function initStoryboardForm() {
     formData.append('premise', theme);
     formData.append('scene_count', sceneCount);
     formData.append('aspect_ratio', aspectRatio);
+    formData.append('target_country', targetCountry);
+    formData.append('target_lang', targetLanguage);
+    formData.append('dracin_theme', dracinTheme);
     formData.append('microdrama_mode', isMicro);
     formData.append('ugc_mode', isUgc);
     formData.append('children_mode', isChildren);

@@ -430,6 +430,7 @@ def generate_storyboard(
     children_mode: bool = False,
     script_mode: bool = False,
     affiliate_config: Optional[Dict[str, Any]] = None,
+    target_lang: str = "",
 ) -> Dict[str, Any]:
     """Generate multi-scene structured storyboard JSON using the configured AI providers."""
 
@@ -491,7 +492,7 @@ anamorphic lens, teal-and-orange grading, human child characters.
 """ if children_mode else ""
     action_density_rules = CHILDREN_ACTION_RULES if children_mode else ADULT_ACTION_RULES
     local_realism_rules = "" if children_mode else build_local_realism_rules(target_country)
-    target_lang = "Indonesia"
+    target_lang = target_lang or "Indonesia"
 
     script_mode_rules = f"""
 MODE SCRIPT SENDIRI — FORMATTER TEKNIS SAJA (PRIORITAS TERTINGGI):

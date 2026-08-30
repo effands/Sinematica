@@ -140,6 +140,7 @@ async def generate_ai_storyboard(
     affiliate_scene_position: str = Form("auto"),
     affiliate_reference_paths: str = Form("[]"),
     target_country: str = Form(""),
+    target_lang: str = Form("Indonesia"),
     dracin_theme: str = Form(""),
     fixed_scene_duration: Optional[int] = Form(None),
     target_total_duration: Optional[int] = Form(None),
@@ -212,6 +213,7 @@ async def generate_ai_storyboard(
             script_mode=script_mode,
             affiliate_config=affiliate_config,
             target_country=target_country,
+            target_lang=target_lang,
             dracin_theme=dracin_theme,
             fixed_scene_duration=fixed_scene_duration,
             target_total_duration=target_total_duration
