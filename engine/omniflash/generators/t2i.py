@@ -190,7 +190,12 @@ async def generate_character_image(bridge, prompt: str, aspect: str = "landscape
             for vi in order:
                 shape, model = variants[vi]
                 log.info('Generasi Image + %d referensi (ep: %s, varian #%d, model %s)', len(ref_ids), ep.split(':')[-1], vi, model)
-                attempt = await bridge.api_request(ep, build_body(shape, model), instance_id=instance_id)
+                try:
+                    attempt = await bridge.api_request(ep, build_body(shape, model), instance_id=instance_id, timeout=25.0)
+                except Exception as ex:
+                    log.warning("Varian #%d timeout/error: %s", vi, ex)
+                    attempt = {"status": 500, "error": str(ex)}
+                
                 if attempt.get("status") == 200:
                     if _IMG_REF_VARIANT_IDX != vi:
                         _IMG_REF_VARIANT_IDX = vi
