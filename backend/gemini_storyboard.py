@@ -578,6 +578,8 @@ Pertahankan bentuk, kemasan, warna, label, dan proporsi produk dari gambar refer
 Anda adalah Sutradara Film AI Sinematik Kelas Dunia & Visual Director untuk Google Flow Omni Flash.
 Tugas Anda adalah meracik **STORYBOARD SINEMATIK KONSISTEN BANYAK KARAKTER & DYNAMIC MULTI-ANGLE CAMERA ({scene_count} ADEGAN/SCENE)**.
 
+BAHASA OUTPUT UTAMA: {target_lang} (Semua ringkasan aksi, narasi voiceover, teks overlay, dan dialog WAJIB DITULIS DALAM BAHASA {target_lang} SECARA MUTLAK, MESKIPUN PREMIS AWAL DALAM BAHASA LAIN!)
+
 {duration_rules}
 
 {action_density_rules}
@@ -613,12 +615,10 @@ ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
    Contoh BENAR: "begins gripping the envelope, then slams it onto the table, and finally turns away in tears."
    Contoh SALAH: "stands in the ballroom looking sad" (statis, tidak ada perubahan — DILARANG).
    Sertakan kata kerja gerak eksplisit (slams, snatches, shoves, storms out, collapses, spins around, lunges). Jika UGC Mode aktif, akhiri prompt dengan Aesthetic Add-On yang 100% cocok dengan tema (Girly/Pastel untuk Beauty, Corporate Luxury untuk Working Girl, Travel Vacation untuk Travel, dll.).
-4b. **BAHASA AUDIO/DIALOG VIDEO (WAJIB)**: Jika ada karakter yang berbicara/bersuara di adegan tersebut, WAJIB sisipkan dialog ASLI dalam bahasa {target_lang} di dalam tanda kutip langsung di tengah `prompt_for_flow`. Format wajib: `speaking angrily in natural {target_lang}: "..."`. (JIKA PREMIS DALAM BAHASA LAIN, TERJEMAHKAN KE {target_lang}!).
-4c. **Tanpa Logo/Watermark (Wajib)**: Semua `prompt_for_flow` harus melarang logo stasiun TV, channel bug,
-   watermark, logo sponsor/platform, emblem jaringan, ticker berita, lower-third, dan branded overlay di seluruh frame.
-5. **Time Range Timestamp Wajib**: Sertakan field "time_range" pada setiap scene (contoh: "0:00–0:02", "0:02–0:04", "0:04–0:06", "0:06–0:08", "0:08–0:10" atau sesuai durasi).
-6. **Voiceover Narration**: Narasi dubbing WAJIB dalam bahasa {target_lang} & bahasa Inggris. TERJEMAHKAN DARI PREMIS JIKA PERLU.
-7. **NAMA KARAKTER**: WAJIB GUNAKAN NAMA YANG COCOK UNTUK NEGARA/BAHASA {target_country or target_lang}, JANGAN GUNAKAN NAMA INDONESIA JIKA BUKAN INDONESIA.
+4b. **BAHASA AUDIO/DIALOG VIDEO (WAJIB)**: Jika karakter berbicara, WAJIB tulis dialog ASLI dalam bahasa {target_lang} di dalam `prompt_for_flow`. (TERJEMAHKAN KE {target_lang} SECARA MUTLAK!).
+4c. **Tanpa Logo/Watermark (Wajib)**: Dilarang ada logo/watermark di `prompt_for_flow`.
+5. **Time Range Timestamp Wajib**: Sertakan field "time_range".
+6. **ATURAN MUTLAK BAHASA OUTPUT**: SELURUH ACTION SUMMARY, NARRATION, TEXT OVERLAY, DAN NAMA KARAKTER HARUS 100% DALAM BAHASA {target_lang} DAN BERGAYA NEGARA {target_country or target_lang}. JANGAN GUNAKAN NAMA INDONESIA ATAU TEKS INDONESIA SAMA SEKALI, MESKIPUN PREMISNYA INDONESIA! TRANSLATE EVERYTHING TO {target_lang}!
 {elegant_rules}
 
 PARAMETIK REQUEST (WAJIB 100% PATUH & RELEVAN):
@@ -629,13 +629,7 @@ PARAMETIK REQUEST (WAJIB 100% PATUH & RELEVAN):
 - Deskripsi Karakter: {character_info or "Otomatis rancang karakter-karakter yang 100% cocok dengan tema"}
 - Catatan Tambahan: {custom_instructions or "Tidak ada"}
 
-7. **Character Registry (Wajib)**: Daftarkan SETIAP karakter yang muncul — sampai 10 karakter sekalipun —
-   sebagai entri terpisah di array "characters". Jangan menggabungkan dua tokoh menjadi satu entri, dan jangan
-   melewatkan tokoh pendukung yang tampil di layar; setiap entri akan dibuatkan character sheet image sendiri.
-   Field "description" WAJIB sedetail mungkin untuk keperluan generate gambar: bentuk & struktur wajah, warna dan
-   gaya rambut, warna kulit, bentuk mata/alis/hidung, perkiraan usia dan postur tubuh, pakaian lengkap beserta
-   warna, bahan, dan potongannya, alas kaki, aksesoris (kacamata, jam, perhiasan, hijab), serta ciri khas unik
-   (tahi lalat, bekas luka, tato). Minimal 2-3 kalimat padat per karakter, bukan sekadar "wanita muda cantik".
+7. **Character Registry (Wajib)**: Daftarkan SETIAP karakter yang muncul. WAJIB GUNAKAN NAMA LOKAL NEGARA {target_country or target_lang} UNTUK NAMA MEREKA. JIKA PREMIS MEMAKAI NAMA INDONESIA (MISAL SINTA/RATNA/BUDI) TAPI TARGET BUKAN INDONESIA, ANDA WAJIB MENGGANTINYA MENJADI NAMA {target_country or target_lang}! Field "description" WAJIB sedetail mungkin...
    Field "visual_signature" WAJIB berisi kombinasi permanen yang unik dan mudah terlihat: warna/siluet pakaian,
    satu aksesori khas, serta rambut/usia/ciri wajah. Tidak boleh ada dua karakter dengan warna dominan,
    aksesori, siluet, dan ciri wajah yang mudah tertukar. Signature ini tidak boleh berubah antaradegan.
@@ -672,17 +666,17 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "affiliate_scene": false,
       "time_range": "0:00–0:02",
       "title": "Judul Adegan 1 (misal Opening Activity)",
-      "action_summary": "Ringkasan aksi adegan dalam bahasa {target_lang}, panjangnya proporsional dengan durasi adegan",
+      "action_summary": "Ringkasan aksi adegan (WAJIB DITULIS DALAM BAHASA {target_lang} SECARA KESELURUHAN)",
       "shot_type": "Framing baku, pilih SATU: Extreme Wide Shot / Wide Shot / Medium Shot / Medium Close Up / Close Up / Extreme Close Up / Over-The-Shoulder / Point of View",
       "characters_in_scene": [1],
       "dialogue": [{{"speaker_id": 1, "line": "Kalimat persis", "screen_position": "left/center/right"}}],
       "start_state": "Posisi tubuh, tangan, properti, arah pandang, dan lokasi pada frame awal",
       "end_state": "Posisi tubuh, tangan, properti, arah pandang, dan lokasi pada frame akhir",
       "prompt_for_flow": "Detailed English video prompt for Google Flow ending with Girly Aesthetic Add-On: pastel aesthetic, luxury lifestyle mood, cinematic bokeh lights, realistic skin texture, soft shadows, glossy lighting, premium social media content, smooth motion blur, high fashion composition, realistic environment details",
-      "text_overlay": "WAJIB DIISI di semua mode: teks overlay pendek bahasa {target_lang} (maks 6 kata) yang muncul di layar untuk adegan ini",
+      "text_overlay": "WAJIB DIISI di semua mode: teks overlay pendek (WAJIB DITULIS DALAM BAHASA {target_lang}, maks 6 kata) yang muncul di layar",
       "camera_movement": "Pergerakan kamera saja, terpisah dari shot_type (misal: Slow push-in, Handheld tracking, Static locked-off)",
       "lighting_mood": "Mood pencahayaan (misal: Soft natural lighting, cinematic bokeh lights)",
-      "narration_id": "Teks Narasi Voiceover bahasa {target_lang}, jumlah katanya sesuai patokan durasi",
+      "narration_id": "Teks Narasi Voiceover (WAJIB DITULIS DALAM BAHASA {target_lang}, JANGAN INDONESIA JIKA BUKAN INDONESIA)",
       "narration_en": "English Voiceover Narration Text",
       "duration": 4
     }}
@@ -794,11 +788,11 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa teks lain di luar JSON):
 {{
   "scene_number": {scene_number},
   "title": "{scene_title}",
-  "action_summary": "Ringkasan aksi variasi baru adegan 10s dalam bahasa {target_lang}",
+  "action_summary": "Ringkasan aksi variasi baru (WAJIB DITULIS DALAM BAHASA {target_lang} SECARA MUTLAK!)",
   "prompt_for_flow": "Detailed English 10s video prompt for Google Flow with character seeds, camera shot, cinematic lighting. Include speaking dialog in {target_lang} if any.",
   "camera_movement": "Sudut & Gerakan Kamera Baru (10s)",
   "lighting_mood": "Mood lighting baru",
-  "narration_id": "Teks Narasi Voiceover Bahasa {target_lang} (10s)",
+  "narration_id": "Teks Narasi Voiceover (WAJIB DITULIS DALAM BAHASA {target_lang}, JANGAN INDONESIA JIKA BUKAN INDONESIA)",
   "narration_en": "English Voiceover Narration Text (10s)"
 }}
 """
