@@ -493,7 +493,7 @@ async def download_file(
             except Exception as ex:
                 log.warning("Unduhan langsung MP4 gagal; mencoba profil Chrome: %s", ex)
         result = await bridge.download_url_with_retry(
-            download_url, instance_id=instance_id, timeout=60, attempts=1, delay=0
+            download_url, instance_id=instance_id, timeout=300, attempts=3, delay=2
         )
         with open(dest_path, "wb") as out:
             out.write(result["data"])
