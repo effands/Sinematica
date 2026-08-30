@@ -103,21 +103,34 @@ def _learned_reference_payload(ref_ids: List[str]) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _build_reference_variants(ref_ids: List[str]) -> List[Dict[str, Any]]:
+def _build_reference_variants(ref_ids: List[str], project_id: str = None) -> List[Dict[str, Any]]:
     """Candidate ways to attach reference images to an image-generation request."""
-    image_inputs = [{"imageInputType": "IMAGE_INPUT_TYPE_REFERENCE", "name": m} for m in ref_ids if m]
-    media = [{"mediaId": m} for m in ref_ids if m]
-    return [
-        {"imageInputs": image_inputs},
-        {"inputImages": media},
-        {"referenceImages": media},
-        {"referenceMedia": media},
-        {"subjectReferences": media},
-        {"characterReferences": media},
+    # Ensure we try both raw UUIDs and fully qualified project paths
+    raw_media = [{"mediaId": m} for m in ref_ids if m]
+    
+    full_names = []
+    for m in ref_ids:
+        if m and not m.startswith("projects/") and project_id:
+            full_names.append(f"projects/{project_id}/media/{m}")
+        elif m:
+            full_names.append(m)
+
+    image_inputs_full = [{"imageInputType": "IMAGE_INPUT_TYPE_REFERENCE", "name": m} for m in full_names]
+    image_inputs_raw = [{"imageInputType": "IMAGE_INPUT_TYPE_REFERENCE", "name": m} for m in ref_ids if m]
+    
+    variants = [
+        {"imageInputs": image_inputs_full},
+        {"imageInputs": image_inputs_raw},
+        {"inputImages": raw_media},
+        {"referenceImages": raw_media},
+        {"referenceMedia": raw_media},
+        {"subjectReferences": raw_media},
+        {"characterReferences": raw_media},
         {"_prompt_parts": [{"mediaId": m} for m in ref_ids if m]},
         {"_prompt_parts": [{"media": {"mediaId": m}} for m in ref_ids if m]},
         {"_prompt_parts": [{"image": {"mediaId": m}} for m in ref_ids if m]},
     ]
+    return variants
 
 
 async def generate_character_image(bridge, prompt: str, aspect: str = "landscape", project_id: str = None,
@@ -163,7 +176,7 @@ async def generate_character_image(bridge, prompt: str, aspect: str = "landscape
             variants.append((learned_variant, learned_model or DEFAULT_IMAGE_MODEL))
             if learned_model:
                 variants.append((learned_variant, DEFAULT_IMAGE_MODEL))
-        variants.extend((v, DEFAULT_IMAGE_MODEL) for v in _build_reference_variants(ref_ids))
+        variants.extend((v, DEFAULT_IMAGE_MODEL) for v in _build_reference_variants(ref_ids, proj))
         
         # Deduplicate variants while keeping order
         seen_variants = []
