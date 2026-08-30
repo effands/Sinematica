@@ -761,8 +761,16 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
     raise RuntimeError(f"Gagal generate storyboard dari seluruh provider AI: {last_err}")
 
 
-def regenerate_single_scene(film_title: str, scene_number: int, scene_title: str, consistent_characters: str, genre_style: str) -> Dict[str, Any]:
+def regenerate_single_scene(
+    film_title: str,
+    scene_number: int,
+    scene_title: str,
+    consistent_characters: str,
+    genre_style: str,
+    target_lang: str = "Indonesia"
+) -> Dict[str, Any]:
     """Regenerate prompt and action for a single scene using configured providers."""
+    target_lang = target_lang or "Indonesia"
 
     prompt = f"""
 Anda adalah Sutradara Film AI Sinematik Kelas Dunia.
@@ -773,22 +781,24 @@ INFO Latar Film:
 - Judul Adegan: {scene_title}
 - Mood / Style: {genre_style}
 - Karakter & Seeds: {consistent_characters}
+- Bahasa Utama: {target_lang}
 
 WAJIB HASILKAN VARIANT BARU ADEGAN {scene_number} (10 DETIK):
 1. Gerakan Kamera Baru (misal: Low Angle Hero Tracking, Dutch Angle Action, Over-The-Shoulder Close Up).
-2. Ringkasan Aksi Baru dalam Bahasa Indonesia.
-3. Narasi Dubbing Voiceover 10 Detik (Bahasa Indonesia & English).
+2. Ringkasan Aksi Baru dalam bahasa {target_lang}.
+3. Narasi Dubbing Voiceover 10 Detik (Bahasa {target_lang} & English). Jika ada yang berbicara, WAJIB terjemahkan ke bahasa {target_lang} di dalam prompt_for_flow.
 4. Detailed English 10s Video Prompt for Google Flow (mencantumkan Seeds Karakter + Kamera 10s + Aksi + 8k Lighting).
+   -> Sisipkan dialog dalam tanda kutip `speaking angrily in natural {target_lang}: "..."` jika karakter berbicara.
 
 OUTPUT WAJIB FORMAT JSON VALID (Tanpa teks lain di luar JSON):
 {{
   "scene_number": {scene_number},
   "title": "{scene_title}",
-  "action_summary": "Ringkasan aksi variasi baru adegan 10s Bahasa Indonesia",
-  "prompt_for_flow": "Detailed English 10s video prompt for Google Flow with character seeds, camera shot, cinematic lighting",
+  "action_summary": "Ringkasan aksi variasi baru adegan 10s dalam bahasa {target_lang}",
+  "prompt_for_flow": "Detailed English 10s video prompt for Google Flow with character seeds, camera shot, cinematic lighting. Include speaking dialog in {target_lang} if any.",
   "camera_movement": "Sudut & Gerakan Kamera Baru (10s)",
   "lighting_mood": "Mood lighting baru",
-  "narration_id": "Teks Narasi Voiceover Bahasa Indonesia (10s)",
+  "narration_id": "Teks Narasi Voiceover Bahasa {target_lang} (10s)",
   "narration_en": "English Voiceover Narration Text (10s)"
 }}
 """
@@ -817,7 +827,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa teks lain di luar JSON):
     raise RuntimeError(f"Gagal regenerate adegan: {last_err}")
 
 
-def generate_music_video_storyboard(lyrics: str, audio_duration: float, scene_count: int, aspect_ratio: str, character_info: str, image_paths: List[str] = None) -> Dict[str, Any]:
+def generate_music_video_storyboard(lyrics: str, audio_duration: float, scene_count: int, aspect_ratio: str, character_info: str, image_paths: List[str] = None, target_lang: str = "Indonesia") -> Dict[str, Any]:
     """Generates a cinematic music video storyboard mapped precisely to audio duration and lyrics."""
     model_name = settings.get_settings().get("gemini_model") or "gemini-3.6-flash"
     models_to_try = [
@@ -840,7 +850,7 @@ Tugas Anda adalah merancang storyboard video musik yang memukau secara visual be
 
 ATURAN UTAMA:
 1. Rancang alur cerita/visual yang dibagi ke dalam {scene_count} adegan secara merata.
-2. Jika input berupa lirik, masukkan potongan lirik ke dalam field `narration_id` untuk dijadikan subtitle. Jika input berupa instrumen musik/suasana, Anda BISA mengosongkan `narration_id` atau mengisinya dengan penceritaan narasi pendek.
+2. Jika input berupa lirik, masukkan potongan lirik ke dalam field `narration_id` untuk dijadikan subtitle dalam bahasa {target_lang}. Jika lirik asing, TERJEMAHKAN ke bahasa {target_lang}. Jika instrumen, isi dengan narasi pendek bahasa {target_lang}.
 3. Rancang visual (prompt_for_flow) yang mencerminkan suasana, emosi, dan makna musik berdasarkan teks di atas.
 4. Aspect ratio: {aspect_ratio}.
 5. Jika ada tokoh manusia, pastikan karakternya konsisten menggunakan sistem Seed:

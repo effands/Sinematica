@@ -62,6 +62,7 @@ class RegenerateSceneRequest(BaseModel):
     scene_title: Optional[str] = ""
     consistent_characters: Optional[str] = ""
     genre_style: Optional[str] = ""
+    target_lang: Optional[str] = "Indonesia"
 
 
 from ..gemini_storyboard import generate_storyboard, auto_suggest_details, generate_youtube_metadata, regenerate_single_scene, generate_music_video_storyboard
@@ -89,7 +90,8 @@ def regenerate_single_scene_endpoint(req: RegenerateSceneRequest):
             scene_number=req.scene_number,
             scene_title=req.scene_title or f"Adegan {req.scene_number}",
             consistent_characters=req.consistent_characters or "",
-            genre_style=req.genre_style or ""
+            genre_style=req.genre_style or "",
+            target_lang=req.target_lang or "Indonesia"
         )
         return {"success": True, "scene": scene}
     except Exception as ex:
@@ -236,7 +238,8 @@ async def generate_mv_storyboard(
     aspect_ratio: str = Form("landscape"),
     character_info: str = Form(""),
     actor_ids: str = Form(""),
-    audio_file: UploadFile = File(...)
+    audio_file: UploadFile = File(...),
+    target_lang: str = Form("Indonesia")
 ):
     try:
         actors_db = settings.DATA_DIR / "actors.json"
@@ -268,7 +271,8 @@ async def generate_mv_storyboard(
             scene_count=total_scenes,
             aspect_ratio=aspect_ratio,
             character_info=character_info,
-            image_paths=saved_paths
+            image_paths=saved_paths,
+            target_lang=target_lang
         )
         storyboard = attach_character_references(storyboard, selected_actors)
         

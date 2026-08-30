@@ -1714,7 +1714,8 @@ function bindStoryboardLiveEditing() {
             scene_number: scNum,
             scene_title: sc.title || `Adegan ${scNum}`,
             consistent_characters: currentStoryboard.consistent_characters || '',
-            genre_style: currentStoryboard.genre_style || ''
+            genre_style: currentStoryboard.genre_style || '',
+            target_lang: document.getElementById('targetLanguageInput') ? document.getElementById('targetLanguageInput').value.trim() : 'Indonesia'
           })
         });
 
@@ -2417,6 +2418,8 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.append('lyrics', lyrics);
         formData.append('aspect_ratio', aspect);
         formData.append('character_info', charInfo);
+        const targetLangEl = document.getElementById('targetLanguageInput');
+        if (targetLangEl) formData.append('target_lang', targetLangEl.value.trim());
         
         const res = await fetch('/api/storyboard/generate-mv', {
           method: 'POST',
