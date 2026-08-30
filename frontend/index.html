@@ -183,6 +183,11 @@
                       <option data-children="true" value="Gajah kecil bernama Ellie dan teman-temannya menemukan pelangi setelah hujan. Mereka menyebutkan warna-warnanya satu per satu sambil bermain: merah, kuning, hijau, biru. Setiap warna mereka cocokkan dengan benda di sekitar taman.">🌈 Ellie Mengenal Warna Pelangi</option>
                       <option data-children="true" value="Anak ayam bernama Cipi berhitung satu sampai lima sambil mencari teman-temannya yang bersembunyi di kebun. Satu di balik pot, dua di bawah daun, dan seterusnya, sampai semua ditemukan dan bermain bersama.">🔢 Cipi Berhitung 1 Sampai 5</option>
                       <option data-children="true" value="Kucing kecil Momo lupa merapikan mainannya sebelum tidur. Ibunya mengingatkan dengan lembut. Momo dan sahabatnya Kiko merapikan mainan sambil bernyanyi, lalu kamarnya jadi rapi dan Momo tidur nyenyak.">🧹 Momo Merapikan Mainan</option>
+                      <option data-children="true" value="Anak singa bernama Leo takut akan kegelapan malam. Ibunya memberinya lampu tidur bentuk bintang yang bersinar terang. Leo belajar bahwa gelap itu tenang dan bintangnya menemaninya tidur nyenyak.">🦁 Leo Berani Tidur Sendiri</option>
+                      <option data-children="true" value="Pinguin kecil bernama Pipi sedih karena tidak bisa terbang di udara seperti burung. Ibunya lalu mengajaknya berenang dan menunjukkan bahwa Pipi bisa 'terbang' meluncur di dalam air dengan sangat cepat dan lincah. Pipi pun sangat bangga.">🐧 Pipi Terbang di Dalam Air</option>
+                      <option data-children="true" value="Katak kecil bernama Koko merasa suaranya aneh dan malu bernyanyi. Teman-temannya di kolam mengajaknya bernyanyi bersama pelan-pelan. Suara Koko ternyata sangat merdu saat bergabung, dan mereka pun paduan suara dengan riang gembira.">🐸 Koko Berani Bernyanyi</option>
+                      <option data-children="true" value="Anak monyet bernama Mika tidak suka makan sayuran dan buah, ia hanya mau permen. Suatu hari perutnya sakit dan ia lemas. Ibunya membuatkan sup buah dan sayur hangat yang ternyata sangat lezat, Mika memakannya dengan lahap dan kembali sehat ceria.">🐒 Mika Suka Makan Sayur</option>
+                      <option data-children="true" value="Jerapah kecil bernama Jiji lehernya belum cukup panjang untuk memetik daun favoritnya di dahan pohon tertinggi. Temannya si anak gajah datang membantu menyemprotkan air agar daunnya merunduk. Jiji sangat berterima kasih karena mereka saling tolong menolong.">🦒 Jiji dan Daun Favorit</option>
                     </optgroup>
                     <optgroup label="😱 Niche Horror, Ghost & Mystery">
                       <option value="Horror Pesugihan Desa Terpencil: Pakuwon Gaib, Tuyul Purba & Pemuda Kota Terjebak Ritual Malam Satu Suro di Candi Mistik.">👻 Horror Nusantara - Pesugihan Desa & Ritual Suro</option>
@@ -336,8 +341,23 @@
                 <!-- Target Negara / Realisme Lokal -->
                 <div class="form-group" style="margin: 0;">
                   <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; display: block;">🌏 Target Negara (Skin Tone, Wardrobe, Lingkungan):</label>
-                  <input type="text" id="targetCountryInput" value="Indonesia" placeholder="misal: Indonesia, Malaysia, India, dll" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600;" />
-                  <p style="font-size: 11px; color: var(--text-muted); margin: 6px 0 0 0;">Kosongkan jika ingin visual/karakter generik internasional.</p>
+                  <select id="targetCountryInput" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600;">
+                    <option value="">-- Generik Internasional (Kosong) --</option>
+                    <option value="Indonesia" selected>🇮🇩 Indonesia</option>
+                    <option value="Malaysia">🇲🇾 Malaysia</option>
+                    <option value="Singapore">🇸🇬 Singapore</option>
+                    <option value="Thailand">🇹🇭 Thailand</option>
+                    <option value="Vietnam">🇻🇳 Vietnam</option>
+                    <option value="Philippines">🇵🇭 Philippines</option>
+                    <option value="India">🇮🇳 India</option>
+                    <option value="Japan">🇯🇵 Japan</option>
+                    <option value="South Korea">🇰🇷 South Korea</option>
+                    <option value="China">🇨🇳 China</option>
+                    <option value="United States">🇺🇸 United States</option>
+                    <option value="United Kingdom">🇬🇧 United Kingdom</option>
+                    <option value="Brazil">🇧🇷 Brazil</option>
+                  </select>
+                  <p style="font-size: 11px; color: var(--text-muted); margin: 6px 0 0 0;">Pilih negara target untuk menyesuaikan wajah, pakaian, & lingkungan.</p>
                 </div>
 
                 <!-- Preset Tema Dracin -->
