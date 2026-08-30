@@ -34,7 +34,7 @@ def _parse_image_results(data: dict) -> List[Dict[str, str]]:
     for item in media_list:
         r = {"media_id": "", "image_url": ""}
         name = item.get("name", "")
-        if UUID_RE.match(name):
+        if name:
             r["media_id"] = name
 
         img = item.get("image", {})
@@ -204,7 +204,7 @@ async def generate_character_image(bridge, prompt: str, aspect: str = "landscape
                 shape, model = variants[vi]
                 log.info('Generasi Image + %d referensi (ep: %s, varian #%d, model %s)', len(ref_ids), ep.split(':')[-1], vi, model)
                 try:
-                    attempt = await bridge.api_request(ep, build_body(shape, model), instance_id=instance_id, timeout=25.0)
+                    attempt = await bridge.api_request(ep, build_body(shape, model), instance_id=instance_id, timeout=60.0)
                 except Exception as ex:
                     log.warning("Varian #%d timeout/error: %s", vi, ex)
                     attempt = {"status": 500, "error": str(ex)}
