@@ -323,12 +323,19 @@ async function handleDownloadRequest(msg) {
         }));
         for (let index = 0; index < totalChunks; index++) {
           const chunk = result.data_base64.slice(index * transferChunkSize, (index + 1) * transferChunkSize);
-          while (ws.bufferedAmount > 4 * 1024 * 1024) {
+          while (ws && ws.bufferedAmount > 4 * 1024 * 1024) {
+            if (ws.readyState !== WebSocket.OPEN) break;
             await new Promise(resolve => setTimeout(resolve, 25));
           }
-          ws.send(JSON.stringify({ type: 'download_chunk', id, index, data_base64: chunk }));
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'download_chunk', id, index, data_base64: chunk }));
+          } else {
+            break;
+          }
         }
-        ws.send(JSON.stringify({ type: 'download_complete', id, status: 200 }));
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'download_complete', id, status: 200 }));
+        }
       } else {
         const { data_base64, ...safeResult } = result;
         ws.send(JSON.stringify({ type: 'download_response', id, ...safeResult }));

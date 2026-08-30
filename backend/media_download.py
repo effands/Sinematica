@@ -31,7 +31,13 @@ async def resolve_exact_media_url(
     bridge, media_id: str, project_id: str = "", instance_id: str = None
 ) -> str:
     """Resolve the exact signed Flow URL using Affilia's proven silent tRPC route."""
-    url = f"{_MEDIA_REDIRECT_ENDPOINT}?name={quote(str(media_id), safe='')}"
+    # Ensure media_id is fully qualified as projects/{project}/media/{id}
+    full_name = media_id
+    if not full_name.startswith("projects/") and project_id:
+        clean_id = media_id.rsplit("/", 1)[-1]
+        full_name = f"projects/{project_id}/media/{clean_id}"
+        
+    url = f"{_MEDIA_REDIRECT_ENDPOINT}?name={quote(str(full_name), safe='')}"
     result = await bridge.trpc_request(
         url,
         method="GET",
