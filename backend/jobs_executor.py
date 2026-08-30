@@ -474,7 +474,8 @@ async def download_file(
         if media_id and hasattr(bridge, "trpc_request"):
             try:
                 exact_url = await resolve_exact_media_url_with_retry(
-                    bridge, media_id.rsplit("/", 1)[-1], project_id or "", instance_id
+                    bridge, media_id.rsplit("/", 1)[-1], project_id or "", instance_id,
+                    attempts=20, delay=3.0
                 )
                 if exact_url:
                     download_url = exact_url

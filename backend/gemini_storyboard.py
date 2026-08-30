@@ -491,7 +491,7 @@ anamorphic lens, teal-and-orange grading, human child characters.
 `shot_type` cukup sederhana (Wide Shot / Medium Shot / Close Up) dan gerakan kamera lembut & pelan.
 """ if children_mode else ""
     action_density_rules = CHILDREN_ACTION_RULES if children_mode else ADULT_ACTION_RULES
-    local_realism_rules = "" if children_mode else build_local_realism_rules(target_country)
+    local_realism_rules = build_local_realism_rules(target_country) if target_country else ""
     target_lang = target_lang or "Indonesia"
 
     script_mode_rules = f"""
@@ -613,11 +613,12 @@ ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
    Contoh BENAR: "begins gripping the envelope, then slams it onto the table, and finally turns away in tears."
    Contoh SALAH: "stands in the ballroom looking sad" (statis, tidak ada perubahan — DILARANG).
    Sertakan kata kerja gerak eksplisit (slams, snatches, shoves, storms out, collapses, spins around, lunges). Jika UGC Mode aktif, akhiri prompt dengan Aesthetic Add-On yang 100% cocok dengan tema (Girly/Pastel untuk Beauty, Corporate Luxury untuk Working Girl, Travel Vacation untuk Travel, dll.).
-4b. **BAHASA AUDIO/DIALOG VIDEO (WAJIB)**: Jika ada karakter yang berbicara/bersuara di adegan tersebut, WAJIB sisipkan dialog ASLI dalam bahasa {target_lang} di dalam tanda kutip langsung di tengah `prompt_for_flow`. Format wajib: `speaking angrily in natural {target_lang}: "..."`.
+4b. **BAHASA AUDIO/DIALOG VIDEO (WAJIB)**: Jika ada karakter yang berbicara/bersuara di adegan tersebut, WAJIB sisipkan dialog ASLI dalam bahasa {target_lang} di dalam tanda kutip langsung di tengah `prompt_for_flow`. Format wajib: `speaking angrily in natural {target_lang}: "..."`. (JIKA PREMIS DALAM BAHASA LAIN, TERJEMAHKAN KE {target_lang}!).
 4c. **Tanpa Logo/Watermark (Wajib)**: Semua `prompt_for_flow` harus melarang logo stasiun TV, channel bug,
    watermark, logo sponsor/platform, emblem jaringan, ticker berita, lower-third, dan branded overlay di seluruh frame.
 5. **Time Range Timestamp Wajib**: Sertakan field "time_range" pada setiap scene (contoh: "0:00–0:02", "0:02–0:04", "0:04–0:06", "0:06–0:08", "0:08–0:10" atau sesuai durasi).
-6. **Voiceover Narration**: Narasi dubbing bahasa {target_lang} & bahasa Inggris berdurasi sesuai adegan.
+6. **Voiceover Narration**: Narasi dubbing WAJIB dalam bahasa {target_lang} & bahasa Inggris. TERJEMAHKAN DARI PREMIS JIKA PERLU.
+7. **NAMA KARAKTER**: WAJIB GUNAKAN NAMA YANG COCOK UNTUK NEGARA/BAHASA {target_country or target_lang}, JANGAN GUNAKAN NAMA INDONESIA JIKA BUKAN INDONESIA.
 {elegant_rules}
 
 PARAMETIK REQUEST (WAJIB 100% PATUH & RELEVAN):
