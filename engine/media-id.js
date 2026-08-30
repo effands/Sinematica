@@ -1,0 +1,21 @@
+window.MEDIA_IDS = {
+  "continuity_01.jpg": "c4ecb1f7-4e7a-446b-b26a-b1e847601e46",
+  "continuity_03.jpg": "df80e239-e917-4f2b-9497-4d509e892257",
+  "continuity_04.jpg": "92fa196d-446b-49cb-b6fb-76770aaead13",
+  "continuity_05.jpg": "a0f7123a-08c9-4e5f-a9aa-eb2a5eb6f2cd",
+  "continuity_06.jpg": "92e5a1c9-23ee-4d0f-a32f-63351af46028",
+  "continuity_02.jpg": "6868f8c2-d731-4cbe-a789-f51e1af21f18",
+  "continuity_07.jpg": "213d9765-9ca8-4768-ace6-a3b7d89bee3e",
+  "continuity_08.jpg": "5361c73b-b572-46ff-a736-aa00df3649b3",
+  "continuity_09.jpg": "cb1ccb70-bba4-4209-9a24-b6c90092e3bd",
+  "continuity_10.jpg": "caeb61f0-82fd-4e7c-b37d-baa167a7ae39",
+  "continuity_11.jpg": "981a5500-7980-404d-80c2-ac941e7cc022",
+  "continuity_12.jpg": "7c765d22-91af-4775-aa07-88c95ed94dea",
+  "continuity_13.jpg": "a0c4091d-d677-4470-b351-5459358bb8bb",
+  "continuity_14.jpg": "aff02266-9c81-4118-ae98-205a72efb222",
+  "continuity_15.jpg": "ed894510-3574-4c1e-99d1-f0cf593a45f4",
+  "continuity_16.jpg": "b4832e27-9ad7-48df-89e0-1f8af30f7acb",
+  "continuity_17.jpg": "5c82f790-9b77-41a1-b316-21f7c59ef03f",
+  "ref_3b6a07b5.webp": "d497583c-64da-4dba-8109-fd7d760c1def",
+  "product_036ec32a.webp": "a818bc41-5faf-47fb-95e4-e26fe59080a6"
+};
