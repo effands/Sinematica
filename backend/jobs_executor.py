@@ -1120,6 +1120,8 @@ async def execute_storyboard_job(
                         media_id=target_media_id, project_id=inst_project_id,
                     )
 
+                    log_event(job_id, f"💾 [Adegan {idx}/{total_scenes}] Video MP4 berhasil diunduh dan tersimpan di storage ({out_filename})!", profile=target_name)
+
                     scene_record["status"] = "completed"
                     scene_record["video_path"] = str(out_path)
                     scene_record["relative_url"] = f"/storage/jobs/{job_id}/{out_filename}"
