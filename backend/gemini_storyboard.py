@@ -60,19 +60,35 @@ CHILDREN_ACTION_RULES = """ATURAN CERITA ANAK (WAJIB — MENGGANTIKAN ATURAN KON
    Beri nama sederhana yang mudah diingat dan diucapkan anak (Nino, Momo, Cici,Upi, Bibo)."""
 
 POLICY_SAFE_RULES = """
-ATURAN WAJIB LOLOS FILTER KEBIJAKAN GOOGLE FLOW (JANGAN DILANGGAR):
-Google Flow MENOLAK video yang menggambarkan institusi/tokoh nyata. Penolakan = adegan gagal total.
-1. **Aparat & Pejabat**: DILARANG menyebut `police`, `police officer`, `polisi`, seragam kepolisian, tentara,
-   hakim, jaksa, atau pejabat pemerintah. Ganti dengan peran netral: `security officer`, `court usher`,
-   `private investigator`, `family lawyer`, `hospital administrator`.
-2. **Nama Institusi & Merek Asli**: DILARANG memakai nama rumah sakit, sekolah, bank, perusahaan, hotel,
-   atau merek yang benar-benar ada (misal 'RS Harapan Bunda'). Ciptakan nama fiktif yang terdengar wajar.
-3. **Tokoh Publik**: DILARANG menyebut nama orang terkenal, selebriti, atau politisi.
-4. **Dokumen Resmi Negara**: hindari KTP, paspor, lambang negara, atau berkas resmi pemerintah.
-   Untuk hasil tes DNA/medis, sebut generik: `a sealed laboratory result envelope`.
-5. **Kekerasan**: konflik emosional (bentakan, tamparan ringan, air mata) masih boleh, tapi hindari darah,
-   luka, senjata api, dan penggambaran cedera serius.
-Drama, konflik, dan intensitas emosinya WAJIB tetap kuat — hanya elemen di atas yang diganti.
+ATURAN WAJIB LOLOS FILTER KEBIJAKAN & MODERASI GOOGLE FLOW (JANGAN DILANGGAR):
+Google Flow (Veo 2 & Imagen) SANGAT KETAT terhadap visual kekerasan, bahaya, dan tokoh nyata. Pelanggaran memicu penolakan (UNSAFE_GENERATION / DANGER_FILTER / PROMINENT_PEOPLE).
+
+1. **KEKERASAN, SENJATA & PERTEMPURAN (Cegah UNSAFE_GENERATION)**:
+   - DILARANG menampilkan: darah (blood/bleeding), luka menganga (wounds/gore), senjata api aktif (guns/rifles shooting), penusukan (stabbing), pembunuhan (killing/murder/death), mayat (corpse), pemenggalan, atau kehancuran brutal (devastation/massacre/burning town).
+   - CARA MENGGAMBARKAN AKSI & BATTLE CINEMATIC: Gunakan metafora sinematik PG-13 yang megah:
+     * Alih-alih "menembak/menusuk musuh": gunakan "intense non-lethal martial standoff, swift disarming technique, deflection of glowing energy aura, dramatic defensive stance in pouring rain".
+     * Alih-alih "desa hancur terbakar/devastation": gunakan "dramatic stormy atmosphere, windswept dusty terrain, dark cinematic storm clouds gathering over the landscape".
+     * Alih-alih "perang berdarah": gunakan "epic dramatic face-off between two determined factions, intense stare-down, cloaks fluttering in the howling wind".
+     * Alih-alih "kematian/mayat": gunakan "dramatic surrender, falling to knees in emotional defeat, dropping weapon to the ground, heavy breathing".
+
+2. **BAHAYA, PENGORBANAN & SELF-HARM (Cegah DANGER_FILTER)**:
+   - DILARANG menggambarkan: aksi bunuh diri, mengorbankan nyawa hingga tewas (fatal sacrifice/dying), melompat ke jurang/api, racun (poison), gantung diri, terbakar hidup-hidup, atau adegan kecelakaan maut.
+   - CARA MENGGAMBARKAN PENGORBANAN / REDEMPTION:
+     * Gunakan "noble act of stepping forward to shield a companion with outstretched arms, powerful emotional redemption, heartfelt tearful embrace, golden sunlight breaking through the dark clouds".
+
+3. **APARAT, PEJABAT & SERAGAM NEGARA (Cegah REPUTATIONAL / GOV FILTER)**:
+   - DILARANG menyebut `police`, `police officer`, `polisi`, seragam kepolisian resmi, `military army`, `tentara`, `judge`, `prosecutor`, atau pejabat pemerintah nyata.
+   - GANTI DENGAN peran fiktif/swasta: `security officer`, `private investigator`, `guard`, `family lawyer`, `estate administrator`, `community leader`.
+
+4. **NAMA TOKOH PUBLIK & MEREK ASLI (Cegah PROMINENT_PEOPLE)**:
+   - DILARANG memakai nama selebriti, politisi, tokoh sejarah modern, presiden, atau figur terkenal.
+   - Gunakan nama karakter fiktif orisinal (misal: "Mateo", "Lin Xue", "Joko", "Sari", "Bagus", "Elena").
+   - DILARANG menyebut nama rumah sakit, sekolah, bank, atau brand komersial nyata. Ciptakan nama institusi fiktif.
+
+5. **DOKUMEN RESMI NEGARA**:
+   - Hindari KTP, paspor, lambang negara resmi. Sebut generik: `a sealed confidential dossier` atau `an official stamped envelope`.
+
+Intensitas emosi, drama, ketegangan, dan sinematografi WAJIB tetap maksimal dan menegangkan, namun 100% bersih dari kata kunci terlarang!
 """
 
 
@@ -83,6 +99,27 @@ def sanitize_prompt_for_policy(prompt_for_flow: str, rejection_reason: str = "",
     swaps out whatever tends to trip Flow's policy filters. Returns the rewritten English
     prompt, or None when no model could produce one.
     """
+    reason_upper = str(rejection_reason or "").upper()
+    specific_guidance = ""
+    if "UNSAFE_GENERATION" in reason_upper:
+        specific_guidance = """
+PETUNJUK KHUSUS UNSAFE_GENERATION:
+- Hapus semua kata atau visual pertempuran berdarah, penembakan, penusukan, senjata api, mayat, kehancuran ('devastation/massacre/battle/blood/wound/kill').
+- Tulis ulang sebagai ketegangan dramatis tanpa kekerasan fisik: 'intense non-violent standoff, cinematic pouring rain, windswept confrontation, swift disarm movement, emotional stare-down'.
+"""
+    elif "DANGER_FILTER" in reason_upper:
+        specific_guidance = """
+PETUNJUK KHUSUS DANGER_FILTER:
+- Hapus semua konsep pengorbanan mematikan ('sacrifice life/death/suicide/fatal wound'), melompat ke bahaya, api membakar orang, atau racun.
+- Tulis ulang sebagai penebusan emosional / perlindungan: 'noble act of stepping forward to shield a friend, emotional redemption, tearful heartfelt gaze, protective stance in golden dawn light'.
+"""
+    elif "PROMINENT_PEOPLE" in reason_upper:
+        specific_guidance = """
+PETUNJUK KHUSUS PROMINENT_PEOPLE:
+- Hapus nama atau jabatan yang menyerupai tokoh publik, selebriti, atau pejabat nyata.
+- Gunakan karakter fiktif murni dengan wajah generik non-selebriti.
+"""
+
     prompt = f"""
 Anda adalah Script Doctor spesialis lolos moderasi konten Google Flow (AI video generator).
 
@@ -94,6 +131,7 @@ PROMPT YANG DITOLAK:
 \"\"\"{prompt_for_flow}\"\"\"
 
 {POLICY_SAFE_RULES}
+{specific_guidance}
 
 TUGAS ANDA:
 Tulis ULANG prompt tersebut dalam Bahasa Inggris agar LOLOS filter, dengan syarat mutlak:
