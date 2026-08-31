@@ -157,24 +157,129 @@
                   <label style="font-size: 14px; font-weight: 700; color: #e9d5ff; margin-bottom: 8px; display: block;">🎯 Katalog Genre & Preset Cerita:</label>
                   <select id="genreCatalogSelect" style="width: 100%; height: 44px; border-radius: 12px; padding: 0 14px; font-size: 13px; background: rgba(4, 7, 16, 0.9); border: 1px solid var(--neon-purple); color: #ffffff; cursor: pointer;">
                     <option value="">-- Pilih Katalog Genre / Tema --</option>
-                    <optgroup label="🐉 Drama China / Dracin (Viral & Populer)">
-                      <option value="Dracin Wuxia Kuno: Pendekar Wanita Lin Xue & Pangeran Terbuang Zhao Feng merebut tahta kekaisaran Dinasti Tianyuan di tengah pertarungan pedang salju abadi.">🐉 Dracin Wuxia - Pendekar Pedang & Kerajaan</option>
-                      <option value="Dracin Xianxia Dewa: Pertemuan Dewa Perang Kerajaan Langit & Siluman Rubah Sembilan Ekor di tengah bencana segel iblis purba.">✨ Dracin Xianxia - Mitologi Dewa & Rubah Emas</option>
-                      <option value="Dracin Modern CEO: Pernikahan Kontrak Direktur Utama Shanghai & Desainer Muda yang Balas Dendam pada Keluarga Ibu Tiri.">💼 Dracin Modern - CEO Romance & Pernikahan Kontrak</option>
-                      <option value="Dracin Balas Dendam Istana: Permaisuri Terbuang Reinkarnasi Kembali ke Masa Lalu demi Menghancurkan Selir Licik & Menteri Korup.">👑 Dracin Istana - Reinkarnasi Balas Dendam</option>
+                    <optgroup label="🐉 Drama China / Wuxia & Xianxia (Asia Timur)">
+                      <option data-country="China" value="Dracin Wuxia Kuno: Pendekar Wanita Lin Xue & Pangeran Terbuang Zhao Feng merebut tahta kekaisaran Dinasti Tianyuan di tengah pertarungan pedang salju abadi.">🐉 Dracin Wuxia - Pendekar Pedang & Kerajaan</option>
+                      <option data-country="China" value="Dracin Xianxia Dewa: Pertemuan Dewa Perang Kerajaan Langit & Siluman Rubah Sembilan Ekor di tengah bencana segel iblis purba.">✨ Dracin Xianxia - Mitologi Dewa & Rubah Emas</option>
+                      <option data-country="China" value="Dracin Modern CEO: Pernikahan Kontrak Direktur Utama Shanghai & Desainer Muda yang Balas Dendam pada Keluarga Ibu Tiri.">💼 Dracin Modern - CEO Romance & Pernikahan Kontrak</option>
+                      <option data-country="China" value="Dracin Balas Dendam Istana: Permaisuri Terbuang Reinkarnasi Kembali ke Masa Lalu demi Menghancurkan Selir Licik & Menteri Korup.">👑 Dracin Istana - Reinkarnasi Balas Dendam</option>
+                      <option data-country="China" value="Dracin Kultivasi: Murid Sekte Terbuang yang Dianggap Lemah Bangkit Menguasai Pedang Petir Sembilan Langit dan Membungkam Seluruh Tetua Sekte.">⚡ Dracin Kultivasi - Murid Terbuang Menguasai 9 Langit</option>
                     </optgroup>
+
+                    <optgroup label="🇰🇷 K-Drama & Webtoon (Korea Selatan)">
+                      <option data-country="South Korea" value="K-Drama Chaebol Romance: Pewaris tunggal konglomerat grup Hansung menyamar jadi asisten pengacara idealis demi mengusut konspirasi kematian ayahnya, berujung cinta penuh intrik di Seoul.">🏢 K-Drama Chaebol - Pewaris Konglomerat & Pengacara Idealis</option>
+                      <option data-country="South Korea" value="K-Drama Romcom Blind Date: Karyawati biasa menggantikan sahabatnya dalam kencan buta mewah, namun ternyata pria yang ia temui adalah CEO baru di perusahaannya sendiri.">💘 K-Drama Romcom - Kencan Buta dengan CEO Sendiri</option>
+                      <option data-country="South Korea" value="K-Drama Revenge Bully: Mantan siswi korban perundungan di SMA elit kembali 10 tahun kemudian sebagai guru wali kelas para pelaku untuk membongkar kejahatan mereka.">⚖️ K-Drama Revenge - Pembalasan Korban Bullying Sekolah Elit</option>
+                      <option data-country="South Korea" value="K-Fantasy Hunter Gate: Pemuda biasa terbangun dengan skill level-up tak terbatas saat dungeon misterius runtuh di tengah kota Seoul, menjadi Hunter Rank-S terkuat.">⚔️ K-Fantasy Hunter - Dungeon Gate Awakening Solo Rank-S</option>
+                      <option data-country="South Korea" value="K-Saeguk Joseon: Kisah cinta rahasia antara Putra Mahkota Dinasti Joseon dan tabib wanita pemberani di tengah perebutan takhta istana beracun.">🏯 K-Saeguk Sejarah - Cinta Rahasia Putra Mahkota Joseon</option>
+                    </optgroup>
+
+                    <optgroup label="🇯🇵 Anime Shonen, Samurai & Slice of Life (Jepang)">
+                      <option data-country="Japan" value="Anime Shonen Demon Hunter: Pendekar muda pengguna teknik pedang api suci berjuang melindungi adiknya dari kutukan raja iblis malam di era Taisho.">🔥 Anime Shonen - Pendekar Pemburu Iblis Pedang Api</option>
+                      <option data-country="Japan" value="Anime Isekai Fantasy: Pembuat game biasa terlempar ke dunia sihir kuno dan mendapati dirinya menjadi Penyihir Agung pemilik artefak purba.">🌌 Anime Isekai - Terlempar ke Dunia Sihir Jadi Grand Mage</option>
+                      <option data-country="Japan" value="Samurai Ronin Noir: Ronin pengembara bermata satu membela desa petani teh dari serbuan klan bandit kejam di bawah rintik hujan musim gugur Kyoto.">⚔️ Samurai Ronin - Pengembara Pedang Melindungi Desa Kyoto</option>
+                      <option data-country="Japan" value="Tokyo Midnight Izakaya: Kisah hangat pemilik kedai ramen gang sempit di Shinjuku yang menyembuhkan luka hati para pelanggan larut malam dengan masakan penuh kenangan.">🍜 Slice of Life Tokyo - Kedai Ramen Larut Malam & Tamu Misterius</option>
+                      <option data-country="Japan" value="J-Horror Kutukan Kuil: Mahasiswi arkeologi tanpa sengaja memutar kaset rekaman terkutuk dari kuil Shinto terlantar di pegunungan berkabut Nagano.">⛩️ J-Horror Misteri - Rekaman Terkutuk Kuil Pegunungan Nagano</option>
+                    </optgroup>
+
+                    <optgroup label="🇹🇷 Drama Turki / Dizi (Bosphorus & Ottoman)">
+                      <option data-country="Turkey" value="Drama Turki Bosphorus Romance: Kisah cinta penuh drama antara pemuda nelayan sederhana di tepi Selat Bosphorus dan putri tunggal konglomerat perkapalan Istanbul yang dijodohkan paksa.">🌊 Drama Turki Bosphorus - Cinta Terlarang di Tepi Selat Istanbul</option>
+                      <option data-country="Turkey" value="Dizi Mafia Istanbul: Perang dingin antara dua klan keluarga penguasa pelabuhan Istanbul yang diuji saat anak kandung mereka saling jatuh cinta.">🔫 Dizi Mafia Istanbul - Perang Klan & Kesetiaan Keluarga</option>
+                      <option data-country="Turkey" value="Sejarah Epik Ottoman: Kesatria elit Janissary mempertaruhkan nyawa mempertahankan benteng perbatasan dari konspirasi pengkhianat istana Sultan.">🛡️ Sejarah Epik Ottoman - Kesatria Janissary & Pertahanan Benteng</option>
+                      <option data-country="Turkey" value="Romance Cappadocia: Pertemuan tak terduga dua pelancong di atas balon udara Cappadocia yang menyingkap rahasia keluarga masa lalu di gua bawah tanah.">🎈 Romance Cappadocia - Rahasia Lembah Balon Udara</option>
+                    </optgroup>
+
+                    <optgroup label="🕌 Kisah Timur Tengah, Arab & 1001 Malam">
+                      <option data-country="Saudi Arabia" value="Hikayat 1001 Malam: Pengelana gurun pasir menemukan lampu minyak purba berisi jin penjaga rahasia kota emas yang hilang di bawah badai pasir.">🧞 1001 Malam Sinematik - Pangeran Gurun & Jin Kota Emas</option>
+                      <option data-country="United Arab Emirates" value="Dubai High-Tech Heist: Agen rahasia elit menyusup ke pesta lelang permata di puncak gedung pencakar langit Dubai untuk merebut kembali kode satelit curian.">💎 Dubai Luxury Heist - Misi Agen Rahasia di Puncak Pencakar Langit</option>
+                      <option data-country="Egypt" value="Misteri Makam Firaun: Ekspedisi arkeolog di Kairo menemukan makam tersembunyi berumur 3000 tahun yang membuka segel kutukan pasir hisap.">🏺 Misteri Piramida Mesir - Ekspedisi Makam Kuno Lembah Para Raja</option>
+                      <option data-country="Egypt" value="Majma' al-Bahrayn: Pertemuan Mistis Nabi Musa & Nabi Khidr di Garis Pertemuan Dua Samudra dan Rahasia Takdir Ilahi yang Melampaui Akal Manusia.">🕌 Religi Sinematik - Rahasia Takdir Khidr & Musa di Dua Samudra</option>
+                      <option data-country="Saudi Arabia" value="Panglima Berkuda Gurun: Perang sinematik kavaleri gurun pasir membela benteng oasis terakhir dari kepungan pasukan tiran padang pasir.">⚔️ Sejarah Epik - Panglima Berkuda Penjaga Benteng Oasis</option>
+                    </optgroup>
+
+                    <optgroup label="🇮🇳 Bollywood & Epik Kolosal Masala (India & Asia Selatan)">
+                      <option data-country="India" value="Bollywood Masala Cop Action: Perwira polisi pemberani dengan kekuatan legendaris membasmi kartel korupsi politisi demi menegakkan keadilan rakyat kecil di Mumbai.">🦁 Bollywood Masala Action - Polisi Pemberani Singham vs Kartel Korupsi</option>
+                      <option data-country="India" value="Epik Kolosal Kerajaan India: Pertempuran perang dua pangeran bersaudara dengan gajah perang dan senjata panah api demi merebut tahta kerajaan kuno.">👑 Epik Kolosal India - Perang Saudara Takhta Kerajaan Kuno</option>
+                      <option data-country="India" value="Royal Romance Rajasthan: Kisah cinta megah di istana padang pasir Rajasthan antara putri mahkota dan seniman lukis jalanan di tengah festival warna Holi.">🎨 Royal Romance Rajasthan - Kisah Cinta Musim Hujan Istana Megah</option>
+                      <option data-country="India" value="Underground Boxing Mumbai: Pemuda jalanan dari kawasan kumuh Dharavi bangkit melalui pertarungan tinju keras bawah tanah demi membiayai operasi adiknya.">🥊 Underground Boxing Mumbai - Petarung Jalanan Menuju Juara</option>
+                    </optgroup>
+
+                    <optgroup label="💃 Telenovela Latino, Hazienda & Favela Action (Amerika Latin)">
+                      <option data-country="Mexico" value="Telenovela Warisan Hazienda: Rahasia kelam keluarga pemilik perkebunan kopi terbesar di Meksiko terbongkar ketika surat wasiat palsu menyingkirkan anak sulung yang jujur.">☕ Telenovela Hazienda - Rahasia Warisan Kebun Kopi Meksiko</option>
+                      <option data-country="Brazil" value="Rio Favela Action: Detektif polisi mengejar gembong penyelundup berlian menembus lorong sempit favela Rio de Janeiro di tengah dentuman musik parade karnaval.">🎭 Rio Carnival & Favela - Pengejaran Detektif di Tengah Festival Samba</option>
+                      <option data-country="Mexico" value="Narco Underworld Spy: Penyamaran berisiko tinggi agen rahasia di dalam kartel narkoba perbatasan yang menemukan pengkhianatan di internal kepolisian.">🌵 Narco Underworld - Operasi Penyamaran Agen Perbatasan</option>
+                      <option data-country="Argentina" value="Telenovela Balas Dendam: Wanita anggun kembali ke Buenos Aires dengan identitas bangsawan baru untuk merebut kembali hak anaknya yang dirampas 15 tahun lalu.">🌹 Telenovela Balas Dendam - Kembalinya Pewaris Buenos Aires</option>
+                    </optgroup>
+
+                    <optgroup label="🇹🇭 Thai Horror & Lakorn Drama (Thailand & Vietnam)">
+                      <option data-country="Thailand" value="Thai Horror Shaman: Ritual pemindahan kutukan jimat kuno oleh dukun pedalaman hutan Chiang Mai yang justru membangkitkan arwah penunggu gua.">🕯️ Thai Horror Shaman - Teror Jimat Dukun Pedalaman Chiang Mai</option>
+                      <option data-country="Thailand" value="Thai Lakorn Romance: Perjanjian pernikahan pura-pura antara pewaris hotel ternama di Bangkok dan wanita mandiri yang selalu berselisih paham.">🏙️ Thai Lakorn Drama - Pernikahan Sandiwara Pewaris Hotel Bangkok</option>
+                      <option data-country="Thailand" value="Muay Thai Legend: Petarung bela diri Muay Thai mempertahankan sekolah silat leluhur dari penggusuran sindikat kasino ilegal.">🥋 Muay Thai Legend - Pertarungan Membela Perguruan Leluhur</option>
+                      <option data-country="Vietnam" value="Misteri Sungai Mekong: Rahasia tersembunyi desa terapung Delta Mekong saat lentera malam hanyut membawa pesan masa lalu yang hilang.">🏮 Misteri Delta Mekong Vietnam - Rahasia Desa Terapung</option>
+                    </optgroup>
+
+                    <optgroup label="🎬 Hollywood Blockbuster, Action & Survival">
+                      <option data-country="United States" value="Hollywood Bank Heist: Tim perampok profesional berencana membongkar brankas tercanggih di Federal Reserve New York saat badai salju memutus komunikasi kota.">🏦 Hollywood Action Heist - Perampokan Brankas Federal Reserve NY</option>
+                      <option data-country="United States" value="Zombie Apocalypse Survival: Sekelompok penyintas bertahan hidup melintasi jalan tol antar-negara bagian yang dipenuhi gerombolan zombie bermutasi cepat.">🧟 Survival Zombie Apocalypse - Pelarian Melintasi Kota Mati</option>
+                      <option data-country="United Kingdom" value="MI6 Spy Espionage: Agen intelijen London mengejar mata-mata pembelot yang membawa hulu ledak nuklir mini di jaringan terowongan kereta bawah tanah.">🕵️ MI6 Spy Espionage - Pengejaran Agen Rahasia di Terowongan London</option>
+                      <option data-country="United States" value="Deep Sea Monster: Kapal selam penelitian laut dalam di Palung Mariana diserang oleh makhluk karnivora purba raksasa yang terbangun dari palung es.">🐙 Deep Sea Monster - Ancaman Monster Purba Palung Mariana</option>
+                      <option data-country="United States" value="Space Station Catastrophe: Dua astronot terdampar di stasiun orbit luar angkasa yang rusak akibat hujan meteor, berpacu dengan oksigen yang menipis.">🚀 Space Station Survival - Berpacu dengan Waktu di Orbit Luar Angkasa</option>
+                    </optgroup>
+
+                    <optgroup label="🏛️ Mitologi Dunia, Sejarah Epik & Viking Saga">
+                      <option data-country="United Kingdom" value="Viking Norse Saga: Panglima perang bangsa Viking memimpin kapal naga melintasi lautan es Atlantik Utara demi menaklukkan pulau mistis para dewa.">🪓 Viking Norse Saga - Penyerbuan Kapal Naga Panglima Lautan Es</option>
+                      <option data-country="France" value="Mitologi Yunani Kuno: Ksatria berzirah perunggu memasuki labirin bawah tanah untuk memburu monster Minotaur dan menyelamatkan tawanan Athena.">🏛️ Mitologi Yunani - Labirin Bawah Tanah & Minotaur Purba</option>
+                      <option data-country="Italy" value="Roman Gladiator Colosseum: Mantan jenderal Romawi yang dijadikan budak bertarung di arena Colosseum melawan gladiator terbuas demi kebebasan.">⚔️ Roman Empire Colosseum - Gladiator Pemberontak Merebut Kebebasan</option>
+                      <option data-country="United Kingdom" value="Victorian Detective Noir: Detektif legendaris London memecahkan misteri pembunuhan kamar tertutup di dalam kastil bangsawan Inggris bersalju.">🕯️ Victorian Detective - Misteri Kamar Tertutup Kastil London</option>
+                      <option data-country="Indonesia" value="Hikayat Majapahit: Sumpah Palapa Mahapatih Gajah Mada & Pertempuran Laut Pasukan Bhayangkara Menghadapi Armada Laut Selatan.">🏹 Sejarah Legenda - Pendekar Majapahit & Gajah Mada</option>
+                    </optgroup>
+
                     <optgroup label="🇮🇩 Dracin Modern Indonesia (Viral & Merakyat)">
-                      <option data-micro="true" value="CEO Menyamar Jadi Karyawan Biasa: Direktur Utama perusahaan besar menyamar jadi karyawan magang biasa demi menyelidiki kecurangan internal, lalu jatuh cinta pada karyawati sederhana yang selalu dihina rekan kerjanya.">💼 CEO Menyamar Jadi Karyawan Biasa</option>
-                      <option data-micro="true" value="Mertua Jahat vs Menantu Sabar: Menantu perempuan sederhana terus difitnah dan direndahkan oleh mertua kaya raya, hingga akhirnya kebenaran terbongkar dan sang menantu ternyata pewaris perusahaan besar.">😈 Mertua Jahat vs Menantu Sabar</option>
-                      <option data-micro="true" value="Putri Tertukar Sejak Lahir: Dua bayi perempuan tertukar di rumah sakit sejak lahir, satu dibesarkan keluarga kaya dan satu di keluarga miskin, bertahun-tahun kemudian kebenaran identitas asli mereka terungkap dan mengguncang dua keluarga.">👑 Putri Tertukar Sejak Lahir</option>
-                      <option data-micro="true" value="Istri Berkhianat, Suami Bangkit Balas Dendam: Suami yang selama ini dianggap lemah dan dikhianati istrinya demi pria kaya, ternyata pewaris konglomerat rahasia yang kembali untuk membalas penghinaan seluruh keluarga.">💔 Istri Berkhianat, Suami Bangkit Balas Dendam</option>
-                      <option data-micro="true" value="Suami Pura-Pura Miskin, Ternyata Konglomerat: Suami sederhana yang dihina keluarga istri karena dianggap tidak mampu, diam-diam adalah pemilik perusahaan besar yang menyamar demi menguji ketulusan cinta istrinya.">🤵 Suami Pura-Pura Miskin, Ternyata Konglomerat</option>
-                      <option data-micro="true" value="Diusir dari Rumah, Kembali Jadi Pewaris Kaya Raya: Anak yang diusir keluarga karena dianggap aib, bertahun-tahun kemudian kembali sebagai pengusaha sukses untuk menghadapi keluarga yang dulu menghinanya.">🏠 Diusir dari Rumah, Kembali Jadi Pewaris Kaya Raya</option>
-                      <option data-micro="true" value="Anak Sambung Dihina, Ternyata Anak Kandung Pengusaha: Anak tiri yang selalu direndahkan oleh keluarga barunya ternyata adalah anak kandung pengusaha besar yang terpisah sejak kecil.">🧒 Anak Sambung Dihina, Ternyata Anak Kandung Pengusaha</option>
-                      <option data-micro="true" value="Sopir Pribadi Ternyata Pemilik Perusahaan: Sopir pribadi yang selalu diremehkan oleh majikannya ternyata adalah pemilik asli perusahaan tempat majikannya bekerja, menyamar untuk menguji kejujuran karyawannya.">🚗 Sopir Pribadi Ternyata Pemilik Perusahaan</option>
-                      <option data-micro="true" value="Janda Muda Dihina Keluarga Mantan Suami, Ternyata CEO Rahasia: Janda muda yang terus dihina keluarga mantan suaminya setelah bercerai, ternyata adalah CEO perusahaan rahasia yang menyamar sebagai wanita biasa.">👩 Janda Muda Dihina Keluarga, Ternyata CEO Rahasia</option>
-                      <option data-micro="true" value="Pembantu Rumah Tangga Ternyata Pewaris Tunggal: Pembantu rumah tangga yang selalu direndahkan majikannya ternyata pewaris tunggal perusahaan konglomerat yang sengaja menyamar untuk mencari keluarga aslinya.">🧹 Pembantu Rumah Tangga Ternyata Pewaris Tunggal</option>
+                      <option data-country="Indonesia" data-micro="true" value="CEO Menyamar Jadi Karyawan Biasa: Direktur Utama perusahaan besar menyamar jadi karyawan magang biasa demi menyelidiki kecurangan internal, lalu jatuh cinta pada karyawati sederhana yang selalu dihina rekan kerjanya.">💼 CEO Menyamar Jadi Karyawan Biasa</option>
+                      <option data-country="Indonesia" data-micro="true" value="Mertua Jahat vs Menantu Sabar: Menantu perempuan sederhana terus difitnah dan direndahkan oleh mertua kaya raya, hingga akhirnya kebenaran terbongkar dan sang menantu ternyata pewaris perusahaan besar.">😈 Mertua Jahat vs Menantu Sabar</option>
+                      <option data-country="Indonesia" data-micro="true" value="Putri Tertukar Sejak Lahir: Dua bayi perempuan tertukar di rumah sakit sejak lahir, satu dibesarkan keluarga kaya dan satu di keluarga miskin, bertahun-tahun kemudian kebenaran identitas asli mereka terungkap dan mengguncang dua keluarga.">👑 Putri Tertukar Sejak Lahir</option>
+                      <option data-country="Indonesia" data-micro="true" value="Istri Berkhianat, Suami Bangkit Balas Dendam: Suami yang selama ini dianggap lemah dan dikhianati istrinya demi pria kaya, ternyata pewaris konglomerat rahasia yang kembali untuk membalas penghinaan seluruh keluarga.">💔 Istri Berkhianat, Suami Bangkit Balas Dendam</option>
+                      <option data-country="Indonesia" data-micro="true" value="Suami Pura-Pura Miskin, Ternyata Konglomerat: Suami sederhana yang dihina keluarga istri karena dianggap tidak mampu, diam-diam adalah pemilik perusahaan besar yang menyamar demi menguji ketulusan cinta istrinya.">🤵 Suami Pura-Pura Miskin, Ternyata Konglomerat</option>
+                      <option data-country="Indonesia" data-micro="true" value="Diusir dari Rumah, Kembali Jadi Pewaris Kaya Raya: Anak yang diusir keluarga karena dianggap aib, bertahun-tahun kemudian kembali sebagai pengusaha sukses untuk menghadapi keluarga yang dulu menghinanya.">🏠 Diusir dari Rumah, Kembali Jadi Pewaris Kaya Raya</option>
+                      <option data-country="Indonesia" data-micro="true" value="Anak Sambung Dihina, Ternyata Anak Kandung Pengusaha: Anak tiri yang selalu direndahkan oleh keluarga barunya ternyata adalah anak kandung pengusaha besar yang terpisah sejak kecil.">🧒 Anak Sambung Dihina, Ternyata Anak Kandung Pengusaha</option>
+                      <option data-country="Indonesia" data-micro="true" value="Sopir Pribadi Ternyata Pemilik Perusahaan: Sopir pribadi yang selalu diremehkan oleh majikannya ternyata adalah pemilik asli perusahaan tempat majikannya bekerja, menyamar untuk menguji kejujuran karyawannya.">🚗 Sopir Pribadi Ternyata Pemilik Perusahaan</option>
+                      <option data-country="Indonesia" data-micro="true" value="Janda Muda Dihina Keluarga Mantan Suami, Ternyata CEO Rahasia: Janda muda yang terus dihina keluarga mantan suaminya setelah bercerai, ternyata adalah CEO perusahaan rahasia yang menyamar sebagai wanita biasa.">👩 Janda Muda Dihina Keluarga, Ternyata CEO Rahasia</option>
+                      <option data-country="Indonesia" data-micro="true" value="Pembantu Rumah Tangga Ternyata Pewaris Tunggal: Pembantu rumah tangga yang selalu direndahkan majikannya ternyata pewaris tunggal perusahaan konglomerat yang sengaja menyamar untuk mencari keluarga aslinya.">🧹 Pembantu Rumah Tangga Ternyata Pewaris Tunggal</option>
                     </optgroup>
+
+                    <optgroup label="😱 Niche Horror, Ghost & Mystery">
+                      <option data-country="Indonesia" value="Horror Pesugihan Desa Terpencil: Pakuwon Gaib, Tuyul Purba & Pemuda Kota Terjebak Ritual Malam Satu Suro di Candi Mistik.">👻 Horror Nusantara - Pesugihan Desa & Ritual Suro</option>
+                      <option data-country="United States" value="Cyber-Horror Exorcism: Entitas Iblis Digital yang Menyusup ke Jaringan Rumah Sakit Jiwa Terbengkalai melalui Frekuensi Suara.">💀 Cyber-Horror - Eksorsisme Digital & RS Jiwa</option>
+                      <option data-country="Indonesia" value="Horror Misteri Kost Mistik: Penghuni Kamar 304 yang Hilang & Ibu Kost Pemilik Cincin Tangkur Hitam Pembawa Tumbal.">🕯️ Horror Thriller - Rumah Kost Mistik Tumbal</option>
+                      <option data-country="Russia" value="Russian Siberian Mystery: Pos penelitian terisolasi di tundra Siberia yang kehilangan kontak setelah menggali spesimen parasit kuno di bawah lapisan es abadi.">❄️ Siberian Horror - Pos Penelitian Terisolasi Badai Salju</option>
+                      <option data-country="Germany" value="European Folk Horror: Dua mahasiswa antropologi menyelidiki festival musim panen desa terpencil di Black Forest yang menyimpan ritual sekte kuno.">🌲 European Folk Horror - Ritual Sekte Hutan Terpencil</option>
+                    </optgroup>
+
+                    <optgroup label="🕵️ Niche Criminal, Action & Heist">
+                      <option data-country="United States" value="Detective Noir Pembunuhan Berantai: Detektif Veteran mengejar Pembunuh Pembawa Sandi Zodiak Kuno di Kota Hujan Malam.">🕵️ Detective Crime Noir - Serial Killer Zodiac</option>
+                      <option data-country="China" value="Underworld Syndicate: Penyamaran Agen Rahasia di Kartel Triad Shanghai & Pertempuran Pelabuhan Peti Kemas.">🔫 Criminal Action - Kartel Underworld & Agent</option>
+                      <option data-country="Japan" value="Cyber Heist Cyberpunk: Perampokan Kripto & Chip Memori Terlarang di Bank Pusat Neo-Tokyo oleh Peretas Buronan.">💻 Cyber Crime - High-Tech Crypto Heist</option>
+                      <option data-country="France" value="Paris Louvre Art Heist: Kelompok pencuri lukisan profesional menyusup ke museum Louvre saat sistem keamanan mati lampu 5 menit.">🎨 Art Heist - Perampokan Mahakarya Museum Louvre</option>
+                    </optgroup>
+
+                    <optgroup label="🚀 Sci-Fi & Cyberpunk Dystopia">
+                      <option value="Cyberpunk Rebel: Dokter Siber & Gadis Penderita Pembekuan Darah Kristal di Kota Bawah Tanah Neo-Veridia.">🤖 Cyberpunk Dystopia - Neo-Veridia Clinic</option>
+                      <option value="Mars Colony 2099: Pemberontakan Koloni Tambang Mars Menghadapi Pasukan Android Militer Bumi.">🚀 Sci-Fi Space Opera - Mars Mining Rebellion</option>
+                      <option value="AI Android Awakening: Robot asisten rumah tangga pertama yang memperoleh emosi manusia berjuang melindungi tuannya dari kebijakan pemusnahan massal.">🧠 AI Awakening - Robot Sadar Diri Menuntut Kebebasan</option>
+                      <option value="Time Loop Paradox: Detektif terjebak dalam putaran waktu 12 jam yang sama untuk mencegah ledakan reaktor nuklir di kota masa depan.">⏳ Time Loop Paradox - 12 Jam Mencegah Bencana Nuklir</option>
+                    </optgroup>
+
+                    <optgroup label="🎀 UGC Lifestyle Aesthetic (TikTok/Reels/Shorts)">
+                      <option data-ugc="true" value="Morning Routine: wanita muda menjalani rutinitas pagi lengkap dari bangun tidur, skincare, membuat kopi, hingga menyiapkan outfit kerja.">☀️ Morning Routine - Bangun Tidur & Skincare Pagi</option>
+                      <option data-ugc="true" value="Daily Activity: wanita muda belanja di supermarket, mampir ke cafe untuk work from cafe, lalu jalan sore window shopping di mall.">🛒 Daily Activity - Belanja & Work From Cafe</option>
+                      <option data-ugc="true" value="School Campus Vlog: mahasiswi menjalani morning class routine, study vlog di perpustakaan, perjalanan ke kampus, hingga nugas malam hari.">🎓 School / Campus - Study Vlog & Nugas Malam</option>
+                      <option data-ugc="true" value="Working Girl Lifestyle: wanita karir menjalani office morning routine, meeting day, productive corporate setup, hingga pulang kerja malam hari.">💼 Working Girl - Office Morning & Corporate Life</option>
+                      <option data-country="Indonesia" data-ugc="true" value="Muslimah Lifestyle: wanita berhijab menyiapkan buka puasa, mengikuti kajian rutin, Ramadan morning routine, hingga outfit hijab check jelang Lebaran.">🕌 Muslimah Lifestyle - Kajian & Ramadan Routine</option>
+                      <option data-ugc="true" value="Travel Vlog Aesthetic: wanita muda menjalani pagi hari di bandara, check-in hotel, explore kota, liburan pantai, hingga night market vlog.">✈️ Travel Vlog - Airport Morning & Beach Vacation</option>
+                      <option data-ugc="true" value="Cooking Home Aesthetic: wanita muda memasak sarapan, baking cookies, clean room routine, laundry day, hingga gardening morning di rumah.">🍳 Cooking / Home - Baking & Clean Room Routine</option>
+                      <option data-ugc="true" value="Fitness & Gym Workout: wanita muda menjalani morning gym routine, latihan beban, stretching yoga, hingga membuat smoothie protein sehat.">💪 Fitness & Gym - Morning Workout & Meal Prep</option>
+                      <option data-ugc="true" value="Night Market Street Food Tour: pembuat konten menjelajah pasar malam kuliner, mencicipi jajanan lokal viral, dan interaksi hangat dengan penjual.">🍢 Street Food Tour - Jelajah Kuliner Pasar Malam Viral</option>
+                    </optgroup>
+
                     <optgroup label="👶 Toddler 2-3 Tahun — Konsep Dasar & Rutinitas">
                       <option data-children="true" data-age-group="toddler" data-learning-domain="warna" value="Dua sahabat hewan kecil bermain mencari benda berwarna merah, kuning, biru, dan hijau di taman. Setiap warna diperkenalkan satu per satu dengan pengulangan sederhana, gerakan ceria, dan ajakan menjawab. Gunakan nama karakter, benda sehari-hari, serta kosakata yang alami untuk negara dan bahasa target.">🎨 Berburu Empat Warna</option>
                       <option data-children="true" data-age-group="toddler" data-learning-domain="angka" value="Seekor anak hewan menghitung satu sampai lima benda yang akrab bagi anak di negara target. Setiap angka diulang lewat lagu pendek, tepukan, dan benda visual yang besar serta mudah dikenali.">🔢 Ayo Hitung 1–5</option>
@@ -187,6 +292,7 @@
                       <option data-children="true" data-age-group="toddler" data-learning-domain="suara" value="Anak hewan mendengarkan dan menirukan bunyi hewan, kendaraan, serta benda rumah tangga yang familier di negara target, lalu menebak sumber suaranya dengan gembira.">🔔 Tebak Bunyi</option>
                       <option data-children="true" data-age-group="toddler" data-learning-domain="sopan-santun" value="Dua sahabat hewan berlatih kata sapaan dasar yang setara dengan halo, tolong, terima kasih, maaf, dan sampai jumpa dalam bahasa target melalui situasi bermain sederhana.">👋 Lima Kata Baik</option>
                     </optgroup>
+
                     <optgroup label="🧸 Prasekolah 4-6 Tahun — Cerita & Sosial Emosional">
                       <option data-children="true" value="Kucing kecil bernama Momo dan kera kecil bernama Kiko bersahabat. Suatu pagi bola kesayangan mereka menggelinding jauh ke kebun. Mereka mencarinya bersama, bertanya pada teman-teman hewan lain, dan akhirnya menemukannya tersangkut di semak. Mereka belajar bahwa mencari bersama itu lebih mudah dan menyenangkan.">🐱 Momo & Kiko - Mencari Bola yang Hilang</option>
                       <option data-children="true" value="Kelinci kecil bernama Upi punya satu wortel besar. Datang temannya si tupai Cici yang lapar. Upi ragu sebentar, lalu membagi wortelnya jadi dua. Mereka makan bersama sambil tertawa, dan Upi merasa senang karena berbagi.">🐰 Upi Belajar Berbagi</option>
@@ -212,34 +318,6 @@
                       <option data-children="true" data-age-group="preschool" data-learning-domain="sosial" value="Seorang anak hewan baru datang ke kelas dan belum memahami permainan teman-temannya. Mereka memperkenalkan diri, mendengarkan, berbagi aturan bermain, dan menemukan cara agar semua dapat ikut.">🤝 Teman Baru di Kelas</option>
                       <option data-children="true" data-age-group="preschool" data-learning-domain="budaya" value="Sahabat hewan mengunjungi perayaan keluarga atau komunitas yang umum di negara target. Mereka belajar sapaan, makanan, musik, pakaian, dan kebiasaan setempat dengan hangat tanpa stereotip.">🌍 Hari Perayaan di Kotaku</option>
                       <option data-children="true" data-age-group="preschool" data-learning-domain="profesi" value="Anak-anak hewan mengenal beberapa penolong di komunitas seperti guru, tenaga kesehatan, petugas keselamatan, dan pekerja layanan. Seragam, tempat kerja, serta sebutan profesi disesuaikan dengan negara target.">🏘️ Para Penolong di Sekitar Kita</option>
-                    </optgroup>
-                    <optgroup label="😱 Niche Horror, Ghost & Mystery">
-                      <option value="Horror Pesugihan Desa Terpencil: Pakuwon Gaib, Tuyul Purba & Pemuda Kota Terjebak Ritual Malam Satu Suro di Candi Mistik.">👻 Horror Nusantara - Pesugihan Desa & Ritual Suro</option>
-                      <option value="Cyber-Horror Exorcism: Entitas Iblis Digital yang Menyusup ke Jaringan Rumah Sakit Jiwa Terbengkalai melalui Frekuensi Suara.">💀 Cyber-Horror - Eksorsisme Digital & RS Jiwa</option>
-                      <option value="Horror Misteri Kost Mistik: Penghuni Kamar 304 yang Hilang & Ibu Kost Pemilik Cincin Tangkur Hitam Pembawa Tumbal.">🕯️ Horror Thriller - Rumah Kost Mistik Tumbal</option>
-                    </optgroup>
-                    <optgroup label="🕵️ Niche Criminal, Action & Heist">
-                      <option value="Detective Noir Pembunuhan Berantai: Detektif Veteran mengejar Pembunuh Pembawa Sandi Zodiak Kuno di Kota Hujan Malam.">🕵️ Detective Crime Noir - Serial Killer Zodiac</option>
-                      <option value="Underworld Syndicate: Penyamaran Agen Rahasia di Kartel Triad Shanghai & Pertempuran Pelabuhan Peti Kemas.">🔫 Criminal Action - Kartel Underworld & Agent</option>
-                      <option value="Cyber Heist Cyberpunk: Perampokan Kripto & Chip Memori Terlarang di Bank Pusat Neo-Tokyo oleh Peretas Buronan.">💻 Cyber Crime - High-Tech Crypto Heist</option>
-                    </optgroup>
-                    <optgroup label="🕌 Sejarah, Legenda & Religi Sinematik">
-                      <option value="Hikayat Majapahit: Sumpah Palapa Gajah Mada & Pertempuran Laut Pasukan Bhayangkara Menghadapi Armada Laut Selatan.">🏹 Sejarah Legenda - Pendekar Majapahit & Gajah Mada</option>
-                      <option value="Majma' al-Bahrayn: Pertemuan Mistis Nabi Musa & Nabi Khidr di Garis Pertemuan Dua Samudra dan Rahasia Takdir Ilahi.">🕌 Religi Sinematik - Rahasia Takdir Khidr & Musa</option>
-                      <option value="Kisah Panglima Berkerudung Hitam: Perang Gurun Pasir Sinematik & Perjuangan Membela Benteng Terakhir.">⚔️ Sejarah Epik - Panglima Gurun Pasir</option>
-                    </optgroup>
-                    <optgroup label="🚀 Sci-Fi & Cyberpunk Dystopia">
-                      <option value="Cyberpunk Rebel: Dokter Siber & Gadis Penderita Pembekuan Darah Kristal di Kota Bawah Tanah Neo-Veridia.">🤖 Cyberpunk Dystopia - Neo-Veridia Clinic</option>
-                      <option value="Mars Colony 2099: Pemberontakan Koloni Tambang Mars Menghadapi Pasukan Android Militer Bumi.">🚀 Sci-Fi Space Opera - Mars Mining Rebellion</option>
-                    </optgroup>
-                    <optgroup label="🎀 UGC Lifestyle Aesthetic (TikTok/Reels)">
-                      <option data-ugc="true" value="Morning Routine: wanita muda menjalani rutinitas pagi lengkap dari bangun tidur, skincare, membuat kopi, hingga menyiapkan outfit kerja.">☀️ Morning Routine - Bangun Tidur & Skincare Pagi</option>
-                      <option data-ugc="true" value="Daily Activity: wanita muda belanja di supermarket, mampir ke cafe untuk work from cafe, lalu jalan sore window shopping di mall.">🛒 Daily Activity - Belanja & Work From Cafe</option>
-                      <option data-ugc="true" value="School Campus Vlog: mahasiswi menjalani morning class routine, study vlog di perpustakaan, perjalanan ke kampus, hingga nugas malam hari.">🎓 School / Campus - Study Vlog & Nugas Malam</option>
-                      <option data-ugc="true" value="Working Girl Lifestyle: wanita karir menjalani office morning routine, meeting day, productive corporate setup, hingga pulang kerja malam hari.">💼 Working Girl - Office Morning & Corporate Life</option>
-                      <option data-ugc="true" value="Muslimah Lifestyle: wanita berhijab menyiapkan buka puasa, mengikuti kajian rutin, Ramadan morning routine, hingga outfit hijab check jelang Lebaran.">🕌 Muslimah Lifestyle - Kajian & Ramadan Routine</option>
-                      <option data-ugc="true" value="Travel Vlog Aesthetic: wanita muda menjalani pagi hari di bandara, check-in hotel, explore kota, liburan pantai, hingga night market vlog.">✈️ Travel Vlog - Airport Morning & Beach Vacation</option>
-                      <option data-ugc="true" value="Cooking Home Aesthetic: wanita muda memasak sarapan, baking cookies, clean room routine, laundry day, hingga gardening morning di rumah.">🍳 Cooking / Home - Baking & Clean Room Routine</option>
                     </optgroup>
                   </select>
                 </div>

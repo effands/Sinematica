@@ -974,8 +974,29 @@ function initStoryboardForm() {
   if (durationSelect) durationSelect.addEventListener('change', updateTotalDuration);
   updateTotalDuration();
 
+  const countryLanguageMap = {
+    Indonesia: 'Indonesia', Malaysia: 'Melayu', Singapore: 'Inggris', Thailand: 'Thailand',
+    Vietnam: 'Vietnam', Philippines: 'Tagalog', Japan: 'Jepang', 'South Korea': 'Korea',
+    China: 'Mandarin', Taiwan: 'Mandarin', 'Saudi Arabia': 'Arab', 'United Arab Emirates': 'Arab',
+    Qatar: 'Arab', Egypt: 'Arab', Turkey: 'Turki', Iran: 'Persia', India: 'Hindi',
+    Pakistan: 'Urdu', Bangladesh: 'Bengali', 'United States': 'Inggris', 'United Kingdom': 'Inggris',
+    France: 'Prancis', Germany: 'Jerman', Italy: 'Italia', Spain: 'Spanyol', Russia: 'Rusia',
+    Brazil: 'Portugis', Mexico: 'Spanyol', Argentina: 'Spanyol', Canada: 'Inggris',
+    'South Africa': 'Inggris', Nigeria: 'Inggris', Kenya: 'Inggris', Morocco: 'Arab',
+    Australia: 'Inggris', 'New Zealand': 'Inggris'
+  };
+
   const genreCatalog = document.getElementById('genreCatalogSelect');
   const btnRandomGenre = document.getElementById('btnRandomGenrePreset');
+  const targetCountryInput = document.getElementById('targetCountryInput');
+  const targetLanguageInput = document.getElementById('targetLanguageInput');
+
+  if (targetCountryInput && targetLanguageInput) {
+    targetCountryInput.addEventListener('change', () => {
+      const matchedLanguage = countryLanguageMap[targetCountryInput.value];
+      if (matchedLanguage) targetLanguageInput.value = matchedLanguage;
+    });
+  }
 
   if (genreCatalog) {
     genreCatalog.addEventListener('change', () => {
@@ -991,6 +1012,15 @@ function initStoryboardForm() {
           const isChildrenPreset = selectedOpt && selectedOpt.getAttribute('data-children') === 'true';
           const childAgeGroup = selectedOpt ? selectedOpt.getAttribute('data-age-group') : '';
           const learningDomain = selectedOpt ? selectedOpt.getAttribute('data-learning-domain') : '';
+          const countryAttr = selectedOpt ? selectedOpt.getAttribute('data-country') : '';
+
+          if (countryAttr && targetCountryInput) {
+            targetCountryInput.value = countryAttr;
+            if (targetLanguageInput && countryLanguageMap[countryAttr]) {
+              targetLanguageInput.value = countryLanguageMap[countryAttr];
+            }
+          }
+
           const chkChildrenEl = document.getElementById('chkChildrenMode');
           if (chkChildrenEl) chkChildrenEl.checked = !!isChildrenPreset;
           const chkUgc = document.getElementById('chkUgcMode');
@@ -1033,25 +1063,6 @@ function initStoryboardForm() {
   }
 
   const autoSuggestBtn = document.getElementById('autoSuggestBtn') || document.getElementById('btnAutoSuggestConcept');
-  const countryLanguageMap = {
-    Indonesia: 'Indonesia', Malaysia: 'Melayu', Singapore: 'Inggris', Thailand: 'Thailand',
-    Vietnam: 'Vietnam', Philippines: 'Tagalog', Japan: 'Jepang', 'South Korea': 'Korea',
-    China: 'Mandarin', Taiwan: 'Mandarin', 'Saudi Arabia': 'Arab', 'United Arab Emirates': 'Arab',
-    Qatar: 'Arab', Egypt: 'Arab', Turkey: 'Turki', Iran: 'Persia', India: 'Hindi',
-    Pakistan: 'Urdu', Bangladesh: 'Bengali', 'United States': 'Inggris', 'United Kingdom': 'Inggris',
-    France: 'Prancis', Germany: 'Jerman', Italy: 'Italia', Spain: 'Spanyol', Russia: 'Rusia',
-    Brazil: 'Portugis', Mexico: 'Spanyol', Argentina: 'Spanyol', Canada: 'Inggris',
-    'South Africa': 'Inggris', Nigeria: 'Inggris', Kenya: 'Inggris', Morocco: 'Arab',
-    Australia: 'Inggris', 'New Zealand': 'Inggris'
-  };
-  const targetCountryInput = document.getElementById('targetCountryInput');
-  const targetLanguageInput = document.getElementById('targetLanguageInput');
-  if (targetCountryInput && targetLanguageInput) {
-    targetCountryInput.addEventListener('change', () => {
-      const matchedLanguage = countryLanguageMap[targetCountryInput.value];
-      if (matchedLanguage) targetLanguageInput.value = matchedLanguage;
-    });
-  }
   if (autoSuggestBtn) {
     autoSuggestBtn.addEventListener('click', async () => {
       const premiseInput = document.getElementById('premiseInput') || document.getElementById('themeInput');
