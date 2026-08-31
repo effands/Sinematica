@@ -153,7 +153,8 @@ async def generate_video_i2v(bridge, prompt: str, aspect: str, project_id: str,
 
 async def generate_video_r2v(bridge, prompt: str, aspect: str, project_id: str,
                               reference_image_ids: List[str], duration: int = 10,
-                              instance_id: str = None) -> List[str]:
+                              instance_id: str = None, attempts: int = 3,
+                              retry_delay: float = 2.0) -> List[str]:
     """Generate video using multi-character reference images (Ingredients mode) in Google Flow."""
     model_key = f"abra_t2v_{duration}s"
     aspect_ratio_enum = "VIDEO_ASPECT_RATIO_PORTRAIT" if aspect == "portrait" else "VIDEO_ASPECT_RATIO_LANDSCAPE"
@@ -174,13 +175,28 @@ async def generate_video_r2v(bridge, prompt: str, aspect: str, project_id: str,
         "requests": [request],
     }
 
+    if not ref_objs:
+        raise ValueError("Generasi R2V membutuhkan minimal satu image reference.")
+
     log.info('Generasi R2V (Ingredients %d gambar): "%s" [%s]', len(ref_objs), prompt[:50], model_key)
     endpoint = ENDPOINTS.get("generate_r2v", "/v1/video:batchAsyncGenerateVideoReferenceImages")
-    result = await bridge.api_request(endpoint, body, instance_id=instance_id)
-
-    status = result.get("status", 0)
-    if status != 200:
+    result = None
+    max_attempts = max(1, int(attempts or 1))
+    for attempt in range(1, max_attempts + 1):
+        # Every bridge call executes grecaptcha again in the Flow tab, producing a fresh token.
+        result = await bridge.api_request(endpoint, body, instance_id=instance_id)
+        status = result.get("status", 0)
+        if status == 200:
+            break
         err = extract_api_error(result)
+        is_transient_captcha = status == 403 and "recaptcha" in err.lower()
+        if is_transient_captcha and attempt < max_attempts:
+            log.warning(
+                "Token reCAPTCHA R2V ditolak (%d/%d); meminta token baru lalu mengulang Ingredients.",
+                attempt, max_attempts,
+            )
+            await asyncio.sleep(retry_delay)
+            continue
         raise ValueError(f"Gagal submit generasi R2V ({status}): {err}")
 
     data = result.get("data", {})

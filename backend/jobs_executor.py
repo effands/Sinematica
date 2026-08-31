@@ -23,7 +23,7 @@ from .character_reference_flow import resolve_character_reference_paths, upload_
 from .film_stitcher import extract_continuity_frame, stitch_scenes
 from .execution_metrics import finish_job_timing, record_output_file_size
 from .gallery_cleanup import cleanup_job_files, job_source_files
-from .media_download import resolve_exact_media_url_with_retry, stream_download
+from .media_download import stream_download, stream_exact_media_with_retry
 from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
 from .scene_continuity import continuity_start_image
 from .scene_audio_direction import apply_scene_audio_direction, resolve_master_music_track
@@ -471,20 +471,33 @@ async def download_file(
             out.write(video_bytes)
     else:
         download_url = url
+        exact_download_error = None
         if media_id and hasattr(bridge, "trpc_request"):
             try:
-                exact_url = await resolve_exact_media_url_with_retry(
-                    bridge, media_id.rsplit("/", 1)[-1], project_id or "", instance_id,
-                    attempts=20, delay=3.0
+                await stream_exact_media_with_retry(
+                    bridge,
+                    media_id.rsplit("/", 1)[-1],
+                    project_id or "",
+                    instance_id,
+                    dest_path,
+                    attempts=6,
+                    delay=3.0,
                 )
-                if exact_url:
-                    download_url = exact_url
+                return
             except Exception as ex:
-                log.warning("Signed URL exact tidak dapat diambil; memakai URL polling: %s", ex)
+                exact_download_error = ex
+                log.warning("Unduhan URL CDN segar belum berhasil; memakai URL polling/API: %s", ex)
         if url.startswith("flow_media_id:"):
             clean_id = url.split(":", 1)[1]
             if download_url == url:
-                download_url = f"https://aisandbox-pa.googleapis.com/v1/media/{clean_id}?alt=media"
+                # UUID-only /v1/media/{id}?alt=media is not a valid Flow download route and
+                # consistently returns HTTP 400 INVALID_ARGUMENT. Keep the actionable resolver
+                # failure instead of hiding it behind a known-invalid fallback request.
+                raise RuntimeError(
+                    "Flow menyelesaikan render tetapi signed download URL belum dapat diambil "
+                    f"untuk media {clean_id}. Pastikan ekstensi terbaru sudah di-reload. "
+                    f"Detail resolver: {exact_download_error or 'URL belum dipublikasikan'}"
+                )
         if download_url.startswith(("https://", "http://")) and "aisandbox-pa.googleapis.com" not in download_url:
             try:
                 # Signed Flow URLs are directly reachable by the backend. Streaming them avoids
@@ -1024,6 +1037,8 @@ async def execute_storyboard_job(
                         continuity_media_id=available_continuity_id if owns_continuity else None,
                         product_media_ids=affiliate_media_ids if is_affiliate_scene else None,
                     )
+                    scene_record["reference_count"] = len(scene_ref_ids)
+                    scene_record["reference_media_ids"] = list(scene_ref_ids)
 
                     if owns_continuity:
                         log_event(
@@ -1058,6 +1073,12 @@ async def execute_storyboard_job(
                     if not media_ids and scene_ref_ids:
                         try:
                             from omniflash.generators import generate_video_r2v
+                            log_event(
+                                job_id,
+                                f"🧷 [Adegan {idx}/{total_scenes}] Mengirim video dengan "
+                                f"{len(scene_ref_ids)} Add Image Reference (Ingredients wajib).",
+                                profile=target_name,
+                            )
                             media_ids = await generate_video_r2v(
                                 bridge=bridge,
                                 prompt=prompt,
@@ -1068,8 +1089,12 @@ async def execute_storyboard_job(
                                 instance_id=target_instance_id
                             )
                         except Exception as r2v_err:
-                            log_event(job_id, f"⚠️ [{target_name}] Kendala Ingredients multi-image ({r2v_err}). Otomatis fallback ke T2V...", level="warning", profile=target_name)
-                            media_ids = None
+                            # Never silently discard character/storyboard references. The outer
+                            # profile loop may retry R2V elsewhere, but prompt-only T2V is not an
+                            # equivalent fallback and causes visible identity/continuity drift.
+                            raise RuntimeError(
+                                f"Ingredients wajib gagal setelah retry; T2V tanpa reference dibatalkan: {r2v_err}"
+                            ) from r2v_err
 
                     if not media_ids:
                         from omniflash.generators import generate_video_t2v

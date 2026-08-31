@@ -47,6 +47,7 @@ class AutoSuggestRequest(BaseModel):
     theme: str
     microdrama_mode: Optional[bool] = False
     target_country: Optional[str] = ""
+    target_lang: Optional[str] = ""
     dracin_theme: Optional[str] = ""
 
 
@@ -100,9 +101,9 @@ def regenerate_single_scene_endpoint(req: RegenerateSceneRequest):
 
 
 @router.get("/auto_concept")
-def auto_concept_get(microdrama_mode: bool = False, target_country: str = "", dracin_theme: str = ""):
+def auto_concept_get(microdrama_mode: bool = False, target_country: str = "", dracin_theme: str = "", target_lang: str = ""):
     try:
-        suggestion = auto_suggest_details("", microdrama_mode=microdrama_mode, target_country=target_country, dracin_theme=dracin_theme)
+        suggestion = auto_suggest_details("", microdrama_mode=microdrama_mode, target_country=target_country, dracin_theme=dracin_theme, target_lang=target_lang)
         return {"success": True, "concept": suggestion.get("suggested_premise", ""), "suggestion": suggestion}
     except Exception as ex:
         log.error("Error auto-suggesting fresh concept: %s", ex)
@@ -113,9 +114,9 @@ def auto_concept_get(microdrama_mode: bool = False, target_country: str = "", dr
 def suggest_concept(req: AutoSuggestRequest):
     theme = (req.theme or "").strip()
     if not theme:
-        return auto_concept_get(microdrama_mode=req.microdrama_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "")
+        return auto_concept_get(microdrama_mode=req.microdrama_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "", target_lang=req.target_lang or "")
     try:
-        suggestion = auto_suggest_details(theme, microdrama_mode=req.microdrama_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "")
+        suggestion = auto_suggest_details(theme, microdrama_mode=req.microdrama_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "", target_lang=req.target_lang or "")
         return {"success": True, "concept": suggestion.get("suggested_premise", theme), "suggestion": suggestion}
     except Exception as ex:
         log.error("Error auto-suggesting concept: %s", ex)
@@ -142,7 +143,7 @@ async def generate_ai_storyboard(
     affiliate_scene_position: str = Form("auto"),
     affiliate_reference_paths: str = Form("[]"),
     target_country: str = Form(""),
-    target_lang: str = Form("Indonesia"),
+    target_lang: str = Form(""),
     dracin_theme: str = Form(""),
     fixed_scene_duration: Optional[int] = Form(None),
     target_total_duration: Optional[int] = Form(None),

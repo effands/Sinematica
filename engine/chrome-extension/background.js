@@ -257,19 +257,91 @@ async function handleTrpcRequest(msg) {
     return;
   }
   const requestHeaders = { 'Content-Type': 'application/json', ...headers };
-  if (flowKey) requestHeaders.authorization = `Bearer ${flowKey}`;
   try {
-    const response = await fetch(url, {
-      method,
-      headers: requestHeaders,
-      body: body ? JSON.stringify(body) : undefined,
-      credentials: 'include',
+    // Resolve private Flow media from the authenticated page's MAIN world. A fetch from
+    // the extension service worker has the extension as its cookie context, so Google's
+    // media redirect can reject an otherwise valid project/media name.
+    let targetTab = await FlowTab.ensureFlowTab(chrome);
+    const tabResults = await chrome.scripting.executeScript({
+      target: { tabId: targetTab.id },
+      world: 'MAIN',
+      func: async (fetchUrl, fetchMethod, fetchHeaders, fetchBody) => {
+        try {
+          const response = await fetch(fetchUrl, {
+            method: fetchMethod,
+            headers: fetchHeaders,
+            body: fetchBody !== undefined && fetchBody !== null
+              ? JSON.stringify(fetchBody)
+              : undefined,
+            credentials: 'include',
+            redirect: 'follow',
+          });
+          const responseUrl = response.url || '';
+          const contentType = response.headers.get('content-type') || '';
+          const isMedia = /^video\//i.test(contentType)
+            || /flow-content\.google|googleusercontent\.com|\.mp4(?:[?#]|$)/i.test(responseUrl);
+          if (isMedia) {
+            // Do not consume MP4 bytes here; the backend streams this final signed URL.
+            return { status: response.status, data: { url: responseUrl }, responseUrl };
+          }
+          const responseText = await response.text();
+          let data = {};
+          try {
+            data = responseText ? JSON.parse(responseText) : {};
+          } catch (_) {
+            data = { error: responseText.slice(0, 500) };
+          }
+          return { status: response.status, data, responseUrl };
+        } catch (error) {
+          return { status: 0, error: error?.message || String(error), responseUrl: '' };
+        }
+      },
+      args: [url, method, requestHeaders, body],
     });
-    const decoded = await FlowTrpcResponse.decodeTrpcResponse(response);
+    let tabResult = tabResults?.[0]?.result || {};
+
+    // A page-world fetch can be blocked while following the redirect to Flow's CDN
+    // because the video response is cross-origin. Retry from the extension worker,
+    // whose host permissions cover both labs.google and the signed CDN hosts.
+    const tabResponseUrl = tabResult.responseUrl || '';
+    const tabIsMedia = /flow-content\.google|googleusercontent\.com|googlevideo\.com|storage\.googleapis\.com|\.mp4(?:[?#]|$)/i.test(tabResponseUrl);
+    if (!tabIsMedia) {
+      try {
+        const workerResponse = await fetch(url, {
+          method,
+          headers: requestHeaders,
+          body: body !== undefined && body !== null ? JSON.stringify(body) : undefined,
+          credentials: 'include',
+          redirect: 'follow',
+        });
+        const workerResponseUrl = workerResponse.url || '';
+        const workerContentType = workerResponse.headers.get('content-type') || '';
+        const workerIsMedia = /^video\//i.test(workerContentType)
+          || /flow-content\.google|googleusercontent\.com|googlevideo\.com|storage\.googleapis\.com|\.mp4(?:[?#]|$)/i.test(workerResponseUrl);
+        if (workerIsMedia) {
+          tabResult = {
+            status: workerResponse.status,
+            data: { url: workerResponseUrl },
+            responseUrl: workerResponseUrl,
+          };
+        } else if (!tabResult.status || tabResult.status >= 400 || tabResult.error) {
+          const detail = (await workerResponse.text()).slice(0, 500);
+          tabResult = {
+            status: workerResponse.status,
+            data: { error: detail },
+            responseUrl: workerResponseUrl,
+            error: detail || `Flow resolver returned HTTP ${workerResponse.status}`,
+          };
+        }
+      } catch (workerError) {
+        if (!tabResult.error) tabResult.error = workerError?.message || String(workerError);
+      }
+    }
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
-        type: 'trpc_response', id, status: response.status,
-        data: decoded.data, responseUrl: decoded.responseUrl,
+        type: 'trpc_response', id, status: tabResult.status || 0,
+        data: tabResult.data || {}, responseUrl: tabResult.responseUrl || '',
+        ...(tabResult.error ? { error: tabResult.error } : {}),
       }));
     }
   } catch (error) {
@@ -282,70 +354,85 @@ async function handleTrpcRequest(msg) {
 async function handleDownloadRequest(msg) {
   const { id, url } = msg;
   try {
-    const tabs = await chrome.tabs.query({ url: '*://labs.google/*' });
-    const targetTab = tabs.find(t => t.active) || tabs[0];
-    if (!targetTab) throw new Error('Tab Google Flow tidak ditemukan.');
-
     let authenticatedUrl = url;
     if (authenticatedUrl.startsWith('https://aisandbox-pa.googleapis.com/') && !authenticatedUrl.includes('key=')) {
       authenticatedUrl += (authenticatedUrl.includes('?') ? '&' : '?') + `key=${API_KEY}`;
     }
-
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: targetTab.id },
-      world: 'MAIN',
-      func: async (downloadUrl) => {
-        const response = await fetch(downloadUrl, { credentials: 'include' });
-        if (!response.ok) {
-          return { status: response.status, error: `HTTP ${response.status}: ${(await response.text()).slice(0, 300)}` };
-        }
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        let binary = '';
-        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-        }
-        return {
-          status: response.status,
-          content_type: response.headers.get('content-type') || 'application/octet-stream',
-          data_base64: btoa(binary),
-        };
-      },
-      args: [authenticatedUrl],
+    const requestHeaders = {};
+    if (flowKey && authenticatedUrl.startsWith('https://aisandbox-pa.googleapis.com/')) {
+      requestHeaders.authorization = flowKey.startsWith('Bearer ') ? flowKey : `Bearer ${flowKey}`;
+    }
+    const response = await fetch(authenticatedUrl, {
+      credentials: 'include',
+      headers: requestHeaders,
     });
-    const result = results?.[0]?.result || { status: 500, error: 'Chrome tidak mengembalikan hasil unduhan.' };
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      if (result.status === 200 && result.data_base64) {
-        const transferChunkSize = 512 * 1024;
-        const totalChunks = Math.ceil(result.data_base64.length / transferChunkSize);
-        ws.send(JSON.stringify({
-          type: 'download_start', id, status: 200,
-          content_type: result.content_type, total_chunks: totalChunks,
-        }));
-        for (let index = 0; index < totalChunks; index++) {
-          const chunk = result.data_base64.slice(index * transferChunkSize, (index + 1) * transferChunkSize);
-          while (ws && ws.bufferedAmount > 4 * 1024 * 1024) {
-            if (ws.readyState !== WebSocket.OPEN) break;
-            await new Promise(resolve => setTimeout(resolve, 25));
-          }
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'download_chunk', id, index, data_base64: chunk }));
-          } else {
-            break;
-          }
-        }
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'download_complete', id, status: 200 }));
-        }
-      } else {
-        const { data_base64, ...safeResult } = result;
-        ws.send(JSON.stringify({ type: 'download_response', id, ...safeResult }));
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 300);
+      throw new Error(`HTTP ${response.status}: ${detail}`);
+    }
+    if (!response.body) throw new Error('Respons unduhan Flow tidak memiliki stream data.');
+
+    // Do not return an entire MP4 through executeScript. Chrome has to serialize that
+    // result as one giant value and can silently stall on larger renders. Read the body
+    // in the extension worker and forward bounded chunks as they arrive instead.
+    const reader = response.body.getReader();
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    const chunks = [];
+    let totalBytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength) {
+        chunks.push(value);
+        totalBytes += value.byteLength;
       }
+    }
+    if (!totalBytes) throw new Error('Respons unduhan video kosong.');
+
+    const transferChunkSize = 384 * 1024;
+    const totalChunks = Math.ceil(totalBytes / transferChunkSize);
+    if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error('Koneksi backend terputus saat unduhan selesai.');
+    ws.send(JSON.stringify({
+      type: 'download_start', id, status: 200,
+      content_type: contentType, total_chunks: totalChunks,
+    }));
+
+    let pending = new Uint8Array(0);
+    let chunkIndex = 0;
+    for (const incoming of chunks) {
+      const combined = new Uint8Array(pending.byteLength + incoming.byteLength);
+      combined.set(pending);
+      combined.set(incoming, pending.byteLength);
+      let offset = 0;
+      while (combined.byteLength - offset >= transferChunkSize) {
+        await sendDownloadChunk(id, chunkIndex++, combined.subarray(offset, offset + transferChunkSize));
+        offset += transferChunkSize;
+      }
+      pending = combined.slice(offset);
+    }
+    if (pending.byteLength) await sendDownloadChunk(id, chunkIndex++, pending);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'download_complete', id, status: 200 }));
     }
   } catch (err) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'download_response', id, status: 500, error: err.toString() }));
     }
   }
+}
+
+async function sendDownloadChunk(id, index, bytes) {
+  while (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount > 4 * 1024 * 1024) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    throw new Error('Koneksi backend terputus saat transfer MP4.');
+  }
+  let binary = '';
+  for (let offset = 0; offset < bytes.byteLength; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  ws.send(JSON.stringify({ type: 'download_chunk', id, index, data_base64: btoa(binary) }));
 }
 
 async function notifyRegistration() {

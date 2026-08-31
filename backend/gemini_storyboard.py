@@ -224,6 +224,29 @@ DRACIN_THEME_POOL = [
     "Anak Durhaka Menyesal Setelah Orang Tua Sukses Kembali",
 ]
 
+COUNTRY_LANGUAGE_MAP = {
+    "Indonesia": "Indonesia", "Malaysia": "Melayu", "Singapore": "Inggris",
+    "Thailand": "Thailand", "Vietnam": "Vietnam", "Philippines": "Tagalog",
+    "Japan": "Jepang", "South Korea": "Korea", "China": "Mandarin",
+    "Taiwan": "Mandarin", "Saudi Arabia": "Arab", "United Arab Emirates": "Arab",
+    "Qatar": "Arab", "Egypt": "Arab", "Turkey": "Turki", "Iran": "Persia",
+    "India": "Hindi", "Pakistan": "Urdu", "Bangladesh": "Bengali",
+    "United States": "Inggris", "United Kingdom": "Inggris", "France": "Prancis",
+    "Germany": "Jerman", "Italy": "Italia", "Spain": "Spanyol", "Russia": "Rusia",
+    "Brazil": "Portugis", "Mexico": "Spanyol", "Argentina": "Spanyol",
+    "Canada": "Inggris", "South Africa": "Inggris", "Nigeria": "Inggris",
+    "Kenya": "Inggris", "Morocco": "Arab", "Australia": "Inggris",
+    "New Zealand": "Inggris",
+}
+
+
+def resolve_target_language(target_country: str = "", target_lang: str = "") -> str:
+    """Use an explicit language, otherwise infer the country's primary content language."""
+    explicit = (target_lang or "").strip()
+    if explicit:
+        return explicit
+    return COUNTRY_LANGUAGE_MAP.get((target_country or "").strip(), "Indonesia")
+
 
 def build_local_realism_rules(target_country: str = "") -> str:
     """Build instruction block that forces skin tone, wardrobe, environment, names, and language to match a target country/local audience."""
@@ -242,18 +265,35 @@ ATURAN WAJIB REALISME LOKAL / TARGET NEGARA: "{country}"
 """
 
 
-def auto_suggest_details(theme: str = "", microdrama_mode: bool = False, target_country: str = "", dracin_theme: str = "") -> Dict[str, Any]:
+def build_children_localization_rules(target_country: str = "", target_lang: str = "") -> str:
+    """Localize early-learning stories without changing their learning objective."""
+    country = (target_country or "").strip() or "audiens internasional"
+    language = (target_lang or "").strip() or resolve_target_language(target_country, "")
+    return f"""
+ATURAN LOKALISASI EDUKASI ANAK (WAJIB):
+1. Pertahankan tujuan belajar dan kelompok usia pada premis; jangan menaikkan kompleksitas bahasa atau konflik.
+2. Semua narasi, dialog, lagu pendek, pengulangan, label angka/huruf, dan teks layar harus natural dalam bahasa {language}; jangan menyisakan bahasa Indonesia bila targetnya berbeda.
+3. Sesuaikan nama karakter, sapaan, makanan, permainan, benda sekolah, rumah, cuaca, musim, rambu, arah lalu lintas, dan kebiasaan sehari-hari agar familier bagi anak di {country}.
+4. Untuk konsep huruf, bunyi, rima, atau berhitung, adaptasikan contoh katanya—jangan menerjemahkan secara harfiah jika bunyi/polanya rusak dalam bahasa {language}.
+5. Gunakan representasi keluarga dan komunitas yang hangat serta beragam. Hindari karikatur, token budaya, stereotip, simbol politik, dan klaim bahwa satu kebiasaan mewakili semua warga {country}.
+6. Dialog toddler maksimal 3–6 kata per giliran dan memakai pengulangan; dialog prasekolah maksimal 8–12 kata per giliran dengan satu gagasan konkret.
+7. Setiap adegan hanya mengajarkan satu langkah kecil, memberi contoh visual, lalu mengajak anak mengulang atau menjawab. Koreksi kesalahan dengan lembut tanpa mempermalukan.
+"""
+
+
+def auto_suggest_details(theme: str = "", microdrama_mode: bool = False, target_country: str = "", dracin_theme: str = "", target_lang: str = "") -> Dict[str, Any]:
     """Auto-suggest character matrix, creative cinematic premise, and seeds using Gemini AI."""
     seed_main = random.randint(100000, 999999)
     seed_2 = random.randint(100000, 999999)
     seed_3 = random.randint(100000, 999999)
 
+    target_lang = resolve_target_language(target_country, target_lang)
     user_prompt = f"""TEMA UTAMA PENGGUNA (WAJIB DIIKUTI SECARA KETAT & SETIA): "{theme}"
 
 PETUNJUK BAHASA & TEMA:
 1. Pahami tema dari pengguna dalam BAHASA APAPUN (Bahasa Indonesia, Inggris, Arab, Jepang, dll).
 2. Anda HARUS merancang cerita yang 100% SESUAI DENGAN TEMA TERSEBUT. Jangan pernah membelokkan tema (Misal: Jika pengguna memasukkan tentang 'Bahaya Rokok', WAJIB merancang film drama medis/sosial sinematik tentang bahaya merokok dan dampaknya, BUKAN sci-fi alien/cyberpunk yang tidak relevan).
-3. Berikan `suggested_premise` dan `suggested_character` dalam bahasa yang sama dengan input pengguna (jika Bahasa Indonesia, tulis Bahasa Indonesia yang kaya & dramatis).""" if theme.strip() else "Buatkan sebuah konsep cerita film sinematik original yang sangat spektakuler, emosional, penuh plot twist dan visual memukau."
+3. Berikan `suggested_premise` dan `suggested_character` sepenuhnya dalam bahasa {target_lang}, termasuk nama lokal, dialog, dan istilah sosial yang natural untuk {target_country or 'audiens target'}.""" if theme.strip() else f"Buatkan sebuah konsep cerita film sinematik original yang sangat spektakuler, emosional, penuh plot twist dan visual memukau dalam bahasa {target_lang}."
 
     dracin_theme_instruction = f"""
 TEMA DRACIN WAJIB DIPAKAI: "{dracin_theme}"
@@ -481,6 +521,7 @@ ATURAN TEMPLATE PROMPT STORYBOARD VIDEO UGC AESTHETIC SANGAT MAHAL:
 5. **Karakter Utama**: karakter utama wanita/pria dengan rupa & seed konsisten, outfit sesuai aktivitas, ekspresi natural candid, luxury lifestyle aesthetic.
 """ if ugc_mode else ""
 
+    target_lang = resolve_target_language(target_country, target_lang)
     children_visual_rules = """
 GAYA VISUAL WAJIB (MODE CERITA ANAK):
 Setiap `prompt_for_flow` WAJIB diawali/menyisipkan gaya ini: soft 3D cartoon animation, preschool
@@ -491,8 +532,10 @@ anamorphic lens, teal-and-orange grading, human child characters.
 `shot_type` cukup sederhana (Wide Shot / Medium Shot / Close Up) dan gerakan kamera lembut & pelan.
 """ if children_mode else ""
     action_density_rules = CHILDREN_ACTION_RULES if children_mode else ADULT_ACTION_RULES
-    local_realism_rules = build_local_realism_rules(target_country) if target_country else ""
-    target_lang = target_lang or "Indonesia"
+    # Children's mode uses anthropomorphic animals, so human ethnicity/skin-tone rules would
+    # conflict with its visual contract. Its country adaptation is handled below instead.
+    local_realism_rules = build_local_realism_rules(target_country) if target_country and not children_mode else ""
+    children_localization_rules = build_children_localization_rules(target_country, target_lang) if children_mode else ""
 
     script_mode_rules = f"""
 MODE SCRIPT SENDIRI — FORMATTER TEKNIS SAJA (PRIORITAS TERTINGGI):
@@ -587,6 +630,7 @@ BAHASA OUTPUT UTAMA: {target_lang} (Semua ringkasan aksi, narasi voiceover, teks
 {microdrama_rules}
 {ugc_rules}
 {local_realism_rules}
+{children_localization_rules}
 {POLICY_SAFE_RULES}
 {children_visual_rules}
 {script_mode_rules}

@@ -9,9 +9,23 @@ from urllib.parse import quote, urlparse
 _MEDIA_REDIRECT_ENDPOINT = "https://labs.google/fx/api/trpc/media.getMediaUrlRedirect"
 
 
+def _is_trusted_media_url(value: str) -> bool:
+    try:
+        parsed = urlparse(str(value or ""))
+    except Exception:
+        return False
+    hostname = str(parsed.hostname or "").lower()
+    return parsed.scheme == "https" and (
+        hostname == "flow-content.google"
+        or hostname.endswith(".googleusercontent.com")
+        or hostname.endswith(".googlevideo.com")
+        or hostname == "storage.googleapis.com"
+    )
+
+
 def _find_exact_url(value, media_id: str) -> str:
     if isinstance(value, str):
-        if value.startswith(("https://", "http://")) and media_id.lower() in value.lower():
+        if _is_trusted_media_url(value) and media_id.lower() in value.lower():
             return value
         return ""
     if isinstance(value, dict):
@@ -31,13 +45,14 @@ async def resolve_exact_media_url(
     bridge, media_id: str, project_id: str = "", instance_id: str = None
 ) -> str:
     """Resolve the exact signed Flow URL using Affilia's proven silent tRPC route."""
-    # Ensure media_id is fully qualified as projects/{project}/media/{id}
-    full_name = media_id
-    if not full_name.startswith("projects/") and project_id:
-        clean_id = media_id.rsplit("/", 1)[-1]
-        full_name = f"projects/{project_id}/media/{clean_id}"
-        
-    url = f"{_MEDIA_REDIRECT_ENDPOINT}?name={quote(str(full_name), safe='')}"
+    # Flow's redirect route accepts the media UUID shown in thumbnail/video URLs.
+    # The generation API may return either that UUID or a resource name such as
+    # projects/{project}/media/{uuid}; passing the full resource name makes the
+    # redirect route return a non-media response instead of the signed CDN URL.
+    clean_id = str(media_id or "").strip().rstrip("/").rsplit("/", 1)[-1]
+    if not clean_id:
+        return ""
+    url = f"{_MEDIA_REDIRECT_ENDPOINT}?name={quote(clean_id, safe='')}"
     result = await bridge.trpc_request(
         url,
         method="GET",
@@ -46,13 +61,21 @@ async def resolve_exact_media_url(
         instance_id=instance_id,
     )
     response_url = str((result or {}).get("responseUrl") or "")
-    parsed = urlparse(response_url)
-    if int((result or {}).get("status") or 0) == 200 and parsed.scheme == "https" and (
-        parsed.hostname == "flow-content.google"
-        or str(parsed.hostname or "").endswith(".googleusercontent.com")
-    ):
+    # An extension fetch that follows a cross-origin CDN redirect can surface an
+    # opaque response with status 0. The final trusted URL is sufficient proof;
+    # requiring HTTP 200 here incorrectly discards that usable signed URL.
+    if _is_trusted_media_url(response_url):
         return response_url
-    return _find_exact_url(result, media_id)
+    exact_url = _find_exact_url(result, clean_id)
+    if exact_url:
+        return exact_url
+    status = int((result or {}).get("status") or 0)
+    error = str((result or {}).get("error") or "").strip()
+    if error or status >= 400:
+        raise RuntimeError(
+            f"Resolver Flow gagal (HTTP {status or 'unknown'}): {error or result}"
+        )
+    return ""
 
 
 async def resolve_exact_media_url_with_retry(
@@ -61,11 +84,53 @@ async def resolve_exact_media_url_with_retry(
 ) -> str:
     """Wait briefly for Flow to publish the signed CDN URL after a completed render."""
     for attempt in range(1, max(1, attempts) + 1):
-        exact_url = await resolve_exact_media_url(bridge, media_id, project_id, instance_id)
+        try:
+            exact_url = await resolve_exact_media_url(bridge, media_id, project_id, instance_id)
+        except Exception:
+            exact_url = ""
         if exact_url:
             return exact_url
         if attempt < attempts:
             await asyncio.sleep(delay)
+    return ""
+
+
+async def stream_exact_media_with_retry(
+    bridge,
+    media_id: str,
+    project_id: str,
+    instance_id: str,
+    destination: Path,
+    *,
+    attempts: int = 5,
+    delay: float = 3.0,
+    resolver=None,
+    downloader=None,
+) -> str:
+    """Re-resolve and stream a completed Flow render after transient CDN 404s.
+
+    Flow can publish the media record slightly before its first signed CDN URL is
+    readable. Retrying that same signed URL only repeats the 404, so every attempt
+    deliberately asks Flow for a fresh redirect before downloading again.
+    """
+    resolver = resolver or resolve_exact_media_url
+    downloader = downloader or stream_download
+    last_error = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            exact_url = await resolver(bridge, media_id, project_id, instance_id)
+            if not exact_url:
+                raise RuntimeError("URL CDN bertanda tangan belum dipublikasikan Flow.")
+            await asyncio.to_thread(downloader, exact_url, destination)
+            return exact_url
+        except Exception as ex:
+            last_error = ex
+            if attempt < attempts:
+                await asyncio.sleep(delay)
+    if last_error:
+        raise RuntimeError(
+            f"URL media Flow sudah di-resolve ulang {attempts} kali tetapi belum dapat diunduh: {last_error}"
+        ) from last_error
     return ""
 
 

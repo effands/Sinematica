@@ -989,6 +989,8 @@ function initStoryboardForm() {
           const isUgcPreset = selectedOpt && selectedOpt.getAttribute('data-ugc') === 'true';
           const isMicroPreset = selectedOpt && selectedOpt.getAttribute('data-micro') === 'true';
           const isChildrenPreset = selectedOpt && selectedOpt.getAttribute('data-children') === 'true';
+          const childAgeGroup = selectedOpt ? selectedOpt.getAttribute('data-age-group') : '';
+          const learningDomain = selectedOpt ? selectedOpt.getAttribute('data-learning-domain') : '';
           const chkChildrenEl = document.getElementById('chkChildrenMode');
           if (chkChildrenEl) chkChildrenEl.checked = !!isChildrenPreset;
           const chkUgc = document.getElementById('chkUgcMode');
@@ -1003,7 +1005,13 @@ function initStoryboardForm() {
             if (chkUgc) chkUgc.checked = false;
           }
 
-          showToast('Preset tema dipilih! Meracik konsep AI...', 'info');
+          if (isChildrenPreset) {
+            const ageLabel = childAgeGroup === 'toddler' ? 'Toddler 2–3 tahun' : 'Prasekolah 4–6 tahun';
+            const domainLabel = learningDomain ? ` • Fokus: ${learningDomain}` : '';
+            showToast(`${ageLabel}${domainLabel}. Negara & bahasa target akan diterapkan saat dibuat.`, 'info');
+          }
+
+          if (!isChildrenPreset) showToast('Preset tema dipilih! Meracik konsep AI...', 'info');
           const autoBtn = document.getElementById('autoSuggestBtn') || document.getElementById('btnAutoSuggestConcept');
           if (autoBtn) autoBtn.click();
         }
@@ -1025,6 +1033,25 @@ function initStoryboardForm() {
   }
 
   const autoSuggestBtn = document.getElementById('autoSuggestBtn') || document.getElementById('btnAutoSuggestConcept');
+  const countryLanguageMap = {
+    Indonesia: 'Indonesia', Malaysia: 'Melayu', Singapore: 'Inggris', Thailand: 'Thailand',
+    Vietnam: 'Vietnam', Philippines: 'Tagalog', Japan: 'Jepang', 'South Korea': 'Korea',
+    China: 'Mandarin', Taiwan: 'Mandarin', 'Saudi Arabia': 'Arab', 'United Arab Emirates': 'Arab',
+    Qatar: 'Arab', Egypt: 'Arab', Turkey: 'Turki', Iran: 'Persia', India: 'Hindi',
+    Pakistan: 'Urdu', Bangladesh: 'Bengali', 'United States': 'Inggris', 'United Kingdom': 'Inggris',
+    France: 'Prancis', Germany: 'Jerman', Italy: 'Italia', Spain: 'Spanyol', Russia: 'Rusia',
+    Brazil: 'Portugis', Mexico: 'Spanyol', Argentina: 'Spanyol', Canada: 'Inggris',
+    'South Africa': 'Inggris', Nigeria: 'Inggris', Kenya: 'Inggris', Morocco: 'Arab',
+    Australia: 'Inggris', 'New Zealand': 'Inggris'
+  };
+  const targetCountryInput = document.getElementById('targetCountryInput');
+  const targetLanguageInput = document.getElementById('targetLanguageInput');
+  if (targetCountryInput && targetLanguageInput) {
+    targetCountryInput.addEventListener('change', () => {
+      const matchedLanguage = countryLanguageMap[targetCountryInput.value];
+      if (matchedLanguage) targetLanguageInput.value = matchedLanguage;
+    });
+  }
   if (autoSuggestBtn) {
     autoSuggestBtn.addEventListener('click', async () => {
       const premiseInput = document.getElementById('premiseInput') || document.getElementById('themeInput');
@@ -1043,6 +1070,8 @@ function initStoryboardForm() {
 
         const targetCountryEl = document.getElementById('targetCountryInput');
         const targetCountry = targetCountryEl ? targetCountryEl.value.trim() : '';
+        const targetLanguageEl = document.getElementById('targetLanguageInput');
+        const targetLanguage = targetLanguageEl ? targetLanguageEl.value.trim() : '';
         const dracinThemeEl = document.getElementById('dracinThemeSelect');
         const dracinTheme = dracinThemeEl ? dracinThemeEl.value : '';
 
@@ -1051,10 +1080,10 @@ function initStoryboardForm() {
           res = await fetch('/api/storyboard/suggest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ theme: currentText, microdrama_mode: isMicrodrama, target_country: targetCountry, dracin_theme: dracinTheme })
+            body: JSON.stringify({ theme: currentText, microdrama_mode: isMicrodrama, target_country: targetCountry, target_lang: targetLanguage, dracin_theme: dracinTheme })
           });
         } else {
-          res = await fetch(`/api/storyboard/auto_concept?microdrama_mode=${isMicrodrama}&target_country=${encodeURIComponent(targetCountry)}&dracin_theme=${encodeURIComponent(dracinTheme)}`);
+          res = await fetch(`/api/storyboard/auto_concept?microdrama_mode=${isMicrodrama}&target_country=${encodeURIComponent(targetCountry)}&target_lang=${encodeURIComponent(targetLanguage)}&dracin_theme=${encodeURIComponent(dracinTheme)}`);
         }
 
         data = await res.json();
@@ -1210,6 +1239,7 @@ function initStoryboardForm() {
       currentStoryboard.scene_count = sceneCount;
       currentStoryboard.character_info = consistentChar;
       currentStoryboard.target_country = targetCountry;
+      currentStoryboard.target_lang = targetLanguage;
       currentStoryboard.dracin_theme = dracinTheme;
       currentStoryboard.duration_mode = durMode;
       currentStoryboard.microdrama_mode = isMicro;
@@ -1672,6 +1702,7 @@ function bindStoryboardLiveEditing() {
              currentStoryboard.character_info || currentStoryboard.consistent_characters);
       setVal(['characterSeedInput', 'characterSeed'], currentStoryboard.character_seed);
       setVal(['targetCountryInput'], currentStoryboard.target_country);
+      setVal(['targetLanguageInput'], currentStoryboard.target_lang);
       setVal(['dracinThemeSelect'], currentStoryboard.dracin_theme);
       setVal(['durationPerSceneSelect'], currentStoryboard.duration_mode);
       setChecked('chkMicrodramaMode', currentStoryboard.microdrama_mode);
@@ -1715,7 +1746,7 @@ function bindStoryboardLiveEditing() {
             scene_title: sc.title || `Adegan ${scNum}`,
             consistent_characters: currentStoryboard.consistent_characters || '',
             genre_style: currentStoryboard.genre_style || '',
-            target_lang: document.getElementById('targetLanguageInput') ? document.getElementById('targetLanguageInput').value.trim() : 'Indonesia'
+            target_lang: currentStoryboard.target_lang || (document.getElementById('targetLanguageInput') ? document.getElementById('targetLanguageInput').value.trim() : 'Indonesia')
           })
         });
 
