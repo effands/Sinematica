@@ -993,8 +993,14 @@ function initStoryboardForm() {
 
   if (targetCountryInput && targetLanguageInput) {
     targetCountryInput.addEventListener('change', () => {
-      const matchedLanguage = countryLanguageMap[targetCountryInput.value];
+      const countryVal = targetCountryInput.value;
+      const matchedLanguage = countryLanguageMap[countryVal];
       if (matchedLanguage) targetLanguageInput.value = matchedLanguage;
+
+      const charInput = document.getElementById('characterInfoInput') || document.getElementById('consistentCharacterInput') || document.getElementById('characterInfo');
+      if (charInput && charInput.value.trim()) {
+        showToast(`Negara target: ${countryVal} (${matchedLanguage || 'Inggris'}). Klik '🪄 Auto Concept AI' untuk meracik karakter lokal!`, 'info');
+      }
     });
   }
 
@@ -1035,15 +1041,20 @@ function initStoryboardForm() {
             if (chkUgc) chkUgc.checked = false;
           }
 
+          // Reset outdated character list when a new country/preset is chosen so old names do not contaminate new theme
+          const charInput = document.getElementById('characterInfoInput') || document.getElementById('consistentCharacterInput') || document.getElementById('characterInfo');
+          if (charInput && countryAttr) {
+            charInput.value = '';
+          }
+
           if (isChildrenPreset) {
             const ageLabel = childAgeGroup === 'toddler' ? 'Toddler 2–3 tahun' : 'Prasekolah 4–6 tahun';
             const domainLabel = learningDomain ? ` • Fokus: ${learningDomain}` : '';
-            showToast(`${ageLabel}${domainLabel}. Negara & bahasa target akan diterapkan saat dibuat.`, 'info');
+            showToast(`Preset: ${ageLabel}${domainLabel}.`, 'info');
+          } else {
+            const countryLabel = countryAttr ? ` (Negara: ${countryAttr})` : '';
+            showToast(`✅ Preset dipilih${countryLabel}. Anda bisa sesuaikan Negara & Bahasa, lalu klik "🪄 Auto Concept AI" atau langsung "Generate AI Storyboard".`, 'success');
           }
-
-          if (!isChildrenPreset) showToast('Preset tema dipilih! Meracik konsep AI...', 'info');
-          const autoBtn = document.getElementById('autoSuggestBtn') || document.getElementById('btnAutoSuggestConcept');
-          if (autoBtn) autoBtn.click();
         }
       }
     });

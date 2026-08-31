@@ -655,6 +655,12 @@ Pertahankan bentuk, kemasan, warna, label, dan proporsi produk dari gambar refer
    - Hindari kata generik murahan seperti "beautiful", "high quality", "detailed" tanpa spesifik teknis di atas.
 """ if not ugc_mode and not children_mode else ""
 
+    char_desc_instruction = (
+        f"{character_info}\n(CATATAN PENTING: Jika nama karakter, busana, atau ciri etnis di atas masih berupa nama/budaya negara lain yang tidak cocok dengan target negara '{target_country}', Anda WAJIB mengadaptasikan nama, etnisitas, warna kulit, dan busana mereka agar 100% otentik masyarakat lokal '{target_country}'!)"
+        if character_info and target_country and target_country.lower() != "indonesia"
+        else (character_info or f"Otomatis rancang karakter-karakter lokal yang 100% otentik dengan budaya dan etnis '{target_country or 'internasional'}'")
+    )
+
     system_prompt = f"""
 Anda adalah Sutradara Film AI Sinematik Kelas Dunia & Visual Director untuk Google Flow Omni Flash.
 Tugas Anda adalah meracik **STORYBOARD SINEMATIK KONSISTEN BANYAK KARAKTER & DYNAMIC MULTI-ANGLE CAMERA ({scene_count} ADEGAN/SCENE)**.
@@ -708,7 +714,7 @@ PARAMETIK REQUEST (WAJIB 100% PATUH & RELEVAN):
 - ATURAN KHUSUS TEMA: SELURUH adegan HARUS 100% menceritakan premis di atas!
 - Jumlah Adegan: {scene_count} scene
 - Character Seed Main: {seed}
-- Deskripsi Karakter: {character_info or "Otomatis rancang karakter-karakter yang 100% cocok dengan tema"}
+- Deskripsi Karakter: {char_desc_instruction}
 - Catatan Tambahan: {custom_instructions or "Tidak ada"}
 
 7. **Character Registry (Wajib)**: Daftarkan SETIAP karakter yang muncul. WAJIB GUNAKAN NAMA LOKAL NEGARA {target_country or target_lang} UNTUK NAMA MEREKA. JIKA PREMIS MEMAKAI NAMA INDONESIA (MISAL SINTA/RATNA/BUDI) TAPI TARGET BUKAN INDONESIA, ANDA WAJIB MENGGANTINYA MENJADI NAMA {target_country or target_lang}! Field "description" WAJIB sedetail mungkin...
