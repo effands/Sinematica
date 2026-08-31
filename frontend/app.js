@@ -292,10 +292,15 @@ function initSeoKitModal() {
         }
 
         const rawKit = data.seo_kit || {};
+        let tagsVal = rawKit.tags_csv || rawKit.tags || rawKit.keywords || rawKit.long_tail_tags || rawKit.youtube_tags || '';
+        if (Array.isArray(tagsVal)) tagsVal = tagsVal.join(', ');
+        const thumbVal = rawKit.thumbnail_prompt || rawKit.thumbnailPrompt || rawKit.thumbnail || rawKit.prompt_thumbnail || rawKit.image_prompt || rawKit.thumbnail_concept || '-';
         const kit = {
           ...rawKit,
           seo_titles: rawKit.seo_titles || rawKit.titles || [],
-          tags_csv: rawKit.tags_csv || rawKit.tags || ''
+          description: rawKit.description || rawKit.desc || '',
+          thumbnail_prompt: thumbVal,
+          tags_csv: tagsVal
         };
 
         window.clearInterval(loadingTimer);

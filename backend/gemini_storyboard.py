@@ -455,24 +455,22 @@ OUTPUT WAJIB FORMAT JSON VALID:
   "tags": "kata kunci 1, kata kunci 2, kata kunci 3, kata kunci 4, kata kunci 5, kata kunci 6, kata kunci 7, kata kunci 8, kata kunci 9, kata kunci 10"
 }}
 """
+    from .youtube_seo import normalize_youtube_seo_kit
+
     try:
         result = generate_text(prompt, json_output=True)
         parsed = json.loads(_extract_json_text(result.text))
-        from .youtube_seo import normalize_seo_titles
-        parsed["titles"] = normalize_seo_titles(parsed.get("titles"), film_title)
         parsed["generated_via"] = result.provider
-        return parsed
+        return normalize_youtube_seo_kit(parsed, film_title, premise)
     except Exception as ex:
         log.warning("Gagal generate metadata YouTube dari provider AI: %s", ex)
         web_txt = _call_web2api(prompt)
         if web_txt:
             try:
                 parsed = json.loads(_extract_json_text(web_txt))
-                if parsed.get("titles"):
-                    from .youtube_seo import normalize_seo_titles
-                    parsed["titles"] = normalize_seo_titles(parsed.get("titles"), film_title)
+                if parsed:
                     log.info("Metadata YouTube berhasil via fallback Web2API!")
-                    return parsed
+                    return normalize_youtube_seo_kit(parsed, film_title, premise)
             except Exception as w_ex:
                 log.warning("Fallback Web2API mengembalikan JSON metadata tidak valid: %s", w_ex)
         fallback = {
@@ -485,10 +483,7 @@ OUTPUT WAJIB FORMAT JSON VALID:
             "thumbnail_prompt": f"Dramatic cinematic movie thumbnail for {film_title}, 16:9 aspect ratio, 8k resolution, glowing neon title text, highly detailed photorealistic character.",
             "tags": "cara buat film ai, tutorial google flow omni, generate video ai konsisten, karakter ai tetap konsisten, buat film ai 10 menit, gemini 36 flash storyboard, ai video generator gratis, tutorial ai sinematik indonesia, multi angle kamera ai, workflow otomatisasi film ai"
         }
-        from .youtube_seo import normalize_seo_titles, theme_hashtags
-        fallback["titles"] = normalize_seo_titles(fallback["titles"], film_title)
-        fallback["description"] = fallback["description"].rsplit("\n\n", 1)[0] + "\n\n" + " ".join(theme_hashtags(film_title, limit=5))
-        return fallback
+        return normalize_youtube_seo_kit(fallback, film_title, premise)
 
 
 def generate_storyboard(
