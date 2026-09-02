@@ -58,6 +58,20 @@ class SequenceAdapter:
         return outcome
 
 
+class OrderedAdapter:
+    def __init__(self, provider, outcomes):
+        self.provider = provider
+        self.outcomes = list(outcomes)
+        self.calls = 0
+
+    def generate(self, prompt, key, model, json_output=False):
+        outcome = self.outcomes[self.calls]
+        self.calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
 class TextGenerationManagerTests(unittest.TestCase):
     def test_xai_unavailable_model_is_not_mislabeled_as_invalid_key(self):
         error = '{"code":"model_not_found","message":"model not found"}'
@@ -128,6 +142,39 @@ class TextGenerationManagerTests(unittest.TestCase):
 
         self.assertEqual(result.provider, "deepseek")
         self.assertEqual(result.text, '{"ok":true}')
+
+    def test_truncated_json_is_retried_once_on_same_provider(self):
+        adapter = OrderedAdapter("openai", ['{"story": "cut off', '{"story":"complete"}'])
+        manager = TextGenerationManager(
+            adapters={"openai": adapter},
+            key_store=MemoryKeyStore({"openai": ["oa"]}),
+            settings_loader=lambda: {"openai_model": "gpt-test"},
+        )
+
+        result = manager.generate("hello", provider_order=["openai"], json_output=True)
+
+        self.assertEqual(result.text, '{"story":"complete"}')
+        self.assertEqual(adapter.calls, 2)
+
+    def test_malformed_json_falls_through_to_next_provider(self):
+        primary = OrderedAdapter("openai", ['{"bad":', '{"still_bad":'])
+        fallback = OrderedAdapter("deepseek", ['```json\n{"ok":true}\n```'])
+        manager = TextGenerationManager(
+            adapters={"openai": primary, "deepseek": fallback},
+            key_store=MemoryKeyStore({"openai": ["oa"], "deepseek": ["ds"]}),
+            settings_loader=lambda: {
+                "openai_model": "gpt-test",
+                "deepseek_model": "deepseek-test",
+            },
+        )
+
+        result = manager.generate(
+            "hello", provider_order=["openai", "deepseek"], json_output=True
+        )
+
+        self.assertEqual(result.provider, "deepseek")
+        self.assertEqual(primary.calls, 2)
+        self.assertEqual(fallback.calls, 1)
 
     def test_default_provider_is_tried_before_fallbacks(self):
         store = MemoryKeyStore({"deepseek": ["ds"], "gemini": ["gm"]})

@@ -11,6 +11,55 @@ _GENERIC_WORDS = {
 }
 
 
+def storyboard_to_seo_context(storyboard: Optional[Dict[str, Any]]) -> str:
+    """Create a compact, factual SEO brief from the actual storyboard."""
+    if not isinstance(storyboard, dict) or not storyboard:
+        return ""
+    lines = [
+        f"Judul storyboard: {storyboard.get('film_title') or ''}",
+        f"Premis: {storyboard.get('premise') or storyboard.get('source_script') or storyboard.get('theme') or ''}",
+        f"Genre/gaya: {storyboard.get('genre_style') or ''}",
+    ]
+    brief = storyboard.get("creative_brief") or {}
+    if isinstance(brief, dict):
+        brief_labels = {
+            "background": "Konteks brief", "result": "Tujuan konten",
+            "audience": "Target audiens", "product_value": "Pain point/USP",
+            "execution": "Angle/tone/CTA", "constraints": "Batasan final",
+        }
+        for key, label in brief_labels.items():
+            value = str(brief.get(key) or "").strip()
+            if value:
+                lines.append(f"{label}: {value}")
+    characters = storyboard.get("characters") or []
+    character_bits = []
+    for character in characters[:10]:
+        if not isinstance(character, dict):
+            continue
+        name = str(character.get("name") or "").strip()
+        role = str(character.get("role") or character.get("description") or "").strip()
+        if name:
+            character_bits.append(f"{name}: {role[:180]}")
+    if character_bits:
+        lines.append("Karakter nyata dalam storyboard: " + "; ".join(character_bits))
+
+    for index, scene in enumerate((storyboard.get("scenes") or [])[:60], start=1):
+        if not isinstance(scene, dict):
+            continue
+        number = scene.get("scene_number") or index
+        title = scene.get("title") or f"Adegan {number}"
+        action = scene.get("action_summary") or ""
+        narration = scene.get("narration_id") or scene.get("voiceover_script") or ""
+        dialogue = "; ".join(
+            str(item.get("line") or "").strip()
+            for item in (scene.get("dialogue") or []) if isinstance(item, dict) and item.get("line")
+        )
+        ending = scene.get("end_state") or ""
+        detail = " ".join(filter(None, [str(action), f"Dialog: {dialogue}" if dialogue else "", f"Narasi: {narration}" if narration else "", f"Akhir: {ending}" if ending else ""]))
+        lines.append(f"Adegan {number} — {title}: {detail}".strip())
+    return "\n".join(line for line in lines if line.split(":", 1)[-1].strip())[:24000]
+
+
 def theme_hashtags(theme: str, limit: int = 2) -> List[str]:
     # Support alphanumeric and international characters (e.g. Hangul, Hanzi, Arabic, Latin)
     tokens = re.findall(r"[\w]+", str(theme or ""))
@@ -41,28 +90,46 @@ def _naturalize_shouting_title(title: str) -> str:
 
 
 def normalize_seo_titles(titles, theme: str) -> List[str]:
-    fallback_tags = theme_hashtags(theme)
     normalized = []
     for raw in titles or []:
         title = _naturalize_shouting_title(str(raw or "").strip())
         if not title:
             continue
-        if not re.findall(r"(?<!\w)#[\w]+", title):
-            title = f"{title.rstrip(' -|')} {' '.join(fallback_tags)}"
-        normalized.append(title.strip())
+        normalized.append(title[:100].rstrip(" -|"))
     if not normalized:
         clean_theme = (theme or "Film AI Sinematik").strip()
-        tags_suffix = " ".join(fallback_tags)
         normalized = [
-            f"{clean_theme} - Kisah Paling Menegangkan & Spektakuler {tags_suffix}",
-            f"Saksikan {clean_theme} - Film AI Sinematik Epik {tags_suffix}",
-            f"{clean_theme} (Official AI Short Film) {tags_suffix}",
+            f"{clean_theme} - Konflik yang Mengubah Segalanya",
+            f"Apa yang Terjadi dalam {clean_theme}?",
+            f"{clean_theme} - Sebuah Kisah tentang Pilihan dan Keberanian",
         ]
-    return normalized
+    return [title[:100].rstrip(" -|") for title in normalized[:3]]
 
 
-def _extract_thumbnail_prompt(raw: Dict[str, Any], film_title: str, premise: str) -> str:
-    """Extract or generate a high-impact 16:9 English thumbnail prompt."""
+def normalize_hashtags(raw: Dict[str, Any], theme: str) -> List[str]:
+    """Keep three relevant description hashtags separate from backend keyword tags."""
+    values = raw.get("hashtags") or raw.get("video_hashtags") or []
+    if isinstance(values, str):
+        values = re.findall(r"(?<!\w)#[\w]+", values)
+    clean = []
+    seen = set()
+    for value in values if isinstance(values, (list, tuple, set)) else []:
+        token = "#" + re.sub(r"[^\w]", "", str(value).lstrip("#"))
+        if len(token) > 1 and token.lower() not in seen:
+            clean.append(token)
+            seen.add(token.lower())
+        if len(clean) == 3:
+            break
+    for token in theme_hashtags(theme, limit=3):
+        if token.lower() not in seen and len(clean) < 3:
+            clean.append(token)
+            seen.add(token.lower())
+    return clean[:3]
+
+
+def _extract_thumbnail_prompt(raw: Dict[str, Any], film_title: str, premise: str, aspect_ratio: str = "landscape") -> str:
+    """Extract a thumbnail prompt and force it to match the rendered video's ratio."""
+    target_ratio = "9:16" if str(aspect_ratio).lower() in {"portrait", "9:16", "vertical"} else "16:9"
     candidates = [
         "thumbnail_prompt", "thumbnailPrompt", "thumbnail",
         "prompt_thumbnail", "thumbnail_image_prompt", "image_prompt",
@@ -76,12 +143,21 @@ def _extract_thumbnail_prompt(raw: Dict[str, Any], film_title: str, premise: str
         if isinstance(val, list):
             val = " ".join(str(v).strip() for v in val if str(v).strip())
         if val and isinstance(val, str) and val.strip() and val.strip() != "-":
-            return val.strip()
+            prompt = val.strip()
+            wrong_ratio = "16:9" if target_ratio == "9:16" else "9:16"
+            prompt = re.sub(re.escape(wrong_ratio), target_ratio, prompt, flags=re.IGNORECASE)
+            if target_ratio == "9:16":
+                prompt = re.sub(r"\b(?:horizontal|landscape|widescreen)\b", "vertical", prompt, flags=re.IGNORECASE)
+            else:
+                prompt = re.sub(r"\bvertical\b", "horizontal", prompt, flags=re.IGNORECASE)
+            if target_ratio not in prompt:
+                prompt = f"{prompt.rstrip(' .')}, {target_ratio} aspect ratio, composition optimized for the source video."
+            return prompt
 
     title_clean = film_title or "Cinematic Film"
     desc_snippet = (premise or title_clean)[:120].strip()
     return (
-        f"High-impact 16:9 YouTube video thumbnail for '{title_clean}', featuring {desc_snippet}, "
+        f"High-impact {target_ratio} YouTube video cover for '{title_clean}', featuring {desc_snippet}, "
         f"dramatic cinematic lighting, volumetric glowing rays, highly expressive detailed main character, "
         f"bold glowing cinematic typography, ultra-sharp 8k resolution, photorealistic masterpiece, eye-catching composition."
     )
@@ -131,10 +207,10 @@ def _extract_tags_csv(raw: Dict[str, Any], film_title: str, premise: str) -> str
         ]
 
     # Ensure clean formatting
-    return ", ".join(extracted_tags[:15])
+    return ", ".join(extracted_tags[:12])
 
 
-def normalize_youtube_seo_kit(data: Optional[Dict[str, Any]], film_title: str = "", premise: str = "") -> Dict[str, Any]:
+def normalize_youtube_seo_kit(data: Optional[Dict[str, Any]], film_title: str = "", premise: str = "", aspect_ratio: str = "landscape") -> Dict[str, Any]:
     """Ensure YouTube SEO Kit is 100% complete with normalized titles, description, thumbnail prompt, and tags."""
     raw = data or {}
     title_clean = (film_title or raw.get("film_title") or "Film AI Sinematik").strip()
@@ -145,28 +221,35 @@ def normalize_youtube_seo_kit(data: Optional[Dict[str, Any]], film_title: str = 
         raw_titles = [raw_titles]
 
     normalized_titles = normalize_seo_titles(raw_titles, title_clean)
+    hashtags = normalize_hashtags(raw, title_clean)
 
     desc = str(raw.get("description") or raw.get("video_description") or raw.get("desc") or "").strip()
     if not desc:
-        hashtags = " ".join(theme_hashtags(title_clean, limit=5))
         desc = (
-            f"Saksikan film sinematik {title_clean}. Sebuah kisah memukau yang menghadirkan petualangan dan emosi mendalam.\n\n"
-            f"Diproduksi menggunakan teknologi AI sinematik generasi terbaru dengan visual spektakuler dan audio memukau.\n\n"
-            f"👉 Jangan lupa Like, Comment, dan Subscribe untuk menikmati konten sinematik berkualitas tinggi berikutnya!\n\n"
-            f"{hashtags} #FilmAI #GoogleFlow #GeminiAI"
+            f"{title_clean} menghadirkan {premise_clean}.\n"
+            f"Ikuti konflik utama dan keputusan yang mengubah perjalanan para karakternya.\n\n"
+            f"Tonton sampai akhir, lalu bagikan pendapatmu tentang momen yang paling berkesan.\n\n"
+            f"{' '.join(hashtags)}"
         )
+    elif not re.findall(r"(?<!\w)#[\w]+", desc):
+        desc = f"{desc.rstrip()}\n\n{' '.join(hashtags)}"
 
-    thumbnail_prompt = _extract_thumbnail_prompt(raw, title_clean, premise_clean)
+    thumbnail_ratio = "9:16" if str(aspect_ratio).lower() in {"portrait", "9:16", "vertical"} else "16:9"
+    thumbnail_prompt = _extract_thumbnail_prompt(raw, title_clean, premise_clean, aspect_ratio)
     tags_csv = _extract_tags_csv(raw, title_clean, premise_clean)
 
     result = {
         "titles": normalized_titles,
         "seo_titles": normalized_titles,
         "description": desc,
+        "hashtags": hashtags,
         "thumbnail_prompt": thumbnail_prompt,
         "thumbnailPrompt": thumbnail_prompt,
+        "thumbnail_aspect_ratio": thumbnail_ratio,
         "tags": tags_csv,
         "tags_csv": tags_csv,
+        "target_lang": raw.get("target_lang") or "Indonesia",
+        "target_country": raw.get("target_country") or "",
         "generated_via": raw.get("generated_via") or "Sinematica AI SEO Engine"
     }
     return result

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import shutil
 import uuid
 import logging
@@ -13,6 +13,7 @@ import json
 
 from .. import settings
 from ..storyboard_actor_references import attach_character_references, select_actor_references
+from ..content_quality import audit_reference_asset
 
 router = APIRouter(prefix="/api/storyboard", tags=["Storyboard"])
 log = logging.getLogger("sinematica.routers.storyboard")
@@ -46,6 +47,8 @@ def _inject_actors_info(actor_ids: str, character_info: str, saved_paths: List[s
 class AutoSuggestRequest(BaseModel):
     theme: str
     microdrama_mode: Optional[bool] = False
+    children_mode: Optional[bool] = False
+    series_mode: Optional[bool] = False
     target_country: Optional[str] = ""
     target_lang: Optional[str] = ""
     dracin_theme: Optional[str] = ""
@@ -55,6 +58,10 @@ class SEOKitRequest(BaseModel):
     title: Optional[str] = ""
     film_title: Optional[str] = ""
     premise: Optional[str] = ""
+    target_lang: Optional[str] = "Indonesia"
+    target_country: Optional[str] = ""
+    aspect_ratio: Optional[str] = "landscape"
+    storyboard: Optional[Dict[str, Any]] = None
 
 
 class RegenerateSceneRequest(BaseModel):
@@ -73,7 +80,16 @@ from ..gemini_storyboard import generate_storyboard, auto_suggest_details, gener
 def generate_seo_metadata_kit(req: SEOKitRequest):
     title = req.title or req.film_title or "Film AI Sinematik"
     try:
-        data = generate_youtube_metadata(title, req.premise or title)
+        from ..youtube_seo import storyboard_to_seo_context
+        storyboard_context = storyboard_to_seo_context(req.storyboard)
+        factual_context = storyboard_context or req.premise or title
+        data = generate_youtube_metadata(
+            title,
+            factual_context,
+            target_lang=req.target_lang or "Indonesia",
+            target_country=req.target_country or "",
+            aspect_ratio=req.aspect_ratio or (req.storyboard or {}).get("aspect_ratio") or "landscape",
+        )
         # Keep both key shapes so cached/older frontends remain compatible.
         data["seo_titles"] = data.get("seo_titles") or data.get("titles") or []
         data["tags_csv"] = data.get("tags_csv") or data.get("tags") or ""
@@ -101,9 +117,9 @@ def regenerate_single_scene_endpoint(req: RegenerateSceneRequest):
 
 
 @router.get("/auto_concept")
-def auto_concept_get(microdrama_mode: bool = False, target_country: str = "", dracin_theme: str = "", target_lang: str = ""):
+def auto_concept_get(microdrama_mode: bool = False, children_mode: bool = False, series_mode: bool = False, target_country: str = "", dracin_theme: str = "", target_lang: str = ""):
     try:
-        suggestion = auto_suggest_details("", microdrama_mode=microdrama_mode, target_country=target_country, dracin_theme=dracin_theme, target_lang=target_lang)
+        suggestion = auto_suggest_details("", microdrama_mode=microdrama_mode, children_mode=children_mode, series_mode=series_mode, target_country=target_country, dracin_theme=dracin_theme, target_lang=target_lang)
         return {"success": True, "concept": suggestion.get("suggested_premise", ""), "suggestion": suggestion}
     except Exception as ex:
         log.error("Error auto-suggesting fresh concept: %s", ex)
@@ -114,9 +130,9 @@ def auto_concept_get(microdrama_mode: bool = False, target_country: str = "", dr
 def suggest_concept(req: AutoSuggestRequest):
     theme = (req.theme or "").strip()
     if not theme:
-        return auto_concept_get(microdrama_mode=req.microdrama_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "", target_lang=req.target_lang or "")
+        return auto_concept_get(microdrama_mode=req.microdrama_mode or False, children_mode=req.children_mode or False, series_mode=req.series_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "", target_lang=req.target_lang or "")
     try:
-        suggestion = auto_suggest_details(theme, microdrama_mode=req.microdrama_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "", target_lang=req.target_lang or "")
+        suggestion = auto_suggest_details(theme, microdrama_mode=req.microdrama_mode or False, children_mode=req.children_mode or False, series_mode=req.series_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "", target_lang=req.target_lang or "")
         return {"success": True, "concept": suggestion.get("suggested_premise", theme), "suggestion": suggestion}
     except Exception as ex:
         log.error("Error auto-suggesting concept: %s", ex)
@@ -130,10 +146,21 @@ async def generate_ai_storyboard(
     aspect_ratio: str = Form("landscape"),
     character_info: str = Form(""),
     custom_instructions: str = Form(""),
+    creative_brief: str = Form("{}"),
     character_seed: Optional[int] = Form(None),
     microdrama_mode: bool = Form(False),
     ugc_mode: bool = Form(False),
+    ugc_variant: str = Form("realism"),
+    ugc_platform: str = Form("TikTok"),
+    ugc_tone: str = Form("Natural, fresh, friendly"),
+    ugc_emotional_arc: str = Form(""),
+    ugc_environment: str = Form("auto"),
+    ugc_lighting: str = Form("auto"),
     children_mode: bool = Form(False),
+    visual_style: str = Form("live_action"),
+    visual_vibe: str = Form("none"),
+    lighting_style: str = Form("none"),
+    color_palette: str = Form("none"),
     script_mode: bool = Form(False),
     affiliate_enabled: bool = Form(False),
     affiliate_name: str = Form(""),
@@ -201,6 +228,23 @@ async def generate_ai_storyboard(
             "scene_position": affiliate_position,
             "reference_paths": affiliate_paths,
         }
+        try:
+            parsed_creative_brief = json.loads(creative_brief or "{}")
+            if not isinstance(parsed_creative_brief, dict):
+                parsed_creative_brief = {}
+        except json.JSONDecodeError:
+            parsed_creative_brief = {}
+        asset_quality_report = (
+            [audit_reference_asset(path, "character") for path in saved_paths]
+            + [audit_reference_asset(path, "product") for path in affiliate_paths]
+        )
+        weak_assets = [item for item in asset_quality_report if item.get("status") != "production_ready"]
+        if weak_assets:
+            custom_instructions = (
+                f"{custom_instructions}\nASSET QUALITY CAUTION: {len(weak_assets)} reference asset(s) need improvement. "
+                "Do not invent facial, packaging, logo, label, colour, or geometry details that are not clearly visible. "
+                "Preserve only confirmed details and keep the visible identity stable."
+            ).strip()
 
         storyboard = generate_storyboard(
             premise=premise,
@@ -209,10 +253,21 @@ async def generate_ai_storyboard(
             aspect_ratio=aspect_ratio,
             character_info=character_info,
             custom_instructions=custom_instructions,
+            creative_brief=parsed_creative_brief,
             character_seed=character_seed,
             microdrama_mode=microdrama_mode,
             ugc_mode=ugc_mode,
+            ugc_variant=ugc_variant,
+            ugc_platform=ugc_platform,
+            ugc_tone=ugc_tone,
+            ugc_emotional_arc=ugc_emotional_arc,
+            ugc_environment=ugc_environment,
+            ugc_lighting=ugc_lighting,
             children_mode=children_mode,
+            visual_style=visual_style,
+            visual_vibe=visual_vibe,
+            lighting_style=lighting_style,
+            color_palette=color_palette,
             script_mode=script_mode,
             affiliate_config=affiliate_config,
             target_country=target_country,
@@ -222,11 +277,13 @@ async def generate_ai_storyboard(
             target_total_duration=target_total_duration
         )
         storyboard = attach_character_references(storyboard, selected_actors)
+        storyboard["asset_quality_report"] = asset_quality_report
 
         return {
             "success": True,
             "storyboard": storyboard,
             "reference_images": uploaded_paths,
+            "asset_quality_report": storyboard["asset_quality_report"],
         }
     except Exception as ex:
         log.error("Error generating storyboard: %s", ex, exc_info=True)

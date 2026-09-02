@@ -33,6 +33,7 @@ from .scene_direction import (
     choose_shot_count,
     ensure_unique_character_signatures,
 )
+from .content_quality import build_render_realism_guard, build_scene_blueprint_guard
 from .storyboard_image import fetch_image_bytes, generate_storyboard_sheet
 
 from omniflash.generators import upload_image, poll_video_status
@@ -330,11 +331,11 @@ def resolve_scene_characters(scene: Dict[str, Any], characters: List[Dict[str, A
 
 
 def build_video_reference_ids(character_ids: List[str], storyboard_media_id: Optional[str],
-                              policy_attempt: int = 0, limit: int = 10,
+                              policy_attempt: int = 0, limit: int = 7,
                               drop_all_references: bool = False,
                               continuity_media_id: Optional[str] = None,
                               product_media_ids: Optional[List[str]] = None) -> List[str]:
-    """Order Ingredients by continuity, identity, then scene composition."""
+    """Order at most seven Flow Ingredients by continuity, identity, then composition."""
     if drop_all_references:
         return []
     refs = []
@@ -353,15 +354,96 @@ def build_video_reference_ids(character_ids: List[str], storyboard_media_id: Opt
     return refs[:limit]
 
 
+def build_visual_style_guard(visual_style: str = "live_action", children_mode: bool = False) -> str:
+    """Lock one rendering medium across character sheets, boards, and final video."""
+    style = visual_style or ("3d_cartoon" if children_mode else "live_action")
+    contracts = {
+        "live_action": "LIVE-ACTION CINEMATIC PHOTOGRAPHY ONLY: real human actors, natural skin pores, realistic hair and fabric, optical cinematic camera capture. NO cartoon, anime, illustration, painting, comic art, stylized 3D, doll-like face, or cel shading.",
+        "3d_cartoon": "STYLIZED 3D ANIMATION ONLY: sculpted 3D characters, modeled volume, rounded forms, physically based 3D materials, feature-animation lighting, identical model-sheet proportions. NO live-action people, photography, realistic skin pores, 2D drawing, anime, or flat cel animation.",
+        "2d_animation": "HAND-DRAWN 2D ANIMATION ONLY: clean consistent line art, flat graphic shapes, controlled cel shading, painted 2D backgrounds, identical model-sheet proportions. NO live-action photography, photoreal skin, 3D render, clay, CGI volume, or anime-style redesign.",
+        "anime_2d": "2D ANIME PRODUCTION STYLE ONLY: clean ink lines, consistent anime model sheets, controlled cel shading, expressive anime faces, painted 2D backgrounds. NO live-action photography, photoreal skin, western 3D cartoon, clay, or realistic CGI.",
+        "toy_brick": "ORIGINAL TOY-BRICK 3D ANIMATION ONLY: interlocking plastic-brick environments, original block-figure characters, simple cylindrical heads and claw-like hands, glossy molded plastic, stop-motion-inspired movement. NO LEGO logos, branded sets, licensed minifigures, live-action humans, 2D drawing, or photoreal skin.",
+        "line_character": "MINIMALIST LINE-CHARACTER ANIMATION ONLY: consistent clean monoline characters, simple geometric bodies, sparse flat colour accents, restrained backgrounds, precise readable silhouettes. NO photorealism, 3D volume, textured skin, painterly shading, or style switching.",
+        "claymation": "HANDCRAFTED CLAYMATION STOP-MOTION ONLY: consistent sculpted clay puppets, visible handmade fingerprints, miniature practical sets, tactile surfaces, frame-by-frame movement. NO live-action actors, smooth CGI plastic, 2D illustration, or photoreal skin.",
+        "storybook_watercolor": "WATERCOLOR STORYBOOK ANIMATION ONLY: consistent hand-painted watercolor characters, pigment blooms, textured cold-press paper, delicate ink contours, layered illustrated backgrounds. NO live action, 3D CGI, plastic materials, anime cel shading, or photorealism.",
+        "paper_cutout": "PAPER-CUTOUT ANIMATION ONLY: layered hand-cut paper characters, visible paper fibres, hinged flat limbs, collage scenery, soft tabletop shadows. NO live-action humans, 3D CGI characters, clay, or photoreal skin.",
+        "pixel_art": "CINEMATIC PIXEL-ART ANIMATION ONLY: one consistent pixel grid, deliberate limited palette, crisp pixel silhouettes, sprite-consistent proportions. NO smooth vectors, live action, 3D rendering, anti-aliased photorealism, or mixed pixel resolutions.",
+        "comic_book": "CINEMATIC COMIC-BOOK ANIMATION ONLY: consistent graphic-novel designs, bold ink contours, controlled halftone shading, dramatic panel composition, limited print palette. NO live-action photography, 3D CGI, watercolor, or character redesign.",
+    }
+    return "\n\nVISUAL STYLE LOCK (HIGHEST PRIORITY): " + contracts.get(style, contracts["live_action"])
+
+
 def build_live_action_guard(children_mode: bool) -> str:
-    """Prevent adult/live-action projects from drifting into illustrated output."""
-    if children_mode:
+    """Backward-compatible guard used by older callers and tests."""
+    return "" if children_mode else build_visual_style_guard("live_action")
+
+
+def build_finishing_look_guard(storyboard: Dict[str, Any]) -> str:
+    """Apply curated YouTube finishing modifiers without changing the base medium."""
+    maps = {
+        "visual_vibe": {
+            "pro_cinematic": "polished professional cinematic production design and premium YouTube storytelling finish",
+            "clean_commercial": "clean commercial art direction, uncluttered composition and readable subject separation",
+            "documentary": "grounded observational documentary mood and authentic environments",
+            "sci_fi": "original futuristic science-fiction production design with coherent non-franchise technology",
+            "ugc_natural": "authentic creator-led UGC mood with natural smartphone immediacy and candid staging",
+            "korean_drama": "refined Korean drama mood with elegant emotional framing and polished television finish",
+            "microdrama": "fast-paced short-form microdrama staging with expressive reactions and clear story beats",
+            "kids_colorful": "cheerful child-friendly energy with playful design and bright readable storytelling",
+            "cozy_lifestyle": "warm intimate lifestyle mood with relaxed domestic staging and tactile comfort",
+            "luxury_premium": "high-end luxury editorial finish with refined materials and restrained composition",
+            "dark_thriller": "mysterious suspense-thriller atmosphere with controlled shadows and readable staging",
+        },
+        "lighting_style": {
+            "soft_light": "soft diffused key light with gentle shadows", "golden_hour": "warm golden-hour directional light",
+            "volumetric": "controlled volumetric light shafts and atmospheric depth", "chiaroscuro": "dramatic chiaroscuro contrast",
+            "low_key": "low-key cinematic lighting with readable faces", "backlight": "strong rim backlight and clear silhouettes",
+            "rainy": "overcast rainy ambience with wet-surface reflections",
+        },
+        "color_palette": {
+            "warm": "cohesive warm amber colour palette", "cool": "cohesive cool blue-cyan colour palette",
+            "vibrant": "controlled vibrant saturation with protected character colours", "pastel": "soft cohesive pastel palette",
+            "earthy": "natural earthy ochre, olive and brown palette", "complementary": "controlled complementary colour harmony",
+            "teal_orange": "cinematic teal-and-orange palette with consistent grading",
+        },
+    }
+    selected = [mapping.get(storyboard.get(field) or "", "") for field, mapping in maps.items()]
+    selected = [item for item in selected if item]
+    auto_direction = str(storyboard.get("auto_art_direction") or "").strip()
+    if auto_direction:
+        selected.append(auto_direction)
+    if not selected:
         return ""
-    return (
-        "\n\nLIVE-ACTION PHOTOGRAPHY ONLY: real human actors, natural skin pores, realistic hair and "
-        "fabric, cinematic camera capture. No cartoon, anime, illustration, painting, comic art, "
-        "stylized 3D character, doll-like face, or cel shading."
-    )
+    return "\n\nFINISHING LOOK LOCK (DO NOT CHANGE BASE MEDIUM): " + "; ".join(selected) + "."
+
+
+def adapt_template_for_visual_style(template: str, visual_style: str, children_mode: bool) -> str:
+    """Remove photoreal-only template instructions when a stylized medium is selected."""
+    if visual_style == "3d_cartoon":
+        return template
+    style_labels = {
+        "live_action": "LIVE-ACTION CINEMATIC",
+        "2d_animation": "HAND-DRAWN 2D ANIMATION",
+        "anime_2d": "2D ANIME",
+        "toy_brick": "TOY-BRICK 3D ANIMATION",
+        "line_character": "MINIMALIST LINE-CHARACTER ANIMATION",
+        "claymation": "CLAYMATION STOP-MOTION",
+        "storybook_watercolor": "WATERCOLOR STORYBOOK",
+        "paper_cutout": "PAPER-CUTOUT ANIMATION",
+        "pixel_art": "PIXEL-ART ANIMATION",
+        "comic_book": "COMIC-BOOK ANIMATION",
+    }
+    style_label = style_labels.get(visual_style, "LIVE-ACTION CINEMATIC")
+    adapted = template.replace("Ultra photorealistic", "Strictly style-locked")
+    adapted = adapted.replace("Natural skin texture | Realistic fabric", "Medium-consistent surfaces | Style-consistent costume rendering")
+    adapted = adapted.replace("cartoon style, anime style, painterly rendering,", "mixed visual medium, photorealistic photography,")
+    # Children's templates historically embedded 3D in their headings and render
+    # directions. Replace those phrases so the user's selected medium is authoritative.
+    adapted = adapted.replace("3D CARTOON", style_label)
+    adapted = adapted.replace("3D cartoon", style_label.lower())
+    adapted = adapted.replace("Soft 3D cartoon render", style_label)
+    adapted = adapted.replace("Smooth rounded forms", "Forms consistent with the selected visual medium")
+    return adapted
 
 
 def resolve_affiliate_scene_numbers(total_scenes: int, position: Any) -> set[int]:
@@ -530,6 +612,28 @@ async def execute_storyboard_job(
     scenes = storyboard.get("scenes", [])
     total_scenes = len(scenes)
 
+    # Persist a job-owned SEO narrative. Gallery SEO must describe this rendered
+    # video's actual scenes, never whichever storyboard happens to be open later.
+    seo_scene_lines = []
+    for scene_index, scene in enumerate(scenes, start=1):
+        scene_number = scene.get("scene_number") or scene_index
+        scene_title = scene.get("title") or f"Adegan {scene_number}"
+        scene_action = scene.get("action_summary") or ""
+        scene_narration = scene.get("narration_id") or scene.get("voiceover_script") or ""
+        seo_scene_lines.append(
+            f"Adegan {scene_number} — {scene_title}: {scene_action}"
+            + (f" Narasi: {scene_narration}" if scene_narration else "")
+        )
+    seo_story_context = "\n".join(filter(None, [
+        storyboard.get("premise") or storyboard.get("source_script") or storyboard.get("theme") or "",
+        *seo_scene_lines,
+    ]))[:16000]
+    seo_storyboard = {
+        key: storyboard.get(key)
+        for key in ("film_title", "premise", "source_script", "theme", "genre_style", "characters", "scenes")
+        if storyboard.get(key) is not None
+    }
+
     started_at = time.time()
     job_state = {
         "job_id": job_id,
@@ -545,6 +649,10 @@ async def execute_storyboard_job(
         "started_at": started_at,
         "created_at_formatted": time.strftime("%d %b %Y, %H:%M"),
         "initial_prompt": storyboard.get("premise") or storyboard.get("theme") or "",
+        "seo_story_context": seo_story_context,
+        "seo_storyboard": seo_storyboard,
+        "target_lang": storyboard.get("target_lang") or "",
+        "target_country": storyboard.get("target_country") or "",
     }
     _active_jobs[job_id] = job_state
 
@@ -600,8 +708,10 @@ async def execute_storyboard_job(
     # Children's stories need 3D cartoon animals, not photoreal humans, so they get their
     # own sheet templates instead of the cinematic defaults.
     is_children = bool(storyboard.get("children_mode"))
+    visual_style = storyboard.get("visual_style") or ("3d_cartoon" if is_children else "live_action")
     if is_children:
         custom_template = settings.CHILDREN_CHARACTER_SHEET_TEMPLATE
+    custom_template = adapt_template_for_visual_style(custom_template, visual_style, is_children)
 
     # The theme image is an additional visual guide; it must never replace the mandatory
     # per-character anchor sheets.
@@ -652,7 +762,6 @@ async def execute_storyboard_job(
             char_desc = char.get('description', '')
 
             char_prompt = custom_template.replace("{char_name}", char_name).replace("{char_seed}", str(char_seed)).replace("{char_desc}", char_desc)
-            char_prompt += build_live_action_guard(is_children)
             owned_reference_paths = resolve_character_reference_paths(char, storyboard)
             if owned_reference_paths:
                 char_prompt += (
@@ -682,7 +791,10 @@ async def execute_storyboard_job(
                         )
                     log_event(job_id, f"⏳ [{5 + c_idx}%] Mengirim request character seed image '{char_name}' (Seed: {request_seed}) [Percobaan {try_cnt}]...")
                     img_res = await generate_character_image(
-                        bridge, prompt=char_prompt, aspect="portrait", project_id=project_id,
+                        bridge,
+                        prompt=(char_prompt + build_visual_style_guard(visual_style, is_children)
+                                + build_finishing_look_guard(storyboard)),
+                        aspect="portrait", project_id=project_id,
                         instance_id=first_target_id,
                         reference_media_ids=reference_media_ids or None,
                     )
@@ -835,6 +947,11 @@ async def execute_storyboard_job(
             prompt, sc, storyboard, music_video=music_video_mode
         )
         prompt = apply_no_branding_direction(prompt)
+        # Re-assert after AI pacing rewrites so no later stage can silently change medium.
+        prompt += build_visual_style_guard(visual_style, is_children)
+        prompt += build_finishing_look_guard(storyboard)
+        prompt += build_scene_blueprint_guard(sc)
+        prompt += build_render_realism_guard(storyboard)
 
         scene_record = {
             "scene_number": idx,
@@ -882,7 +999,9 @@ async def execute_storyboard_job(
             storyboard_prompt = scene_storyboard_template
             for token, value in sb_fields.items():
                 storyboard_prompt = storyboard_prompt.replace(token, value)
-            storyboard_prompt += build_live_action_guard(is_children)
+            storyboard_prompt = adapt_template_for_visual_style(storyboard_prompt, visual_style, is_children)
+            storyboard_prompt += build_visual_style_guard(visual_style, is_children)
+            storyboard_prompt += build_finishing_look_guard(storyboard)
             _sb_manifest_slot = True  # manifest appended once the sheet list is known
             sb_target_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
 
@@ -1238,6 +1357,8 @@ async def execute_storyboard_job(
                 revised, sc, storyboard, music_video=music_video_mode
             )
             prompt = apply_no_branding_direction(prompt)
+            prompt += build_visual_style_guard(visual_style, is_children)
+            prompt += build_finishing_look_guard(storyboard)
             if drop_all_scene_references:
                 prompt = fictionalize_character_names(
                     prompt,

@@ -7,8 +7,12 @@ let currentJobId = null;
 let pollTimer = null;
 let selectedRefFiles = [];
 let selectedAffiliateProductFiles = [];
+const MAX_STORYBOARD_REFERENCE_IMAGES = 7;
 let selectedRenderClips = []; // ordered {job_id, filename, label} picked from Gallery for Auto Render
 const selectedHistoryIndexes = new Set();
+let gallerySeoContexts = new Map();
+let storyboardImportMode = 'new';
+let storyboardImportController = null;
 
 // Groups terminal log lines into a small set of colors: error/warning (from backend level),
 // success (completion messages), profile (Chrome worker actions), or default system info.
@@ -21,20 +25,194 @@ function logLineCategory(l) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  initSidebarToggle();
   initNavigation();
   initStatusPolling();
   initFleetTestPrompt();
   initDropzone();
+  relocateStoryTargetingControls();
   initStoryboardForm();
   initGallery();
   initSettingsModal();
   initSeoKitModal();
   initStoryboardHistoryModal();
+  initStoryboardImportModal();
   renderHistoryTab();
   initCustomAlertModal();
   loadLastStoryboard();
   initAspectRatioDefault();
+  initFinishingLookPicker();
 });
+
+function initSidebarToggle() {
+  const sidebar = document.querySelector('.sidebar');
+  const toggle = document.getElementById('sidebarToggleBtn');
+  if (!sidebar || !toggle) return;
+
+  const storageKey = 'sinematica_sidebar_collapsed';
+  const navItems = [...sidebar.querySelectorAll('.nav-item')];
+  navItems.forEach(item => {
+    const labelNode = item.cloneNode(true);
+    labelNode.querySelectorAll('.nav-icon, .badge-count').forEach(node => node.remove());
+    const label = labelNode.textContent.replace(/\s+/g, ' ').trim();
+    if (label) item.dataset.sidebarLabel = label;
+  });
+
+  const applyState = collapsed => {
+    const desktop = window.matchMedia('(min-width: 851px)').matches;
+    const active = desktop && collapsed;
+    sidebar.classList.toggle('sidebar-collapsed', active);
+    toggle.setAttribute('aria-expanded', String(!active));
+    toggle.setAttribute('aria-label', active ? 'Expand sidebar' : 'Minimize sidebar');
+    toggle.title = active ? 'Expand sidebar' : 'Minimize sidebar';
+    toggle.querySelector('span').textContent = active ? '›' : '‹';
+    navItems.forEach(item => {
+      item.title = active ? (item.dataset.sidebarLabel || '') : '';
+    });
+  };
+
+  let preferredCollapsed = localStorage.getItem(storageKey) === 'true';
+  applyState(preferredCollapsed);
+  toggle.addEventListener('click', () => {
+    preferredCollapsed = !sidebar.classList.contains('sidebar-collapsed');
+    localStorage.setItem(storageKey, String(preferredCollapsed));
+    applyState(preferredCollapsed);
+  });
+  window.addEventListener('resize', () => applyState(preferredCollapsed));
+}
+
+/**
+ * Keep audience and theme choices close to the story inputs. Moving the existing
+ * nodes preserves every ID, value, and event listener used by storyboard generation.
+ */
+function relocateStoryTargetingControls() {
+  const destination = document.getElementById('storyTargetingControls');
+  if (!destination) return;
+
+  ['targetCountryInput', 'targetLanguageInput', 'dracinThemeSelect', 'aspectSelect'].forEach((controlId) => {
+    const control = document.getElementById(controlId);
+    const group = control?.closest('.form-group');
+    if (group) destination.appendChild(group);
+  });
+
+  const productionColumn = document.getElementById('productionParametersColumn');
+  const durationBadge = document.getElementById('totalDurationLabel');
+  if (productionColumn && durationBadge) {
+    durationBadge.style.marginBottom = '0';
+    durationBadge.style.marginTop = '0';
+    durationBadge.style.flexWrap = 'nowrap';
+    durationBadge.style.whiteSpace = 'nowrap';
+    durationBadge.style.justifyContent = 'flex-start';
+    durationBadge.style.fontSize = '12px';
+    productionColumn.appendChild(durationBadge);
+  }
+}
+
+const FINISHING_LOOK_OPTIONS = {
+  vibe: {
+    // The generated vibe sheet contains four tall panels in a 2:1 canvas.
+    // Render it as a 4x2 surface and crop the vertical centre to avoid stretching faces.
+    selectId: 'visualVibeSelect', sprite: '/assets/style-previews/vibe-sprite.png?v=3', columns: 4, rows: 1,
+    backgroundSize: '400% auto', cropY: '50%',
+    items: [
+      { value: 'none', label: 'Auto AI', neutral: true },
+      { value: 'pro_cinematic', label: 'Pro Cinematic', spriteIndex: 0 },
+      { value: 'clean_commercial', label: 'Clean Commercial', spriteIndex: 1 },
+      { value: 'documentary', label: 'Documentary', spriteIndex: 2 },
+      { value: 'sci_fi', label: 'Sci-Fi', spriteIndex: 3 },
+      { value: 'ugc_natural', label: 'UGC Natural', sprite: '/assets/style-previews/vibe-social-drama-sprite.png?v=1', columns: 4, rows: 1, backgroundSize: '400% auto', cropY: '50%', spriteIndex: 0 },
+      { value: 'korean_drama', label: 'Drama Korea', sprite: '/assets/style-previews/vibe-social-drama-sprite.png?v=1', columns: 4, rows: 1, backgroundSize: '400% auto', cropY: '50%', spriteIndex: 1 },
+      { value: 'microdrama', label: 'Microdrama', sprite: '/assets/style-previews/vibe-social-drama-sprite.png?v=1', columns: 4, rows: 1, backgroundSize: '400% auto', cropY: '50%', spriteIndex: 2 },
+      { value: 'kids_colorful', label: 'Kids Colorful', sprite: '/assets/style-previews/vibe-social-drama-sprite.png?v=1', columns: 4, rows: 1, backgroundSize: '400% auto', cropY: '50%', spriteIndex: 3 },
+      { value: 'cozy_lifestyle', label: 'Cozy Lifestyle', sprite: '/assets/style-previews/vibe-premium-mood-sprite.png?v=1', columns: 3, rows: 1, backgroundSize: '300% auto', cropY: '50%', spriteIndex: 0 },
+      { value: 'luxury_premium', label: 'Luxury Premium', sprite: '/assets/style-previews/vibe-premium-mood-sprite.png?v=1', columns: 3, rows: 1, backgroundSize: '300% auto', cropY: '50%', spriteIndex: 1 },
+      { value: 'dark_thriller', label: 'Dark Thriller', sprite: '/assets/style-previews/vibe-premium-mood-sprite.png?v=1', columns: 3, rows: 1, backgroundSize: '300% auto', cropY: '50%', spriteIndex: 2 }
+    ]
+  },
+  lighting: {
+    selectId: 'lightingStyleSelect', sprite: '/assets/style-previews/lighting-sprite.png', columns: 4, rows: 2,
+    items: [
+      { value: 'none', label: 'Auto', spriteIndex: 7 },
+      { value: 'soft_light', label: 'Soft Light', spriteIndex: 0 },
+      { value: 'golden_hour', label: 'Golden Hour', spriteIndex: 1 },
+      { value: 'volumetric', label: 'Volumetric', spriteIndex: 2 },
+      { value: 'chiaroscuro', label: 'Chiaroscuro', spriteIndex: 3 },
+      { value: 'low_key', label: 'Low Key', spriteIndex: 4 },
+      { value: 'backlight', label: 'Backlight', spriteIndex: 5 },
+      { value: 'rainy', label: 'Rainy', spriteIndex: 6 }
+    ]
+  },
+  color: {
+    selectId: 'colorPaletteSelect', sprite: '/assets/style-previews/color-sprite.png', columns: 4, rows: 2,
+    items: [
+      { value: 'none', label: 'Auto', spriteIndex: 7 },
+      { value: 'warm', label: 'Warm', spriteIndex: 0 },
+      { value: 'cool', label: 'Cool', spriteIndex: 1 },
+      { value: 'vibrant', label: 'Vibrant', spriteIndex: 2 },
+      { value: 'pastel', label: 'Pastel', spriteIndex: 3 },
+      { value: 'earthy', label: 'Earthy', spriteIndex: 4 },
+      { value: 'complementary', label: 'Complementary', spriteIndex: 5 },
+      { value: 'teal_orange', label: 'Teal–Orange', spriteIndex: 6 }
+    ]
+  }
+};
+
+function finishSpritePosition(index, columns, rows, cropY = null) {
+  const column = index % columns;
+  const row = Math.floor(index / columns);
+  const x = columns === 1 ? 0 : (column / (columns - 1)) * 100;
+  const y = cropY ?? (rows === 1 ? 0 : (row / (rows - 1)) * 100);
+  const yCss = typeof y === 'number' ? `${y}%` : String(y);
+  return `${x}% ${yCss}`;
+}
+
+function initFinishingLookPicker() {
+  const grid = document.getElementById('finishingLookCardGrid');
+  if (!grid) return;
+  let activeTab = 'vibe';
+
+  const render = () => {
+    const config = FINISHING_LOOK_OPTIONS[activeTab];
+    const select = document.getElementById(config.selectId);
+    grid.dataset.finishGrid = activeTab;
+    grid.innerHTML = config.items.map(item => {
+      const active = select?.value === item.value;
+      const columns = item.columns || config.columns;
+      const rows = item.rows || config.rows;
+      const cropY = item.cropY || config.cropY;
+      const sprite = item.sprite || config.sprite;
+      const backgroundSize = item.backgroundSize || config.backgroundSize || `${columns * 100}% ${rows * 100}%`;
+      const imageStyle = item.neutral
+        ? 'background:radial-gradient(circle at 50% 45%,#475569 0 13%,#1e293b 14% 38%,#0f172a 39%);'
+        : `background-image:url('${sprite}');background-size:${backgroundSize};background-position:${finishSpritePosition(item.spriteIndex, columns, rows, cropY)};`;
+      return `<button type="button" class="finish-preview-card${active ? ' active' : ''}" data-finish-value="${item.value}" title="${item.label}">
+        <span class="finish-preview-image" style="${imageStyle}"></span>
+        <span class="finish-preview-label">${item.label}</span><span class="finish-preview-check">✓</span>
+      </button>`;
+    }).join('');
+    grid.querySelectorAll('.finish-preview-card').forEach(card => {
+      card.addEventListener('click', () => {
+        if (select) {
+          select.value = card.dataset.finishValue;
+          select.dispatchEvent(new Event('change'));
+        }
+        render();
+      });
+    });
+  };
+
+  document.querySelectorAll('.finish-picker-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      activeTab = tab.dataset.finishTab;
+      document.querySelectorAll('.finish-picker-tab').forEach(item => item.classList.toggle('active', item === tab));
+      render();
+    });
+  });
+  Object.values(FINISHING_LOOK_OPTIONS).forEach(config => {
+    document.getElementById(config.selectId)?.addEventListener('change', render);
+  });
+  render();
+}
 
 function initAspectRatioDefault() {
   const select = document.getElementById('aspectSelect');
@@ -46,6 +224,10 @@ function initAspectRatioDefault() {
   if (saved === 'portrait' || saved === 'landscape') {
     select.value = saved;
     checkbox.checked = true;
+  } else {
+    select.value = 'portrait';
+    checkbox.checked = true;
+    localStorage.setItem(storageKey, 'portrait');
   }
 
   checkbox.addEventListener('change', () => {
@@ -116,6 +298,284 @@ function initCustomAlertModal() {
   if (okBtn && modal) {
     okBtn.addEventListener('click', () => modal.classList.remove('active'));
   }
+}
+
+function storyboardImportPrompt() {
+  const sceneCount = Math.max(1, parseInt(document.getElementById('externalAiSceneCount')?.value, 10)
+    || parseInt(document.getElementById('sceneCountInput')?.value, 10) || 6);
+  const language = document.getElementById('targetLanguageInput')?.value || 'Indonesia';
+  const durationMode = document.getElementById('durationPerSceneSelect')?.value || 'auto';
+  const visualStyle = document.getElementById('visualStyleSelect')?.value || 'live_action';
+  const visualVibe = document.getElementById('visualVibeSelect')?.value || 'none';
+  const lightingStyle = document.getElementById('lightingStyleSelect')?.value || 'none';
+  const colorPalette = document.getElementById('colorPaletteSelect')?.value || 'none';
+  const modalIdea = document.getElementById('externalAiStoryIdea')?.value.trim();
+  const premise = modalIdea || (document.getElementById('premiseInput') || document.getElementById('themeInput'))?.value.trim();
+  const durationRule = durationMode === 'auto'
+    ? 'Setiap scene memakai duration 4, 6, 8, atau 10 detik sesuai kebutuhan dramatis.'
+    : `Setiap scene WAJIB memakai duration ${durationMode} detik.`;
+
+  return `Anda adalah penulis storyboard film profesional. Buat storyboard berdasarkan naskah/ide di bawah ini.
+
+NASKAH / IDE:
+${premise || '[TEMPEL ATAU TULIS NASKAH CERITA DI SINI]'}
+
+ATURAN MUTLAK:
+- Buat TEPAT ${sceneCount} scene, bernomor 1 sampai ${sceneCount}. Jangan kurang atau lebih.
+- ${durationRule}
+- visual_style WAJIB "${visualStyle}" dan medium visual ini harus identik di setiap karakter dan scene.
+- Gunakan visual_vibe "${visualVibe}", lighting_style "${lightingStyle}", dan color_palette "${colorPalette}" secara konsisten tanpa mengganti medium utama.
+- time_range harus berurutan dan berkesinambungan tanpa jeda.
+- Dialog, action_summary, text_overlay, dan narration_id wajib dalam bahasa ${language}.
+- prompt_for_flow wajib berupa prompt video sinematik terperinci dalam bahasa Inggris.
+- Karakter, pakaian, wajah, properti, lokasi, dan alur harus konsisten.
+- characters_in_scene hanya boleh menggunakan id yang terdaftar pada characters.
+- start_state scene berikutnya harus melanjutkan end_state scene sebelumnya.
+- text_overlay maksimal 6 kata.
+- Jangan gunakan komentar, trailing comma, atau string yang tidak ditutup.
+
+OUTPUT WAJIB JSON VALID SAJA.
+JANGAN memakai markdown atau blok kode. JANGAN memberi penjelasan sebelum atau sesudah JSON.
+Pastikan hasil dapat diproses langsung oleh JSON.parse(). Gunakan format persis berikut:
+
+{
+  "film_title": "Judul film",
+  "genre_style": "Gaya visual dan suasana",
+  "art_direction": "Arahan visual keseluruhan",
+  "visual_style": "${visualStyle}",
+  "visual_vibe": "${visualVibe}",
+  "lighting_style": "${lightingStyle}",
+  "color_palette": "${colorPalette}",
+  "character_seed": 123456,
+  "consistent_characters": "Ringkasan konsistensi semua karakter",
+  "characters": [
+    {
+      "id": 1,
+      "name": "Nama karakter",
+      "seed": 123456,
+      "description": "Deskripsi wajah, usia, tubuh, rambut, dan pakaian",
+      "visual_signature": "Ciri visual permanen yang unik"
+    }
+  ],
+  "scenes": [
+    {
+      "scene_number": 1,
+      "time_range": "00:00-00:08",
+      "duration": 8,
+      "title": "Judul pendek adegan",
+      "action_summary": "Aksi konkret yang terjadi",
+      "shot_type": "Medium Shot",
+      "camera_movement": "Slow push-in",
+      "lighting_mood": "Soft cinematic lighting",
+      "characters_in_scene": [1],
+      "dialogue": [{"speaker_id": 1, "line": "Dialog karakter", "screen_position": "center"}],
+      "start_state": "Keadaan lengkap pada awal adegan",
+      "end_state": "Keadaan lengkap pada akhir adegan",
+      "prompt_for_flow": "Detailed English cinematic video prompt...",
+      "text_overlay": "Teks pendek",
+      "narration_id": "Narasi bahasa ${language}",
+      "narration_en": "English narration",
+      "affiliate_scene": false
+    }
+  ]
+}`;
+}
+
+function parseImportedStoryboard(raw) {
+  let text = String(raw || '').trim();
+  if (text.startsWith('```')) {
+    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  }
+  const storyboard = JSON.parse(text);
+  if (!storyboard || Array.isArray(storyboard) || typeof storyboard !== 'object') {
+    throw new Error('Root JSON harus berupa object storyboard.');
+  }
+  if (!String(storyboard.film_title || '').trim()) throw new Error('Field film_title wajib diisi.');
+  if (!Array.isArray(storyboard.characters) || !storyboard.characters.length) {
+    throw new Error('Field characters wajib berupa array dan minimal berisi satu karakter.');
+  }
+  if (!Array.isArray(storyboard.scenes) || !storyboard.scenes.length) {
+    throw new Error('Field scenes wajib berupa array dan tidak boleh kosong.');
+  }
+
+  const expectedCount = Math.max(1, parseInt(document.getElementById('externalAiSceneCount')?.value, 10)
+    || parseInt(document.getElementById('sceneCountInput')?.value, 10) || storyboard.scenes.length);
+  if (storyboard.scenes.length !== expectedCount) {
+    throw new Error(`Jumlah scene ${storyboard.scenes.length}, tetapi pengaturan aplikasi meminta tepat ${expectedCount} scene.`);
+  }
+  const characterIds = new Set(storyboard.characters.map(char => String(char.id)));
+  const required = ['title', 'action_summary', 'prompt_for_flow', 'duration'];
+  storyboard.scenes.forEach((scene, index) => {
+    const number = index + 1;
+    if (!scene || typeof scene !== 'object') throw new Error(`Scene ${number} bukan object yang valid.`);
+    if (Number(scene.scene_number) !== number) throw new Error(`scene_number harus berurutan. Posisi ${number} berisi ${scene.scene_number}.`);
+    required.forEach(field => {
+      if (scene[field] === undefined || scene[field] === null || scene[field] === '') {
+        throw new Error(`Scene ${number}: field ${field} wajib diisi.`);
+      }
+    });
+    if (![4, 6, 8, 10].includes(Number(scene.duration))) {
+      throw new Error(`Scene ${number}: duration harus 4, 6, 8, atau 10 detik.`);
+    }
+    if (!Array.isArray(scene.characters_in_scene)) scene.characters_in_scene = [];
+    const unknownId = scene.characters_in_scene.find(id => !characterIds.has(String(id)));
+    if (unknownId !== undefined) throw new Error(`Scene ${number}: karakter ID ${unknownId} tidak terdaftar.`);
+    if (!Array.isArray(scene.dialogue)) scene.dialogue = [];
+  });
+  return storyboard;
+}
+
+function storyboardRevisionPrompt(storyboard) {
+  const sceneCount = Array.isArray(storyboard?.scenes) ? storyboard.scenes.length : 0;
+  const language = storyboard?.target_lang || 'sesuai bahasa pada JSON';
+  const country = storyboard?.target_country || 'sesuai negara pada JSON';
+  return `Anda adalah editor storyboard film profesional. Perbaiki storyboard JSON di bawah agar lebih kuat, detail, sinematik, konsisten, dan siap dipakai di Google Flow.
+
+ATURAN MUTLAK:
+- Kembalikan HANYA satu object JSON valid, dimulai { dan diakhiri }. Jangan gunakan markdown, penjelasan, atau komentar.
+- Pertahankan TEPAT ${sceneCount} scene dan scene_number berurutan 1 sampai ${sceneCount}.
+- Pertahankan durasi setiap scene. Nilai duration hanya boleh 4, 6, 8, atau 10.
+- Pertahankan ID, seed, identitas, wajah, pakaian, dan visual_signature karakter agar konsisten.
+- Semua dialogue, narration_id, text_overlay, judul film, dan judul scene wajib menggunakan bahasa ${language}.
+- Sesuaikan nama, budaya, wajah, pakaian, dan lingkungan dengan target negara ${country}, kecuali identitas cerita memang meminta lain.
+- prompt_for_flow wajib berupa prompt video sinematik terperinci dalam bahasa Inggris dan konsisten dengan visual_style, visual_vibe, lighting_style, color_palette, aspect_ratio, serta kontinuitas scene.
+- Jangan menghapus field yang sudah ada. Boleh memperbaiki film_title, genre_style, art_direction, consistent_characters, action_summary, shot_type, camera_movement, lighting_mood, dialogue, start_state, end_state, prompt_for_flow, text_overlay, dan narasi.
+- characters_in_scene dan speaker_id hanya boleh memakai ID karakter yang terdaftar di characters.
+- Audit logika seluruh cerita: perbaiki kontradiksi hubungan, peran, motivasi, kepemilikan, bukti, dan urutan pengungkapan tanpa mengubah premis utama atau menambah karakter penting baru.
+- Setiap scene harus mempunyai satu fungsi dramatik utama, satu aksi utama, maksimal dua aksi pendukung, reaksi emosional yang terlihat, dan final frame yang kuat.
+- time_range harus dihitung ulang secara kumulatif dari duration tanpa jeda atau tumpang tindih. scene_count harus sama dengan jumlah scene aktual.
+- Setiap speaker_id wajib hadir di characters_in_scene. Karakter yang tidak tercantum tidak boleh terlihat, berbicara, atau melakukan aksi penting.
+- Dialog harus alami dan muat dalam durasi (scene 10 detik maksimal sekitar 18–22 kata total). Dialog di prompt_for_flow harus sama persis dengan dialogue.line dan tetap dalam bahasa ${language}.
+- Hanya speaker aktif yang menggerakkan bibir; karakter lain bereaksi tanpa lip movement. Jangan menumpuk dialog dan narration_id bila waktunya tidak cukup.
+- Gunakan maksimal satu gerakan kamera utama yang realistis per scene. Pertahankan screen direction, posisi kiri/kanan, dan eyeline antarscene.
+- text_overlay hanya panduan editing 2–5 kata dan tidak boleh diminta dirender di prompt_for_flow. Larang subtitle, caption, watermark, logo, dan automatically generated on-screen text.
+- Pertahankan seluruh metadata teknis yang ada. Jika raw_response tidak dapat diperbarui dengan aman, jadikan string kosong.
+- Pastikan JSON dapat diparse langsung oleh JSON.parse: gunakan tanda kutip ganda dan jangan beri trailing comma.
+
+STANDAR SETIAP prompt_for_flow (satu paragraf Inggris 130–220 kata):
+1. Durasi, medium/style, aspect composition, lokasi, waktu, dan atmosfer.
+2. Semua karakter yang terlihat beserta ciri fisik, pakaian, aksesori, skala, posisi awal, dan properti.
+3. Urutan aksi yang realistis terhadap waktu: opening hook, aksi/dialog utama, reaksi, lalu final continuity frame.
+4. Dialog lisan bahasa ${language} harus identik dengan field dialogue; natural pronunciation, accurate lip-sync, clean dialogue audio, subtle room tone/SFX.
+5. Shot type, lens/framing/depth of field, satu camera movement, lighting, palette, ekspresi, gesture, dan body language.
+6. Untuk scene setelah scene pertama, awali dengan Continue seamlessly/directly from the previous scene dan sebutkan continuity anchor konkret.
+7. Akhiri dengan final frame yang sama secara faktual dengan end_state serta negative constraints relevan: no extra main characters, no duplicates, no identity drift, no face swapping, no age/wardrobe/hairstyle changes, no deformed hands, no extra fingers, no broken anatomy, no floating/disappearing/morphing props, no teleportation, no random cuts, no sudden zoom, no flicker, no background warping, no incorrect lip movement, no subtitles/captions/watermark/logo/generated text.
+
+Sebelum mengeluarkan JSON, audit diam-diam: jumlah dan urutan scene, timeline, ID dan speaker, dialog, logika, properti, continuity, bahasa, style, aspect ratio, serta sintaks JSON.
+
+STORYBOARD JSON SAAT INI:
+${JSON.stringify(storyboard || {}, null, 2)}`;
+}
+
+function initStoryboardImportModal() {
+  const modal = document.getElementById('importStoryboardModal');
+  const openBtn = document.getElementById('openImportStoryboardBtn');
+  if (!modal || !openBtn) return;
+  const promptArea = document.getElementById('externalAiPromptTemplate');
+  const ideaInput = document.getElementById('externalAiStoryIdea');
+  const countInput = document.getElementById('externalAiSceneCount');
+  const copyBtn = document.getElementById('copyExternalAiPromptBtn');
+  const jsonArea = document.getElementById('importStoryboardJsonInput');
+  const message = document.getElementById('importStoryboardValidationMsg');
+  const modalTitle = document.getElementById('importStoryboardModalTitle');
+  const modalSubtitle = document.getElementById('importStoryboardModalSubtitle');
+  const confirmBtn = document.getElementById('confirmImportStoryboardBtn');
+  const close = () => modal.classList.remove('active');
+
+  const openNewImport = () => {
+    storyboardImportMode = 'new';
+    ideaInput.value = (document.getElementById('premiseInput') || document.getElementById('themeInput'))?.value.trim() || '';
+    countInput.value = Math.max(1, parseInt(document.getElementById('sceneCountInput')?.value, 10) || 6);
+    promptArea.value = storyboardImportPrompt();
+    jsonArea.value = '';
+    if (modalTitle) modalTitle.textContent = '📥 Import Storyboard dari AI Lain';
+    if (modalSubtitle) modalSubtitle.textContent = 'Salin prompt, kirim ke AI pilihanmu, lalu tempel hasil JSON-nya di bawah.';
+    if (confirmBtn) confirmBtn.textContent = '✅ Validasi & Import';
+    message.textContent = '';
+    modal.classList.add('active');
+  };
+  const openReplaceImport = storyboard => {
+    storyboardImportMode = 'replace';
+    ideaInput.value = storyboard?.premise || storyboard?.film_title || '';
+    countInput.value = Math.max(1, storyboard?.scenes?.length || 1);
+    promptArea.value = storyboardRevisionPrompt(storyboard);
+    jsonArea.value = '';
+    if (modalTitle) modalTitle.textContent = '♻️ Perbaiki & Replace Scene Master';
+    if (modalSubtitle) modalSubtitle.textContent = 'Copy JSON ke Gemini/GPT, perbaiki di sana, lalu tempel hasil lengkapnya untuk mengganti storyboard aktif.';
+    if (confirmBtn) confirmBtn.textContent = '♻️ Validasi & Replace';
+    message.style.color = 'var(--text-secondary)';
+    message.textContent = `Menunggu JSON revisi lengkap dengan tepat ${countInput.value} scene.`;
+    modal.classList.add('active');
+  };
+  storyboardImportController = { openNewImport, openReplaceImport };
+  openBtn.addEventListener('click', openNewImport);
+  document.getElementById('closeImportStoryboardBtn')?.addEventListener('click', close);
+  document.getElementById('cancelImportStoryboardBtn')?.addEventListener('click', close);
+  modal.addEventListener('click', event => { if (event.target === modal) close(); });
+
+  const refreshPrompt = () => {
+    promptArea.value = storyboardImportMode === 'replace' ? storyboardRevisionPrompt(currentStoryboard) : storyboardImportPrompt();
+  };
+  ideaInput?.addEventListener('input', refreshPrompt);
+  countInput?.addEventListener('input', refreshPrompt);
+
+  copyBtn?.addEventListener('click', async () => {
+    try {
+      refreshPrompt();
+      await navigator.clipboard.writeText(promptArea.value);
+      showToast('Template prompt berhasil disalin. Tempel ke AI pilihanmu.', 'success');
+    } catch (_) {
+      promptArea.select();
+      document.execCommand('copy');
+      showToast('Template prompt berhasil disalin.', 'success');
+    }
+    copyBtn.textContent = '✅ Berhasil Disalin';
+    copyBtn.style.background = 'linear-gradient(135deg, #10b981, #22c55e)';
+    copyBtn.style.borderColor = '#6ee7b7';
+    copyBtn.style.color = '#ffffff';
+    clearTimeout(copyBtn._copySuccessTimer);
+    copyBtn._copySuccessTimer = setTimeout(() => {
+      copyBtn.textContent = '📋 Copy Prompt';
+      copyBtn.style.background = '';
+      copyBtn.style.borderColor = 'var(--neon-cyan)';
+      copyBtn.style.color = 'var(--neon-cyan)';
+    }, 1800);
+  });
+
+  confirmBtn?.addEventListener('click', () => {
+    try {
+      const storyboard = parseImportedStoryboard(jsonArea.value);
+      const previous = storyboardImportMode === 'replace' ? currentStoryboard : null;
+      storyboard.aspect_ratio = previous?.aspect_ratio || document.getElementById('aspectSelect')?.value || 'portrait';
+      storyboard.scene_count = storyboard.scenes.length;
+      storyboard.target_lang = previous?.target_lang || document.getElementById('targetLanguageInput')?.value || 'Indonesia';
+      storyboard.target_country = previous?.target_country || document.getElementById('targetCountryInput')?.value || '';
+      storyboard.duration_mode = previous?.duration_mode || document.getElementById('durationPerSceneSelect')?.value || 'auto';
+      // The user's studio selection is authoritative; an external AI may not change medium.
+      storyboard.visual_style = previous?.visual_style || document.getElementById('visualStyleSelect')?.value || 'live_action';
+      storyboard.visual_vibe = previous?.visual_vibe || document.getElementById('visualVibeSelect')?.value || 'none';
+      storyboard.lighting_style = previous?.lighting_style || document.getElementById('lightingStyleSelect')?.value || 'none';
+      storyboard.color_palette = previous?.color_palette || document.getElementById('colorPaletteSelect')?.value || 'none';
+      if (previous?.character_references && !storyboard.character_references) storyboard.character_references = previous.character_references;
+      if (previous?.affiliate_product && !storyboard.affiliate_product) storyboard.affiliate_product = previous.affiliate_product;
+      storyboard.premise = ideaInput?.value.trim()
+        || (document.getElementById('premiseInput') || document.getElementById('themeInput'))?.value.trim()
+        || storyboard.premise || '';
+      storyboard.generated_via = storyboardImportMode === 'replace' ? 'external_ai_revision' : (storyboard.generated_via || 'external_ai_import');
+      currentStoryboard = storyboard;
+      saveStoryboardToHistory(storyboard);
+      renderStoryboardResult(storyboard);
+      message.style.color = '#34d399';
+      message.textContent = `Valid: ${storyboard.scenes.length} scene siap digunakan.`;
+      const wasReplace = storyboardImportMode === 'replace';
+      showToast(wasReplace ? `Scene Master berhasil diganti dengan revisi ${storyboard.scenes.length} scene.` : `Storyboard ${storyboard.scenes.length} scene berhasil di-import ke Scene Master.`, 'success');
+      close();
+      if (!wasReplace) document.querySelector('.nav-item[data-tab="tab-history"]')?.click();
+    } catch (error) {
+      message.style.color = '#fb7185';
+      message.textContent = `JSON belum valid: ${error.message}`;
+    }
+  });
 }
 
 // Custom Confirm Modal Helper (Replaces native browser confirm popup)
@@ -199,31 +659,35 @@ function hideCuteAiLoading() {
 }
 
 function seoStorageKey(jobId) {
-  return `sinematica_seo_kit_${jobId}`;
+  // v6 invalidates SEO covers generated with a ratio that did not follow the source video.
+  return `sinematica_seo_kit_v6_${jobId}`;
 }
 
 function bindSeoCopyActions(body, kit) {
-  body.querySelector('#btnCopyDescription')?.addEventListener('click', () => {
-    navigator.clipboard.writeText(kit.description || '');
-    showToast('Deskripsi YouTube berhasil di-copy!', 'success');
-  });
+  const copyWithToast = async (text, successMessage) => {
+    try {
+      await navigator.clipboard.writeText(String(text || ''));
+      showToast(successMessage, 'success');
+    } catch (err) {
+      showToast('Gagal menyalin ke clipboard. Izinkan akses clipboard lalu coba lagi.', 'error');
+    }
+  };
+  body.querySelector('#btnCopyDescription')?.addEventListener('click', () =>
+    copyWithToast(kit.description, 'Deskripsi YouTube berhasil tercopy!'));
   body.querySelectorAll('.btn-copy-seo-title').forEach(btn => {
     // Upgrade cached SEO HTML that still contains the old clipboard emoji.
     btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
     btn.addEventListener('click', () => {
       const title = (kit.seo_titles || [])[Number(btn.getAttribute('data-index'))] || '';
-      navigator.clipboard.writeText(title);
-      showToast('Judul SEO berhasil di-copy!', 'success');
+      copyWithToast(title, 'Judul SEO berhasil tercopy!');
     });
   });
-  body.querySelector('#btnCopyThumbPrompt')?.addEventListener('click', () => {
-    navigator.clipboard.writeText(kit.thumbnail_prompt || '');
-    showToast('Prompt thumbnail berhasil di-copy!', 'success');
-  });
-  body.querySelector('#btnCopyTags')?.addEventListener('click', () => {
-    navigator.clipboard.writeText(kit.tags_csv || '');
-    showToast('10 Tags kata kunci berhasil di-copy!', 'success');
-  });
+  body.querySelector('#btnCopyThumbPrompt')?.addEventListener('click', () =>
+    copyWithToast(kit.thumbnail_prompt, 'Prompt thumbnail berhasil tercopy!'));
+  body.querySelector('#btnCopyTags')?.addEventListener('click', () =>
+    copyWithToast(kit.tags_csv, 'Tag kata kunci berhasil tercopy!'));
+  body.querySelector('#btnCopyHashtags')?.addEventListener('click', () =>
+    copyWithToast((kit.hashtags || []).join(' '), 'Hashtag relevan berhasil tercopy!'));
 }
 
 function initSeoKitModal() {
@@ -238,6 +702,7 @@ function initSeoKitModal() {
     if (e.target && (e.target.classList.contains('btn-generate-seo') || e.target.classList.contains('btn-regenerate-seo'))) {
       const filmTitle = e.target.getAttribute('data-title') || 'Film Sinematik';
       const jobId = e.target.getAttribute('data-jobid') || '';
+      const seoContext = gallerySeoContexts.get(String(jobId)) || {};
       const body = document.getElementById('seoModalBody');
       modal.classList.add('active');
 
@@ -247,7 +712,7 @@ function initSeoKitModal() {
             <span class="seo-loader-wand">🪄</span>
           </div>
           <h4>Meracik YouTube SEO & Marketing Kit<span class="seo-loading-dots"></span></h4>
-          <p id="seoLoadingStatus">AI sedang membaca judul dan premis film</p>
+          <p id="seoLoadingStatus">AI sedang membaca seluruh storyboard dan alur adegan</p>
           <div class="seo-loading-track"><span></span></div>
           <small id="seoLoadingElapsed">Berjalan 0 detik</small>
         </div>
@@ -278,7 +743,11 @@ function initSeoKitModal() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             title: filmTitle,
-            premise: currentStoryboard ? currentStoryboard.genre_style : filmTitle
+            premise: seoContext.story_context || seoContext.initial_prompt || filmTitle,
+            storyboard: seoContext.storyboard || null,
+            aspect_ratio: seoContext.aspect_ratio || seoContext.storyboard?.aspect_ratio || 'landscape',
+            target_lang: seoContext.target_lang || 'Indonesia',
+            target_country: seoContext.target_country || ''
           })
         });
 
@@ -300,7 +769,8 @@ function initSeoKitModal() {
           seo_titles: rawKit.seo_titles || rawKit.titles || [],
           description: rawKit.description || rawKit.desc || '',
           thumbnail_prompt: thumbVal,
-          tags_csv: tagsVal
+          tags_csv: tagsVal,
+          thumbnail_aspect_ratio: rawKit.thumbnail_aspect_ratio || (seoContext.aspect_ratio === 'portrait' ? '9:16' : '16:9')
         };
 
         window.clearInterval(loadingTimer);
@@ -331,7 +801,7 @@ function initSeoKitModal() {
 
             <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <h4 style="color: var(--neon-cyan); font-size: 14px; margin: 0;">🖼️ Prompt Thumbnail YouTube 16:9:</h4>
+                <h4 style="color: var(--neon-cyan); font-size: 14px; margin: 0;">🖼️ Prompt Cover YouTube ${escapeHtml(kit.thumbnail_aspect_ratio)}:</h4>
                 <button type="button" class="btn-secondary" id="btnCopyThumbPrompt" style="padding: 3px 8px; font-size: 11px;">📋 Copy Prompt</button>
               </div>
               <p style="font-size: 12px; color: var(--text-primary); background: rgba(0,0,0,0.5); padding: 8px; border-radius: 6px; margin: 0;" id="seoThumbText">${kit.thumbnail_prompt || '-'}</p>
@@ -339,8 +809,16 @@ function initSeoKitModal() {
 
             <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <h4 style="color: var(--neon-cyan); font-size: 14px; margin: 0;">🏷️ 10 Long-Tail Tags (Siap Copy Pisah Koma):</h4>
-                <button type="button" class="btn-primary" id="btnCopyTags" style="padding: 3px 10px; font-size: 11px;">📋 Copy All 10 Tags</button>
+                <h4 style="color: var(--neon-cyan); font-size: 14px; margin: 0;">#️⃣ 3 Hashtag Relevan:</h4>
+                <button type="button" class="btn-secondary" id="btnCopyHashtags" style="padding: 3px 8px; font-size: 11px;">📋 Copy Hashtag</button>
+              </div>
+              <p style="font-size: 13px; color: #c4b5fd; margin:0;">${escapeHtml((kit.hashtags || []).join(' '))}</p>
+            </div>
+
+            <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <h4 style="color: var(--neon-cyan); font-size: 14px; margin: 0;">🏷️ Tag Kata Kunci Backend (Pendukung Ejaan/Pencarian):</h4>
+                <button type="button" class="btn-primary" id="btnCopyTags" style="padding: 3px 10px; font-size: 11px;">📋 Copy Tags</button>
               </div>
               <input type="text" readonly id="seoTagsText" value="${kit.tags_csv || ''}" style="width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--glass-border); color: var(--neon-green); border-radius: 6px; padding: 8px; font-size: 12px;" />
             </div>
@@ -686,6 +1164,10 @@ function initNavigation() {
       title: 'Interactive Video Gallery & Film Director',
       sub: 'Kelola adegan video, atur urutan cerita, dan gabungkan menjadi film sinematik utuh'
     },
+    'tab-ugc-affiliate': {
+      title: 'UGC Affiliate Asset Lab',
+      sub: 'Validasi aset dan bangun Character/Product Master sebelum membuat storyboard'
+    },
     'tab-settings': {
       title: 'Sinematica Studio Settings',
       sub: 'Kelola Gemini API Key, model AI engine, Google Flow Project ID, dan template seed'
@@ -836,7 +1318,7 @@ function initDropzone() {
   dropzone.addEventListener('click', () => fileInput.click());
 
   fileInput.addEventListener('change', (e) => {
-    selectedRefFiles = Array.from(e.target.files);
+    selectedRefFiles = limitStoryboardReferenceFiles(Array.from(e.target.files));
     renderImagePreviews();
   });
 
@@ -849,10 +1331,19 @@ function initDropzone() {
     e.preventDefault();
     dropzone.style.borderColor = 'var(--glass-border)';
     if (e.dataTransfer.files.length) {
-      selectedRefFiles = Array.from(e.dataTransfer.files);
+      selectedRefFiles = limitStoryboardReferenceFiles(Array.from(e.dataTransfer.files));
+      fileInput.value = '';
       renderImagePreviews();
     }
   });
+}
+
+function limitStoryboardReferenceFiles(files) {
+  const images = files.filter(file => !file.type || file.type.startsWith('image/'));
+  if (images.length > MAX_STORYBOARD_REFERENCE_IMAGES) {
+    showToast(`Maksimal ${MAX_STORYBOARD_REFERENCE_IMAGES} gambar referensi. Hanya 7 gambar pertama yang dipakai.`, 'warning');
+  }
+  return images.slice(0, MAX_STORYBOARD_REFERENCE_IMAGES);
 }
 
 function renderImagePreviews() {
@@ -860,14 +1351,38 @@ function renderImagePreviews() {
   if (!list) return;
   list.innerHTML = '';
 
-  selectedRefFiles.forEach(file => {
+  selectedRefFiles.forEach((file, index) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'reference-preview-item';
+    wrapper.style.cssText = 'position:relative; display:inline-flex; flex:0 0 auto;';
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'reference-preview-remove';
+    removeBtn.setAttribute('aria-label', `Hapus gambar referensi ${index + 1}`);
+    removeBtn.title = 'Hapus gambar';
+    removeBtn.textContent = '×';
+    removeBtn.style.cssText = 'position:absolute; z-index:3; top:-8px; right:-8px; width:24px; height:24px; padding:0; border-radius:50%; border:2px solid #0f172a; background:#f43f5e; color:white; font-size:18px; font-weight:900; line-height:19px; cursor:pointer; box-shadow:0 3px 10px rgba(0,0,0,.45);';
+    removeBtn.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      selectedRefFiles.splice(index, 1);
+      const input = document.getElementById('refImageInput');
+      if (input) input.value = '';
+      renderImagePreviews();
+      showToast('Gambar referensi dihapus.', 'info');
+    });
+
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = document.createElement('img');
       img.src = e.target.result;
       img.className = 'img-thumb';
-      list.appendChild(img);
+      img.alt = `Referensi ${index + 1}: ${file.name}`;
+      wrapper.appendChild(img);
     };
+    wrapper.appendChild(removeBtn);
+    list.appendChild(wrapper);
     reader.readAsDataURL(file);
   });
 }
@@ -890,6 +1405,21 @@ function initStoryboardForm() {
       if (box.checked) modeBoxes.forEach(other => { if (other !== box) other.checked = false; });
     });
   });
+  if (chkChildren) {
+    chkChildren.addEventListener('change', () => {
+      const visualStyle = document.getElementById('visualStyleSelect');
+      if (!visualStyle) return;
+      if (chkChildren.checked) {
+        // Recommend the preschool-friendly default, but keep the selector editable.
+        visualStyle.value = '3d_cartoon';
+        visualStyle.disabled = false;
+        visualStyle.title = 'Kartun 3D hanya rekomendasi awal. Anda bebas memilih style visual lain.';
+      } else {
+        visualStyle.disabled = false;
+        visualStyle.title = '';
+      }
+    });
+  }
 
   if (chkScript) {
     chkScript.addEventListener('change', () => {
@@ -948,6 +1478,7 @@ function initStoryboardForm() {
 
   function updateTotalDuration() {
     const scenes = parseInt(sceneInput.value) || 1;
+    const flowCredits = scenes * 15;
     const isAuto = durationSelect.value === 'auto';
     // In Auto mode each scene picks its own 4/6/8/10s, so only a range can be shown.
     const dur = isAuto ? 7 : (parseInt(durationSelect.value) || 10);
@@ -956,10 +1487,11 @@ function initStoryboardForm() {
       return m > 0 ? `${m} Menit ${sc > 0 ? sc + ' Detik' : ''}`.trim() : `${t} Detik`;
     };
     if (isAuto) {
-      totalLabel.textContent = `Estimasi Durasi Film: ${fmt(scenes * 4)} – ${fmt(scenes * 10)} (${scenes} Scene, ritme diatur AI per adegan)`;
+      totalLabel.innerHTML = `⏱️ Estimasi: ${fmt(scenes * 4)}–${fmt(scenes * 10)} • Flow: ${scenes} × 15 = <b style="color:#c4b5fd;">${flowCredits} Kredit</b>`;
     } else {
-      totalLabel.textContent = `Total Durasi Film: ${fmt(scenes * dur)} (${scenes} Scene x ${dur}s)`;
+      totalLabel.innerHTML = `⏱️ Total: ${fmt(scenes * dur)} (${scenes} Scene × ${dur}s) • Flow: ${scenes} × 15 = <b style="color:#c4b5fd;">${flowCredits} Kredit</b>`;
     }
+    totalLabel.title = `Estimasi kredit Google Flow: ${scenes} scene × 15 kredit = ${flowCredits} kredit`;
   }
 
   if (presetSelect) {
@@ -1012,6 +1544,28 @@ function initStoryboardForm() {
   if (genreCatalog) {
     genreCatalog.addEventListener('change', () => {
       const val = genreCatalog.value;
+      if (val === '__auto_ai__') {
+        const premiseInput = document.getElementById('premiseInput') || document.getElementById('themeInput');
+        if (premiseInput) premiseInput.value = '';
+        const charInput = document.getElementById('characterInfoInput') || document.getElementById('consistentCharacterInput') || document.getElementById('characterInfo');
+        if (charInput) charInput.value = '';
+        showToast('Auto AI aktif: sedang membuat niche dan premis baru, bukan mengambil template katalog.', 'info');
+        window.setTimeout(() => document.getElementById('autoSuggestBtn')?.click(), 0);
+        return;
+      }
+      if (val === '__auto_drama_series__') {
+        const premiseInput = document.getElementById('premiseInput') || document.getElementById('themeInput');
+        if (premiseInput) premiseInput.value = '';
+        const charInput = document.getElementById('characterInfoInput') || document.getElementById('consistentCharacterInput') || document.getElementById('characterInfo');
+        if (charInput) charInput.value = '';
+        ['chkChildrenMode', 'chkMicrodramaMode', 'chkUgcMode'].forEach(id => {
+          const checkbox = document.getElementById(id);
+          if (checkbox) checkbox.checked = false;
+        });
+        showToast('Auto Drama Series aktif: AI sedang membuat serial, episode, karakter tetap, dan cliffhanger baru.', 'info');
+        window.setTimeout(() => document.getElementById('autoSuggestBtn')?.click(), 0);
+        return;
+      }
       if (val) {
         const premiseInput = document.getElementById('premiseInput') || document.getElementById('themeInput');
         if (premiseInput) {
@@ -1024,6 +1578,7 @@ function initStoryboardForm() {
           const childAgeGroup = selectedOpt ? selectedOpt.getAttribute('data-age-group') : '';
           const learningDomain = selectedOpt ? selectedOpt.getAttribute('data-learning-domain') : '';
           const countryAttr = selectedOpt ? selectedOpt.getAttribute('data-country') : '';
+          const presetVisualStyle = selectedOpt ? selectedOpt.getAttribute('data-visual-style') : '';
 
           if (countryAttr && targetCountryInput) {
             targetCountryInput.value = countryAttr;
@@ -1033,7 +1588,14 @@ function initStoryboardForm() {
           }
 
           const chkChildrenEl = document.getElementById('chkChildrenMode');
-          if (chkChildrenEl) chkChildrenEl.checked = !!isChildrenPreset;
+          if (chkChildrenEl) {
+            chkChildrenEl.checked = !!isChildrenPreset;
+            chkChildrenEl.dispatchEvent(new Event('change'));
+          }
+          if (presetVisualStyle) {
+            const visualStyleSelect = document.getElementById('visualStyleSelect');
+            if (visualStyleSelect) visualStyleSelect.value = presetVisualStyle;
+          }
           const chkUgc = document.getElementById('chkUgcMode');
           const chkMicro = document.getElementById('chkMicrodramaMode');
           if (chkUgc) {
@@ -1068,12 +1630,8 @@ function initStoryboardForm() {
   if (btnRandomGenre) {
     btnRandomGenre.addEventListener('click', () => {
       if (genreCatalog) {
-        const options = Array.from(genreCatalog.querySelectorAll('option')).filter(o => o.value);
-        if (options.length) {
-          const randomOpt = options[Math.floor(Math.random() * options.length)];
-          genreCatalog.value = randomOpt.value;
-          genreCatalog.dispatchEvent(new Event('change'));
-        }
+        genreCatalog.value = '__auto_ai__';
+        genreCatalog.dispatchEvent(new Event('change'));
       }
     });
   }
@@ -1088,6 +1646,8 @@ function initStoryboardForm() {
       autoSuggestBtn.textContent = '🪄 Memuat Ide AI...';
 
       const isMicrodrama = document.getElementById('chkMicrodramaMode') ? document.getElementById('chkMicrodramaMode').checked : false;
+      const isChildrenAuto = document.getElementById('chkChildrenMode') ? document.getElementById('chkChildrenMode').checked : false;
+      const isSeriesAuto = document.getElementById('genreCatalogSelect')?.value === '__auto_drama_series__';
 
       try {
         showCuteAiLoading(
@@ -1107,10 +1667,10 @@ function initStoryboardForm() {
           res = await fetch('/api/storyboard/suggest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ theme: currentText, microdrama_mode: isMicrodrama, target_country: targetCountry, target_lang: targetLanguage, dracin_theme: dracinTheme })
+            body: JSON.stringify({ theme: currentText, microdrama_mode: isMicrodrama, children_mode: isChildrenAuto, series_mode: isSeriesAuto, target_country: targetCountry, target_lang: targetLanguage, dracin_theme: dracinTheme })
           });
         } else {
-          res = await fetch(`/api/storyboard/auto_concept?microdrama_mode=${isMicrodrama}&target_country=${encodeURIComponent(targetCountry)}&target_lang=${encodeURIComponent(targetLanguage)}&dracin_theme=${encodeURIComponent(dracinTheme)}`);
+          res = await fetch(`/api/storyboard/auto_concept?microdrama_mode=${isMicrodrama}&children_mode=${isChildrenAuto}&series_mode=${isSeriesAuto}&target_country=${encodeURIComponent(targetCountry)}&target_lang=${encodeURIComponent(targetLanguage)}&dracin_theme=${encodeURIComponent(dracinTheme)}`);
         }
 
         data = await res.json();
@@ -1149,13 +1709,21 @@ function initStoryboardForm() {
     const sceneCount = sceneInput ? (parseInt(sceneInput.value) || 4) : 4;
 
     const aspectSelect = document.getElementById('aspectSelect') || document.getElementById('aspectRatioSelect') || document.getElementById('settingAspectRatio');
-    const aspectRatio = aspectSelect ? aspectSelect.value : 'landscape';
+    const aspectRatio = aspectSelect ? aspectSelect.value : 'portrait';
 
     const seedEl = document.getElementById('characterSeedInput') || document.getElementById('characterSeed');
     const seed = seedEl ? seedEl.value.trim() : '';
 
     const charEl = document.getElementById('characterInfoInput') || document.getElementById('consistentCharacterInput') || document.getElementById('characterInfo');
     const consistentChar = charEl ? charEl.value.trim() : '';
+    const creativeBrief = {
+      background: document.getElementById('briefBackgroundInput')?.value.trim() || '',
+      result: document.getElementById('briefResultInput')?.value.trim() || '',
+      audience: document.getElementById('briefAudienceInput')?.value.trim() || '',
+      product_value: document.getElementById('briefProductValueInput')?.value.trim() || '',
+      execution: document.getElementById('briefExecutionInput')?.value.trim() || '',
+      constraints: document.getElementById('briefConstraintsInput')?.value.trim() || ''
+    };
 
     if (!theme) {
       showToast('Harap isi Tema / Ide Utama Film!', 'warning');
@@ -1165,6 +1733,11 @@ function initStoryboardForm() {
     const isMicro = document.getElementById('chkMicrodramaMode') ? document.getElementById('chkMicrodramaMode').checked : false;
     const isUgc = document.getElementById('chkUgcMode') ? document.getElementById('chkUgcMode').checked : false;
     const isChildren = document.getElementById('chkChildrenMode') ? document.getElementById('chkChildrenMode').checked : false;
+    const visualStyleEl = document.getElementById('visualStyleSelect');
+    const visualStyle = visualStyleEl?.value || (isChildren ? '3d_cartoon' : 'live_action');
+    const visualVibe = document.getElementById('visualVibeSelect')?.value || 'none';
+    const lightingStyle = document.getElementById('lightingStyleSelect')?.value || 'none';
+    const colorPalette = document.getElementById('colorPaletteSelect')?.value || 'none';
     const isScriptMode = chkScript ? chkScript.checked : false;
     const isAffiliate = chkAffiliate ? chkAffiliate.checked : false;
     const affiliateName = document.getElementById('affiliateProductName')?.value.trim() || '';
@@ -1199,6 +1772,7 @@ function initStoryboardForm() {
     const formData = new FormData();
     formData.append('actor_ids', actorIds);
     formData.append('premise', theme);
+    formData.append('creative_brief', JSON.stringify(creativeBrief));
     formData.append('scene_count', sceneCount);
     formData.append('aspect_ratio', aspectRatio);
     formData.append('target_country', targetCountry);
@@ -1206,7 +1780,21 @@ function initStoryboardForm() {
     formData.append('dracin_theme', dracinTheme);
     formData.append('microdrama_mode', isMicro);
     formData.append('ugc_mode', isUgc);
+    formData.append('ugc_variant', document.getElementById('ugcProductionMode')?.value || 'realism');
+    formData.append('ugc_platform', document.getElementById('ugcPlatform')?.value || 'TikTok');
+    formData.append('ugc_tone', document.getElementById('ugcTone')?.value.trim() || 'Natural, fresh, friendly');
+    formData.append('ugc_emotional_arc', document.getElementById('ugcEmotionArc')?.value.trim() || '');
+    const backgroundChoice = document.getElementById('ugcBackground')?.value || 'auto';
+    const ugcEnvironment = backgroundChoice === 'custom' ? (document.getElementById('ugcCustomBackground')?.value.trim() || 'auto') : backgroundChoice;
+    formData.append('ugc_environment', ugcEnvironment);
+    const lightingChoice = document.getElementById('ugcLighting')?.value || 'auto';
+    const ugcLighting = lightingChoice === 'custom' ? (document.getElementById('ugcCustomLighting')?.value.trim() || 'auto') : lightingChoice;
+    formData.append('ugc_lighting', ugcLighting);
     formData.append('children_mode', isChildren);
+    formData.append('visual_style', visualStyle);
+    formData.append('visual_vibe', visualVibe);
+    formData.append('lighting_style', lightingStyle);
+    formData.append('color_palette', colorPalette);
     formData.append('script_mode', isScriptMode);
     formData.append('affiliate_enabled', isAffiliate);
     if (isAffiliate) {
@@ -1259,6 +1847,10 @@ function initStoryboardForm() {
       if (!res.ok) throw new Error(data.detail || 'Gagal generate storyboard');
 
       currentStoryboard = data.storyboard;
+      const weakAssets = (data.asset_quality_report || []).filter(item => item.status !== 'production_ready');
+      if (weakAssets.length) {
+        showToast(`${weakAssets.length} aset referensi perlu diperbaiki. Detail audit disimpan di storyboard.`, 'warning', 'Asset Quality Gate');
+      }
       // Remember how this storyboard was made so "Regenerate Storyboard" can reproduce the
       // exact same setup from any tab, without depending on the form still being filled in.
       currentStoryboard.aspect_ratio = aspectRatio;
@@ -1271,8 +1863,16 @@ function initStoryboardForm() {
       currentStoryboard.duration_mode = durMode;
       currentStoryboard.microdrama_mode = isMicro;
       currentStoryboard.ugc_mode = isUgc;
+      currentStoryboard.ugc_variant = document.getElementById('ugcProductionMode')?.value || 'realism';
+      currentStoryboard.ugc_environment = ugcEnvironment;
+      currentStoryboard.ugc_lighting = ugcLighting;
       currentStoryboard.children_mode = isChildren;
+      currentStoryboard.visual_style = visualStyle;
+      currentStoryboard.visual_vibe = visualVibe;
+      currentStoryboard.lighting_style = lightingStyle;
+      currentStoryboard.color_palette = colorPalette;
       currentStoryboard.script_mode = isScriptMode;
+      currentStoryboard.creative_brief = currentStoryboard.creative_brief || creativeBrief;
       if (data.reference_images && data.reference_images.length) {
         currentStoryboard._theme_image_path = data.reference_images[0];
       }
@@ -1312,7 +1912,7 @@ function initStoryboardForm() {
       }
 
       const aspectEl = document.getElementById('aspectSelect') || document.getElementById('settingAspectRatio');
-      const aspect = (currentStoryboard && currentStoryboard.aspect_ratio) || (aspectEl ? aspectEl.value : 'landscape');
+      const aspect = (currentStoryboard && currentStoryboard.aspect_ratio) || (aspectEl ? aspectEl.value : 'portrait');
       const durSel = document.getElementById('durationPerSceneSelect').value;
       const isAutoDur = durSel === 'auto';
       const durPerScene = isAutoDur ? 10 : (parseInt(durSel) || 10);
@@ -1497,8 +2097,20 @@ function renderStoryboardResult(storyboard) {
           <span style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 700;">🌱 Seed: ${storyboard.character_seed || 'Auto'}</span>
           <span title="Rasio ini yang akan dipakai saat Kirim & Eksekusi ke Flow" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 700;">${storyboard.aspect_ratio === 'portrait' ? '📱 Portrait 9:16' : '🖥️ Landscape 16:9'}</span>
           <button type="button" class="btn-secondary" id="btnFullRegenerate" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: var(--neon-purple); color: #e9d5ff; border-radius: 10px; height: 40px; cursor: pointer;">🎲 Regenerate Storyboard</button>
-          <button type="button" class="btn-secondary" id="btnCopyAllPrompts" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; height: 40px; cursor: pointer;">📋 Copy All Prompts</button>
+          <button type="button" class="btn-secondary" id="btnCopyAllPrompts" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; height: 40px; cursor: pointer;">📋 Copy untuk AI</button>
+          <button type="button" class="btn-secondary" id="btnPasteReplaceStoryboard" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: #34d399; color: #6ee7b7; border-radius: 10px; height: 40px; cursor: pointer;">📥 Paste & Replace</button>
         </div>
+      </div>
+
+      <div class="ugc-board-summary">
+        <div><b>LOGLINE</b><span>${escapeHtml(storyboard.logline || storyboard.premise || '')}</span></div>
+        <div><b>TYPE</b><span>${escapeHtml(storyboard.video_type || (storyboard.ugc_mode ? 'UGC Review' : 'Story Content'))}</span></div>
+        <div><b>PLATFORM</b><span>${escapeHtml(storyboard.platform || storyboard.ugc_platform || '-')}</span></div>
+        <div><b>TONE</b><span>${escapeHtml(storyboard.tone || storyboard.ugc_tone || '-')}</span></div>
+        <div class="wide"><b>EMOTIONAL ARC</b><span>${escapeHtml(storyboard.emotional_arc || '-')}</span></div>
+        <div class="wide"><b>VISUAL NOTES</b><span>${escapeHtml(storyboard.visual_notes || storyboard.art_direction || '-')}</span></div>
+        <div class="wide"><b>ENVIRONMENT</b><span>${escapeHtml(storyboard.environment_direction || storyboard.ugc_environment || 'AI recommendation')}</span></div>
+        <div class="wide"><b>LIGHTING</b><span>${escapeHtml(storyboard.lighting_direction || storyboard.ugc_lighting || 'AI recommendation')}</span></div>
       </div>
 
       <!-- Row 2: Mood Visual & Karakter -->
@@ -1551,6 +2163,18 @@ function renderStoryboardResult(storyboard) {
 
         <!-- Storyboard breakdown table: one labelled row per field, like a production sheet -->
         <div style="display: grid; grid-template-columns: 132px 1fr; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; overflow: hidden;">
+
+          <div style="${SB_LABEL_CELL}">🎯 PURPOSE</div>
+          <div style="${SB_VALUE_CELL}"><input type="text" class="edit-sc-meta" data-field="scene_purpose" data-idx="${idx}" value="${escapeHtml(sc.scene_purpose || '')}" placeholder="Hook / problem / demonstration / proof / payoff / CTA" style="${SB_INPUT} color:#f9a8d4;font-weight:700;"></div>
+
+          <div style="${SB_LABEL_CELL}">🙂 EXPRESSION</div>
+          <div style="${SB_VALUE_CELL}"><input type="text" class="edit-sc-meta" data-field="expression" data-idx="${idx}" value="${escapeHtml(sc.expression || '')}" placeholder="Perubahan ekspresi yang terlihat" style="${SB_INPUT} color:#fde68a;"></div>
+
+          <div style="${SB_LABEL_CELL}">🧭 COMPOSITION</div>
+          <div style="${SB_VALUE_CELL}"><textarea class="edit-sc-meta" data-field="visual_composition" data-idx="${idx}" rows="2" style="${SB_INPUT} color:#bae6fd;resize:vertical;">${sc.visual_composition || ''}</textarea></div>
+
+          <div style="${SB_LABEL_CELL}">🔗 TRANSITION</div>
+          <div style="${SB_VALUE_CELL}"><input type="text" class="edit-sc-meta" data-field="transition_bridge" data-idx="${idx}" value="${escapeHtml(sc.transition_bridge || '')}" placeholder="Aksi/prop/eyeline menuju scene berikutnya" style="${SB_INPUT} color:#a7f3d0;"></div>
 
           <div style="${SB_LABEL_CELL}">🎬 SHOT TYPE</div>
           <div style="${SB_VALUE_CELL}">
@@ -1670,15 +2294,40 @@ function bindStoryboardLiveEditing() {
     });
   });
 
-  // Copy all prompts button
+  // Copy the complete editable storyboard and strict JSON instructions for another AI.
   const btnCopy = document.getElementById('btnCopyAllPrompts');
   if (btnCopy) {
-    btnCopy.addEventListener('click', () => {
-      const allPrompts = (currentStoryboard.scenes || []).map((s, i) => `Adegan ${i + 1}: ${s.title}\nFlow Prompt: ${s.prompt_for_flow}`).join('\n\n');
-      navigator.clipboard.writeText(allPrompts);
-      showToast('Seluruh prompt adegan berhasil di-copy ke clipboard!', 'success');
+    btnCopy.addEventListener('click', async () => {
+      const revisionPrompt = storyboardRevisionPrompt(currentStoryboard);
+      try {
+        await navigator.clipboard.writeText(revisionPrompt);
+      } catch (_) {
+        const helper = document.createElement('textarea');
+        helper.value = revisionPrompt;
+        document.body.appendChild(helper);
+        helper.select();
+        document.execCommand('copy');
+        helper.remove();
+      }
+      const original = btnCopy.textContent;
+      btnCopy.textContent = '✅ Siap Ditempel';
+      setTimeout(() => { if (btnCopy.isConnected) btnCopy.textContent = original; }, 1800);
+      showToast('Storyboard lengkap + instruksi JSON berhasil di-copy. Tempel ke Gemini atau GPT.', 'success');
     });
   }
+
+  document.getElementById('btnPasteReplaceStoryboard')?.addEventListener('click', () => {
+    if (!currentStoryboard) return showToast('Belum ada storyboard aktif untuk diganti.', 'warning');
+    storyboardImportController?.openReplaceImport(currentStoryboard);
+  });
+
+  document.querySelectorAll('.edit-sc-meta').forEach(el => {
+    el.addEventListener('input', (e) => {
+      const idx = parseInt(e.target.getAttribute('data-idx'));
+      const field = e.target.getAttribute('data-field');
+      if (field && currentStoryboard.scenes[idx]) currentStoryboard.scenes[idx][field] = e.target.value;
+    });
+  });
 
   // Full Regenerate Storyboard button
   const btnFullRegenerate = document.getElementById('btnFullRegenerate');
@@ -1732,8 +2381,43 @@ function bindStoryboardLiveEditing() {
       setVal(['targetLanguageInput'], currentStoryboard.target_lang);
       setVal(['dracinThemeSelect'], currentStoryboard.dracin_theme);
       setVal(['durationPerSceneSelect'], currentStoryboard.duration_mode);
+      setVal(['visualStyleSelect'], currentStoryboard.visual_style || (currentStoryboard.children_mode ? '3d_cartoon' : 'live_action'));
+      setVal(['visualVibeSelect'], currentStoryboard.visual_vibe || 'none');
+      setVal(['lightingStyleSelect'], currentStoryboard.lighting_style || 'none');
+      setVal(['colorPaletteSelect'], currentStoryboard.color_palette || 'none');
+      const brief = currentStoryboard.creative_brief || {};
+      setVal(['briefBackgroundInput'], brief.background);
+      setVal(['briefResultInput'], brief.result);
+      setVal(['briefAudienceInput'], brief.audience);
+      setVal(['briefProductValueInput'], brief.product_value);
+      setVal(['briefExecutionInput'], brief.execution);
+      setVal(['briefConstraintsInput'], brief.constraints);
+      ['visualVibeSelect', 'lightingStyleSelect', 'colorPaletteSelect'].forEach(id =>
+        document.getElementById(id)?.dispatchEvent(new Event('change'))
+      );
       setChecked('chkMicrodramaMode', currentStoryboard.microdrama_mode);
       setChecked('chkUgcMode', currentStoryboard.ugc_mode);
+      setVal(['ugcProductionMode'], currentStoryboard.ugc_variant || 'realism');
+      setVal(['ugcPlatform'], currentStoryboard.ugc_platform || currentStoryboard.platform || 'TikTok');
+      setVal(['ugcTone'], currentStoryboard.ugc_tone || currentStoryboard.tone || 'Natural, fresh, friendly');
+      setVal(['ugcEmotionArc'], currentStoryboard.emotional_arc || '');
+      setVal(['ugcLogline'], currentStoryboard.logline || '');
+      const savedEnvironment = currentStoryboard.ugc_environment || 'auto';
+      const environmentSelect = document.getElementById('ugcBackground');
+      if (environmentSelect) {
+        const known = [...environmentSelect.options].some(option => option.value === savedEnvironment);
+        environmentSelect.value = known ? savedEnvironment : 'custom';
+        const customEnvironment = document.getElementById('ugcCustomBackground');
+        if (customEnvironment) { customEnvironment.disabled = known; customEnvironment.value = known ? '' : savedEnvironment; }
+      }
+      const savedUgcLighting = currentStoryboard.ugc_lighting || 'auto';
+      const ugcLightingSelect = document.getElementById('ugcLighting');
+      if (ugcLightingSelect) {
+        const knownLighting = [...ugcLightingSelect.options].some(option => option.value === savedUgcLighting);
+        ugcLightingSelect.value = knownLighting ? savedUgcLighting : 'custom';
+        const customLighting = document.getElementById('ugcCustomLighting');
+        if (customLighting) { customLighting.disabled = knownLighting; customLighting.value = knownLighting ? '' : savedUgcLighting; }
+      }
       setChecked('chkChildrenMode', currentStoryboard.children_mode);
       setChecked('chkScriptMode', currentStoryboard.script_mode);
       document.getElementById('chkScriptMode')?.dispatchEvent(new Event('change'));
@@ -1814,7 +2498,22 @@ function startJobPolling(jobId) {
 async function pollJobStatus(jobId) {
   try {
     const res = await fetch(`/api/jobs/${jobId}`);
-    if (!res.ok) return;
+    if (res.status === 404) {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      if (currentJobId === jobId) currentJobId = null;
+      const statusText = document.getElementById('executionStatusText');
+      if (statusText) statusText.textContent = `Job ${jobId} sudah tidak tersedia — backend kemungkinan baru dimuat ulang.`;
+      const stopBtn = document.getElementById('btnStopExecution');
+      if (stopBtn) stopBtn.style.display = 'none';
+      showToast('Polling dihentikan: job lama hilang setelah backend dimuat ulang.', 'warning');
+      return;
+    }
+    if (!res.ok) {
+      throw new Error(`Server mengembalikan HTTP ${res.status}`);
+    }
 
     const data = await res.json();
     const job = data.job;
@@ -1873,6 +2572,7 @@ async function pollJobStatus(jobId) {
 
     if (job.status === 'completed' || job.status === 'completed_partial' || job.status === 'failed' || job.status === 'cancelled') {
       clearInterval(pollTimer);
+      pollTimer = null;
       if (job.status === 'completed') {
         showToast('Film sinematik berhasil digabungkan!', 'success', 'Render Selesai');
       }
@@ -2029,6 +2729,23 @@ async function refreshGallery() {
 
     const container = document.getElementById('galleryContainer');
     const items = data.gallery || [];
+    let storyboardHistory = [];
+    try {
+      storyboardHistory = JSON.parse(localStorage.getItem('sinematica_storyboard_history') || '[]');
+    } catch (_) {}
+    gallerySeoContexts = new Map(items.map(item => {
+      const matchingStoryboard = storyboardHistory.find(sb => sb?.film_title === item.title) || null;
+      return [String(item.job_id), {
+        initial_prompt: item.initial_prompt || matchingStoryboard?.premise || '',
+        story_context: item.seo_story_context || matchingStoryboard?.premise || item.initial_prompt || '',
+        storyboard: item.seo_storyboard || matchingStoryboard,
+        aspect_ratio: item.aspect_ratio || matchingStoryboard?.aspect_ratio || 'landscape',
+        target_lang: item.target_lang || matchingStoryboard?.target_lang
+          || document.getElementById('targetLanguageInput')?.value || 'Indonesia',
+        target_country: item.target_country || matchingStoryboard?.target_country
+          || document.getElementById('targetCountryInput')?.value || ''
+      }];
+    }));
     const galleryPrompts = new Map(items.map(item => [String(item.job_id), item.initial_prompt || '']));
     const selectAllCb = document.getElementById('gallerySelectAllCheckbox');
     if (selectAllCb) selectAllCb.checked = false;
@@ -2091,7 +2808,7 @@ async function refreshGallery() {
                 <button type="button" class="btn-secondary btn-regenerate-seo" data-jobid="${item.job_id}" data-title="${escapeHtml(item.title || 'Film Sinematik')}">🔄 Regenerate</button>
               </div>
             ` : `
-              <button type="button" class="btn-secondary btn-generate-seo" data-jobid="${item.job_id}" data-title="${escapeHtml(item.title || 'Film Sinematik')}" style="margin-top: 10px; width: 100%; border-color: var(--neon-purple); color: #e9d5ff; font-size: 13px;">🚀 Generate YouTube SEO Kit (Judul, Deskripsi, Thumbnail & Tags)</button>
+              <button type="button" class="btn-secondary btn-generate-seo" data-jobid="${item.job_id}" data-title="${escapeHtml(item.title || 'Film Sinematik')}" style="margin-top: 10px; width: 100%; border-color: var(--neon-purple); color: #e9d5ff; font-size: 13px;">🚀 Generate YouTube SEO</button>
             `}
           </div>
         ` : ''}
@@ -2113,6 +2830,28 @@ async function refreshGallery() {
         </div>
       </div>
     `).join('') + `</div>`;
+
+    // Keep only the first gallery row visible (three films on desktop). Additional
+    // films scroll inside the gallery instead of making the whole page very long.
+    const clampGalleryToFirstRow = () => {
+      const grid = container.querySelector('.gallery-grid');
+      const cards = [...(grid?.querySelectorAll('.film-card') || [])];
+      if (!grid || !cards.length) return;
+      const gridRect = grid.getBoundingClientRect();
+      const firstTop = cards[0].getBoundingClientRect().top;
+      const firstRow = cards.filter(card => Math.abs(card.getBoundingClientRect().top - firstTop) < 3);
+      if (cards.length <= firstRow.length) {
+        container.classList.remove('gallery-scroll-active');
+        container.style.maxHeight = '';
+        return;
+      }
+      const rowBottom = Math.max(...firstRow.map(card => card.getBoundingClientRect().bottom));
+      container.style.maxHeight = `${Math.ceil(rowBottom - gridRect.top)}px`;
+      container.classList.add('gallery-scroll-active');
+    };
+    requestAnimationFrame(clampGalleryToFirstRow);
+    // Video metadata can settle card height shortly after initial paint.
+    window.setTimeout(clampGalleryToFirstRow, 400);
 
     // Thumbnail opens the preview; the sequencer checkbox on top of it must not.
     container.querySelectorAll('.clip-thumb').forEach(thumb => {
@@ -2685,6 +3424,111 @@ document.addEventListener('DOMContentLoaded', () => {
       });
   }
   
+  // UGC Affiliate Asset Lab
+  const assetPrompt = document.getElementById('assetMasterPrompt');
+  const characterAssetInput = document.getElementById('ugcCharacterAsset');
+  const productAssetInput = document.getElementById('ugcProductAsset');
+  const ugcBackground = document.getElementById('ugcBackground');
+  ugcBackground?.addEventListener('change', () => {
+      const custom = document.getElementById('ugcCustomBackground');
+      if (custom) custom.disabled = ugcBackground.value !== 'custom';
+  });
+  const ugcLightingSelect = document.getElementById('ugcLighting');
+  ugcLightingSelect?.addEventListener('change', () => {
+      const custom = document.getElementById('ugcCustomLighting');
+      if (custom) custom.disabled = ugcLightingSelect.value !== 'custom';
+  });
+
+  async function auditAsset(file, output, type) {
+      if (!file || !output) return null;
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 320 / Math.max(bitmap.width, bitmap.height));
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let brightness = 0, edge = 0, samples = 0;
+      const gray = i => (pixels[i] * .299) + (pixels[i + 1] * .587) + (pixels[i + 2] * .114);
+      for (let y = 1; y < canvas.height; y += 2) {
+          for (let x = 1; x < canvas.width; x += 2) {
+              const i = (y * canvas.width + x) * 4;
+              brightness += gray(i);
+              edge += Math.abs(gray(i) - gray(i - 4)) + Math.abs(gray(i) - gray(i - canvas.width * 4));
+              samples++;
+          }
+      }
+      brightness /= Math.max(1, samples);
+      edge /= Math.max(1, samples * 2);
+      const issues = [];
+      if (bitmap.width * bitmap.height < 1000000 || Math.min(bitmap.width, bitmap.height) < 720) issues.push('resolusi rendah');
+      if (brightness < 48) issues.push('terlalu gelap');
+      if (brightness > 218) issues.push('terlalu terang');
+      if (edge < 7) issues.push('terindikasi blur/detail rendah');
+      if (file.size < 100000) issues.push('ukuran file sangat kecil');
+      const status = issues.length ? 'Perlu diperbaiki' : 'Layak untuk produksi';
+      output.className = `asset-audit ${issues.length ? 'warn' : 'good'}`;
+      output.innerHTML = `<strong>${issues.length ? '⚠️' : '✅'} ${status}</strong><br>${bitmap.width}×${bitmap.height}px · ${(file.size / 1048576).toFixed(2)} MB · exposure ${Math.round(brightness)} · detail ${edge.toFixed(1)}${issues.length ? `<br>Masalah: ${issues.join(', ')}.` : ''}<br>${type === 'product' ? 'Pastikan logo/label terbaca dan kemasan tidak terpotong.' : 'Pastikan wajah frontal terlihat, natural, dan tidak tertutup.'}`;
+      bitmap.close();
+      return { issues, width: bitmap.width, height: bitmap.height };
+  }
+
+  characterAssetInput?.addEventListener('change', () => auditAsset(characterAssetInput.files?.[0], document.getElementById('ugcCharacterAudit'), 'character'));
+  productAssetInput?.addEventListener('change', () => auditAsset(productAssetInput.files?.[0], document.getElementById('ugcProductAudit'), 'product'));
+
+  document.getElementById('generateCharacterSheetPrompt')?.addEventListener('click', () => {
+      const identity = document.getElementById('ugcCharacterIdentity')?.value.trim() || 'preserve every visible identity feature from the reference';
+      const outfit = document.getElementById('ugcOutfitRequest')?.value.trim();
+      assetPrompt.value = outfit
+        ? `Edit the supplied 3x3 character master contact sheet. Replace clothing only with: ${outfit}. Preserve the exact identity in all nine panels: ${identity}. Lock the grid, panel order, camera angles, crops, pose, expression, head position, lighting, neutral studio background, body proportions and image quality. Preserve realistic garment fit, fabric weight and folds. This is an outfit-only edit, not a new person or photoshoot. No face reconstruction, identity drift, re-posing, beautification, plastic skin, angle change, framing change or repeated panels.`
+        : `Create one vertical 9:16 ultra-photorealistic 3x3 character master contact sheet from the supplied reference. The same identity must appear in every panel: ${identity}. Use nine distinct views: front portrait, three-quarter portrait, left profile, low angle, gentle top-down, waist-up, tight facial close-up, over-shoulder, and full body. Keep identical bone structure, eyes, nose, lips, skin tone, hairline, hairstyle and body proportions. Natural skin micro-texture, individual hair strands, realistic fabric, neutral grey studio background, controlled studio lighting and consistent lens language. No beautification, face change, stylization, plastic skin, blur, identity drift, repeated angle, extra person, text or watermark.`;
+      showToast('Prompt Character Master siap digunakan.', 'success');
+  });
+
+  document.getElementById('generateProductSheetPrompt')?.addEventListener('click', () => {
+      const name = document.getElementById('ugcProductName')?.value.trim() || 'the supplied product';
+      const identity = document.getElementById('ugcProductIdentity')?.value.trim() || 'derive exact geometry, colors, materials, cap, label and scale only from the reference';
+      assetPrompt.value = `Create a clean 3x3 product master contact sheet for ${name} from the supplied product photo. Product identity lock: ${identity}. Show nine useful views: front hero, left three-quarter, right three-quarter, left side, right side, back, top detail, label/package detail and scale-context view. Preserve exact package geometry, proportions, color values, material, cap, logo placement and label layout in every panel. Use even studio lighting, neutral background, sharp edges, realistic reflections and consistent scale. Do not redesign, simplify, invent claims, move the logo, alter label layout, change color, crop the package, hide it behind a hand, duplicate an angle, add props, text or watermark.`;
+      showToast('Prompt Product Master siap digunakan.', 'success');
+  });
+
+  document.getElementById('copyAssetPrompt')?.addEventListener('click', async () => {
+      if (!assetPrompt?.value.trim()) return showToast('Buat prompt asset terlebih dahulu.', 'warning');
+      await navigator.clipboard.writeText(assetPrompt.value);
+      showToast('Prompt asset berhasil tercopy.', 'success');
+  });
+
+  document.getElementById('sendCharacterToCasting')?.addEventListener('click', () => {
+      const file = characterAssetInput?.files?.[0];
+      if (!file) return showToast('Pilih foto karakter terlebih dahulu.', 'warning');
+      const transfer = new DataTransfer(); transfer.items.add(file); actorImagesInput.files = transfer.files;
+      actorImagesInput.dispatchEvent(new Event('change'));
+      document.getElementById('actorDesc').value = document.getElementById('ugcCharacterIdentity')?.value.trim() || 'Identitas mengikuti Character Master';
+      document.getElementById('addActorModal')?.classList.add('active');
+      showToast('Aset dipindahkan ke Casting. Lengkapi nama lalu simpan.', 'success');
+  });
+
+  document.getElementById('sendProductToStoryboard')?.addEventListener('click', () => {
+      const file = productAssetInput?.files?.[0];
+      if (!file) return showToast('Pilih foto produk terlebih dahulu.', 'warning');
+      selectedAffiliateProductFiles = [file];
+      const transfer = new DataTransfer(); transfer.items.add(file);
+      const affiliateInput = document.getElementById('affiliateImageInput');
+      if (affiliateInput) { affiliateInput.files = transfer.files; affiliateInput.dispatchEvent(new Event('change')); }
+      document.querySelector('.nav-item[data-tab="tab-storyboard"]')?.click();
+      const toggle = document.getElementById('chkAffiliateMode'); if (toggle) { toggle.checked = true; toggle.dispatchEvent(new Event('change')); }
+      const ugcToggle = document.getElementById('chkUgcMode'); if (ugcToggle) ugcToggle.checked = true;
+      document.getElementById('affiliateProductName').value = document.getElementById('ugcProductName')?.value.trim() || '';
+      document.getElementById('briefProductValueInput').value = document.getElementById('ugcProductIdentity')?.value.trim() || '';
+      const logline = document.getElementById('ugcLogline')?.value.trim() || '';
+      if (logline) document.getElementById('premiseInput').value = logline;
+      document.getElementById('briefResultInput').value = `Video ${document.getElementById('ugcProductionMode')?.value === 'commercial' ? 'commercial premium' : 'UGC natural'} untuk ${document.getElementById('ugcPlatform')?.value || 'TikTok'}, format mengikuti rasio produksi.`;
+      document.getElementById('briefExecutionInput').value = `Tone: ${document.getElementById('ugcTone')?.value || 'natural'}. Emotional arc: ${document.getElementById('ugcEmotionArc')?.value || ''}. Environment: ${document.getElementById('ugcBackground')?.selectedOptions?.[0]?.textContent || 'AI recommendation'}. Lighting: ${document.getElementById('ugcLighting')?.selectedOptions?.[0]?.textContent || 'AI recommendation'}. Setiap scene wajib memiliki purpose, aktivitas, ekspresi, komposisi, camera direction, dan transition bridge.`;
+      document.getElementById('creativeBriefPanel')?.setAttribute('open', '');
+      showToast('Product Master sudah dipasang ke Storyboard dan Creative Brief.', 'success');
+  });
+
   // Initial load
   fetchActors();
 });

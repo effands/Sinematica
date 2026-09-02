@@ -148,16 +148,32 @@ function flushPendingFlowSample() {
   });
 }
 
-async function _detectProjectIdFromTabs() {
+async function _detectProjectIdFromTabs(preferredTabId = null) {
   try {
     const tabs = await chrome.tabs.query({ url: '*://labs.google/*' });
     if (tabs && tabs.length) {
-      for (const tab of tabs) {
+      // chrome.tabs.query does not guarantee useful ordering. Always bind the
+      // project to the tab selected for this request; otherwise an old Flow tab
+      // can silently overwrite endpoint + clientContext with a stale project ID.
+      const orderedTabs = [...tabs].sort((a, b) => {
+        if (preferredTabId !== null) {
+          if (a.id === preferredTabId && b.id !== preferredTabId) return -1;
+          if (b.id === preferredTabId && a.id !== preferredTabId) return 1;
+        }
+        if (!!a.active !== !!b.active) return a.active ? -1 : 1;
+        if (!!a.currentWindow !== !!b.currentWindow) return a.currentWindow ? -1 : 1;
+        return (b.lastAccessed || 0) - (a.lastAccessed || 0);
+      });
+      for (const tab of orderedTabs) {
         if (tab.url) {
           const match = tab.url.match(/project\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
           if (match && match[1]) {
+            const previousProjectId = currentProjectId;
             currentProjectId = match[1];
             chrome.storage.local.set({ currentProjectId });
+            if (previousProjectId && previousProjectId !== currentProjectId) {
+              console.log('[Sinematica Agent] Project aktif diperbarui:', previousProjectId, '→', currentProjectId);
+            }
             return currentProjectId;
           }
         }
@@ -441,7 +457,7 @@ async function notifyRegistration() {
   let readinessError = null;
   try {
     flowTab = await FlowTab.findExistingFlowTab(chrome);
-    await _detectProjectIdFromTabs();
+    await _detectProjectIdFromTabs(flowTab?.id ?? null);
   } catch (error) {
     readinessError = error?.message || String(error);
   }
@@ -474,8 +490,6 @@ function notifyTokenCaptured() {
 async function handleApiRequest(msg) {
   const { id, endpoint, body, flow_key } = msg;
 
-  await _detectProjectIdFromTabs();
-
   let targetTab;
   try {
     targetTab = await FlowTab.ensureFlowTab(chrome);
@@ -491,6 +505,9 @@ async function handleApiRequest(msg) {
     notifyRegistration();
     return;
   }
+
+  // Resolve the project from the exact tab that will execute this request.
+  await _detectProjectIdFromTabs(targetTab.id);
 
   // Special Async DOM Scraping for Google Flow Credits (Extracts exact number e.g. '894 Credits')
   if (endpoint === '/v1/credits' || endpoint === '/internal/get_credits_from_dom') {

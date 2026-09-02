@@ -13,6 +13,9 @@ class ReferenceImageUiTests(unittest.TestCase):
         self.assertIn('id="imagePreviewList"', html)
         self.assertIn("getElementById('imagePreviewList')", js)
         self.assertNotIn("getElementById('refImageList')", js)
+        self.assertIn("MAX_STORYBOARD_REFERENCE_IMAGES = 7", js)
+        self.assertIn("reference-preview-remove", js)
+        self.assertIn("selectedRefFiles.splice(index, 1)", js)
 
 
 if __name__ == "__main__":

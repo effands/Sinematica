@@ -3,6 +3,8 @@
 import json
 import logging
 import random
+import re
+import threading
 import requests
 import time
 from pathlib import Path
@@ -13,10 +15,137 @@ from PIL import Image
 from . import settings
 from .scene_direction import ensure_unique_character_signatures
 from .text_generation import generate_text
+from .content_quality import normalize_creative_brief, build_creative_brief_prompt, build_five_realism_prompt
 
 log = logging.getLogger("sinematica.storyboard")
 
 WEB2API_TIMEOUT = 180
+
+
+_children_variation_lock = threading.Lock()
+_recent_children_variations: List[str] = []
+_recent_auto_art_directions: List[str] = []
+_CHILDREN_VARIATION_POOLS = {
+    "hero": ["anak berang-berang", "anak kapibara", "anak tapir", "anak rusa", "anak rubah", "anak rakun", "anak koala", "anak panda merah", "boneka awan", "makhluk bintang mungil", "anak kura-kura", "anak landak", "anak alpaka", "anak burung hantu", "anak anjing laut"],
+    "companion": ["sahabat yang teliti", "tetangga baru yang pemalu", "kakak sepupu yang ceria", "penolong kecil yang penuh ide", "teman yang suka bertanya", "kelompok tiga sahabat", "orang dewasa tepercaya yang lembut", "teman yang berbeda ukuran tubuh"],
+    "setting": ["kebun komunitas", "pasar pagi mini", "perpustakaan pohon", "tepi kolam teratai", "dapur rumah yang hangat", "kelas seni", "taman selepas hujan", "stasiun kereta mainan", "pantai berpasir lembut", "festival lampion tanpa keramaian", "rumah kaca bunga", "jalur piknik di hutan", "bengkel mainan", "halaman sekolah", "perkemahan halaman rumah"],
+    "object": ["layang-layang berbentuk daun", "kotak bekal warna-warni", "lonceng mungil", "payung bermotif bintang", "keranjang buah", "peta bergambar", "boneka kaus kaki", "biji tanaman", "pita warna", "kapal kertas", "kue berbentuk bulan", "balok pola"],
+    "gentle_problem": ["benda penting terselip di tempat tak terduga", "urutan kegiatan tertukar", "dua teman menginginkan giliran yang sama", "percobaan pertama belum berhasil", "petunjuk sederhana disalahpahami", "cuaca mengubah rencana bermain", "satu bagian karya belum lengkap", "tokoh utama ragu meminta bantuan", "seorang teman baru belum tahu aturan permainan", "jumlah benda belum cocok"],
+    "story_shape": ["mulai dari kejutan visual, coba dua cara berbeda, lalu temukan solusi bersama", "mulai dari pertanyaan sederhana, kumpulkan tiga petunjuk, lalu rayakan jawaban", "mulai dari kesalahan lucu, berhenti dan bernapas, lalu mencoba kembali dengan strategi baru", "mulai dari kebutuhan seorang teman, bergantian menawarkan ide, lalu berbagi hasilnya", "mulai dari permainan berulang, hadirkan satu perubahan, lalu tutup dengan ajakan anak menjawab"],
+    "name_sound": ["dua suku kata dengan bunyi vokal berbeda", "nama pendek berawalan konsonan lembut", "nama lokal yang jarang dipakai di hasil sebelumnya", "nama fiktif ceria tanpa rima satu sama lain", "nama mudah diucapkan anak namun bukan Momo, Kiko, Bibo, Nino, Cici, Upi, Leo, atau Mika"],
+}
+
+
+def build_children_variation_packet() -> str:
+    """Return a fresh creative constraint packet so repeated prompts diverge materially."""
+    rng = random.SystemRandom()
+    with _children_variation_lock:
+        recent = set(_recent_children_variations)
+        chosen = None
+        for _ in range(30):
+            candidate = {key: rng.choice(values) for key, values in _CHILDREN_VARIATION_POOLS.items()}
+            signature = "|".join(candidate.values())
+            if signature not in recent:
+                chosen = (candidate, signature)
+                break
+        if chosen is None:
+            candidate = {key: rng.choice(values) for key, values in _CHILDREN_VARIATION_POOLS.items()}
+            chosen = (candidate, "|".join(candidate.values()))
+        _recent_children_variations.append(chosen[1])
+        del _recent_children_variations[:-20]
+
+    values = chosen[0]
+    token = f"KIDS-{rng.randrange(10000000, 99999999)}"
+    return f"""
+PAKET VARIASI CERITA ANAK — {token} (WAJIB MEMBUAT HASIL BARU):
+- Bentuk tokoh utama: {values['hero']}.
+- Dinamika pendamping: {values['companion']}.
+- Lokasi dominan: {values['setting']}.
+- Properti cerita: {values['object']}.
+- Hambatan ringan: {values['gentle_problem']}.
+- Bentuk alur: {values['story_shape']}.
+- Pola nama: {values['name_sound']}.
+
+ATURAN ANTI-KONTEN-BERULANG:
+1. Nama yang tertulis dalam premis preset hanyalah placeholder, kecuali pengguna secara eksplisit meminta nama
+   itu dipertahankan. Buat nama karakter baru yang natural untuk negara/bahasa target pada setiap generasi.
+2. Semua karakter dalam satu cerita harus memiliki nama dengan bunyi awal dan akhir berbeda; jangan memakai
+   pasangan nama berima atau mengulang nama contoh dari instruksi.
+3. Gunakan paket di atas sebagai arah kreatif, tetapi pertahankan tujuan belajar/tema utama pengguna.
+4. Jangan menyalin judul, urutan kejadian, lokasi, properti, dialog, hook, atau resolusi dari cerita anak generik
+   yang pernah dibuat. Variasikan sedikitnya lima unsur tersebut pada setiap hasil.
+5. Token variasi adalah penanda internal; jangan tampilkan token ini di judul, dialog, narasi, atau output JSON.
+"""
+
+
+_AUTO_ART_POOLS = {
+    "palette": [
+        "saffron, dusty turquoise, warm ivory, and charcoal accents", "mulberry, antique rose, parchment cream, and muted brass",
+        "sage green, apricot, cloud blue, and walnut brown", "cobalt, coral, pale sand, and ink navy",
+        "lavender grey, moss green, butter yellow, and soft aubergine", "terracotta, celadon, rice-paper white, and deep indigo",
+        "peacock teal, marigold, warm stone, and oxblood accents", "sea-glass mint, shell pink, sky grey, and cocoa brown",
+        "plum, copper, smoky blue, and linen beige", "forest green, persimmon, pale gold, and midnight blue",
+        "cherry red, powder blue, oatmeal, and graphite", "orchid, jade, pale peach, and espresso brown",
+    ],
+    "lighting": [
+        "window light filtered through patterned curtains with soft bounced fill", "cool overcast daylight with warm practical lamps inside the frame",
+        "late-afternoon side light broken by leaves, with gentle moving shadows", "diffused skylight plus a restrained coloured rim from the environment",
+        "soft dawn light with pearly highlights and low-contrast shadows", "lantern-like practical pools of light with readable faces and backgrounds",
+        "bright open shade with crisp colour separation and subtle reflected light", "post-rain daylight with soft reflections rather than a generic blue grade",
+    ],
+    "materials": [
+        "woven rattan, glazed ceramic, linen, and lightly weathered wood", "translucent paper, brushed metal, frosted glass, and natural cotton",
+        "painted timber, knitted fabric, matte clay, and polished river stone", "terrazzo, pleated fabric, bamboo, and enamelled metal",
+        "recycled paper, cork, canvas, and hand-painted ceramic", "velvet accents, dark wood, aged brass, and textured plaster",
+        "clear acrylic, pale plywood, soft felt, and powder-coated metal", "woven grass, raw silk, carved wood, and coloured glass",
+    ],
+    "hero_object": [
+        "an unusual folding map with symbol-based markings", "a hand-built keepsake box with movable compartments",
+        "a patterned umbrella with one distinctive repaired panel", "a small ceramic token with a unique silhouette",
+        "a fabric satchel containing three story-relevant tools", "a modular picture card set with tactile shapes",
+        "a wind-up object whose motion reveals a clue", "a translucent container whose contents visibly change",
+        "a woven basket with a precise object count", "a handmade paper model that transforms during the story",
+        "a ribbon spool used as a visual continuity marker", "a pocket-sized lantern with a recognisable cutout pattern",
+    ],
+    "motif": [
+        "circles gradually becoming complete", "diagonal lines becoming level and calm", "reflections revealing information before dialogue does",
+        "repeated leaf shapes guiding the eye", "small-to-large scale progression", "paired objects separating and reuniting",
+        "shadows changing from fragmented to unified", "one accent colour moving between characters",
+        "open and closed shapes marking decisions", "three recurring textures signalling story stages",
+    ],
+}
+
+
+def build_auto_art_direction(children_mode: bool = False) -> Dict[str, str]:
+    """Generate a non-repeating AI art-direction seed that remains stable for one storyboard."""
+    rng = random.SystemRandom()
+    with _children_variation_lock:
+        recent = set(_recent_auto_art_directions)
+        chosen = None
+        for _ in range(30):
+            candidate = {key: rng.choice(values) for key, values in _AUTO_ART_POOLS.items()}
+            signature = "|".join(candidate.values())
+            if signature not in recent:
+                chosen = (candidate, signature)
+                break
+        if chosen is None:
+            candidate = {key: rng.choice(values) for key, values in _AUTO_ART_POOLS.items()}
+            chosen = (candidate, "|".join(candidate.values()))
+        _recent_auto_art_directions.append(chosen[1])
+        del _recent_auto_art_directions[:-30]
+    result = chosen[0]
+    result["mode"] = "child-safe playful art direction" if children_mode else "niche-aware cinematic art direction"
+    result["token"] = f"ART-{rng.randrange(10000000, 99999999)}"
+    return result
+
+
+def format_auto_art_direction(direction: Dict[str, str]) -> str:
+    return (
+        f"AUTO AI ART DIRECTION {direction['token']}: {direction['mode']}; "
+        f"candidate palette: {direction['palette']}; candidate lighting: {direction['lighting']}; "
+        f"material language: {direction['materials']}; story-driving hero object: {direction['hero_object']}; "
+        f"recurring visual motif: {direction['motif']}."
+    )
 
 
 ADULT_ACTION_RULES = """ATURAN KEPADATAN AKSI (WAJIB — INI YANG MEMBUAT CERITA TIDAK MEMBOSANKAN):
@@ -57,7 +186,27 @@ CHILDREN_ACTION_RULES = """ATURAN CERITA ANAK (WAJIB — MENGGANTIKAN ATURAN KON
    melompat, mencari, tertawa, berbagi, mencoba lagi. DILARANG memakai kata kerja kasar.
 7. **TOKOH WAJIB HEWAN/BONEKA/MAKHLUK LUCU 3D**, bukan anak manusia. Ini bukan pilihan gaya semata:
    Google Flow menolak video yang menggambarkan anak di bawah umur, jadi tokoh manusia anak akan gagal render.
-   Beri nama sederhana yang mudah diingat dan diucapkan anak (Nino, Momo, Cici,Upi, Bibo)."""
+   Beri nama sederhana yang mudah diingat dan diucapkan anak. Jangan memakai daftar nama contoh yang sama
+   berulang kali; nama wajib dibuat segar dan berbeda pada setiap generasi."""
+
+BATTLE_VS_RULES = """ATURAN KHUSUS ANIME / SUPERHERO BATTLE VS (WAJIB):
+1. Gunakan karakter, kostum, simbol, kekuatan, transformasi, dan nama jurus yang 100% orisinal. Dilarang meniru,
+   menyebut, atau membuat versi mirip karakter/franchise anime, manga, komik, film superhero, atau game terkenal.
+2. Sebelum menulis scene, buat battle matrix untuk setiap petarung: sumber kekuatan, gaya gerak, warna aura,
+   keunggulan, keterbatasan, pertahanan, jurus dasar, counter, dan SATU ultimate signature move bernama unik.
+3. Struktur duel harus berkembang: entrance/aura reveal -> demonstrasi kemampuan A -> balasan kemampuan B ->
+   counter dan adaptasi -> jurus andalan masing-masing -> final clash -> aftermath dan hasil yang jelas.
+4. Setiap petarung wajib mendapat momen unggul dan memakai kekuatan secara berbeda. Jangan membuat satu tokoh
+   hanya diam menerima serangan. Kemenangan ditentukan strategi, timing, penguasaan medan, atau kerja sama.
+5. Setiap jurus harus terlihat sebagai aksi berurutan yang dapat dirender: posisi awal, gerakan tubuh/tangan,
+   bentuk dan lintasan energi, interaksi dengan lingkungan, respons lawan, counter, serta posisi akhir.
+6. Pertahankan warna dan geometri efek masing-masing agar mudah dibedakan. Efek energi tidak boleh berubah warna,
+   bentuk, atau sumber tanpa transformasi yang diperlihatkan. Nama jurus hanya di dialog/narasi, jangan minta Flow
+   merender tulisan di layar.
+7. Duel wajib spektakuler tetapi non-lethal: tanpa darah, luka, kematian, pemenggalan, penusukan, atau kehancuran
+   massal. Gunakan arena aman, shield impact, energy deflection, ring-out, kehabisan energi, atau menyerah sportif.
+8. Akhir harus menjelaskan pemenang atau hasil seri secara visual dan logis, lalu tutup dengan sikap saling hormat
+   atau ancaman pertandingan ulang—bukan kemenangan mendadak tanpa sebab."""
 
 POLICY_SAFE_RULES = """
 ATURAN WAJIB LOLOS FILTER KEBIJAKAN & MODERASI GOOGLE FLOW (JANGAN DILANGGAR):
@@ -319,19 +468,27 @@ ATURAN LOKALISASI EDUKASI ANAK (WAJIB):
 """
 
 
-def auto_suggest_details(theme: str = "", microdrama_mode: bool = False, target_country: str = "", dracin_theme: str = "", target_lang: str = "") -> Dict[str, Any]:
+def auto_suggest_details(theme: str = "", microdrama_mode: bool = False, children_mode: bool = False, target_country: str = "", dracin_theme: str = "", target_lang: str = "", series_mode: bool = False) -> Dict[str, Any]:
     """Auto-suggest character matrix, creative cinematic premise, and seeds using Gemini AI."""
     seed_main = random.randint(100000, 999999)
     seed_2 = random.randint(100000, 999999)
     seed_3 = random.randint(100000, 999999)
 
     target_lang = resolve_target_language(target_country, target_lang)
+    auto_concept_token = f"CONCEPT-{random.SystemRandom().randrange(10000000, 99999999)}"
     user_prompt = f"""TEMA UTAMA PENGGUNA (WAJIB DIIKUTI SECARA KETAT & SETIA): "{theme}"
 
 PETUNJUK BAHASA & TEMA:
 1. Pahami tema dari pengguna dalam BAHASA APAPUN (Bahasa Indonesia, Inggris, Arab, Jepang, dll).
 2. Anda HARUS merancang cerita yang 100% SESUAI DENGAN TEMA TERSEBUT. Jangan pernah membelokkan tema (Misal: Jika pengguna memasukkan tentang 'Bahaya Rokok', WAJIB merancang film drama medis/sosial sinematik tentang bahaya merokok dan dampaknya, BUKAN sci-fi alien/cyberpunk yang tidak relevan).
-3. Berikan `suggested_premise` dan `suggested_character` sepenuhnya dalam bahasa {target_lang}, termasuk nama lokal, dialog, dan istilah sosial yang natural untuk {target_country or 'audiens target'}.""" if theme.strip() else f"Buatkan sebuah konsep cerita film sinematik original yang sangat spektakuler, emosional, penuh plot twist dan visual memukau dalam bahasa {target_lang}."
+3. Berikan `suggested_premise` dan `suggested_character` sepenuhnya dalam bahasa {target_lang}, termasuk nama lokal, dialog, dan istilah sosial yang natural untuk {target_country or 'audiens target'}.""" if theme.strip() else f"""
+MODE AUTO AI — {auto_concept_token}:
+Buat satu niche dan konsep baru dalam bahasa {target_lang}. Pilih secara kreatif dari drama sosial, misteri benda,
+komedi situasi, petualangan lokal, slice of life, profesi unik, sejarah alternatif aman, fantasi orisinal, edukasi,
+keluarga, persahabatan, perjalanan, atau gabungan dua niche yang cocok. Jangan memakai premis contoh/template yang
+umum, nama karakter lama, CEO menyamar, pewaris rahasia, balas dendam konglomerat, artefak purba, atau kerajaan
+langit kecuali pengguna memilih genre itu secara eksplisit. Token hanya internal dan tidak boleh muncul di output.
+"""
 
     dracin_theme_instruction = f"""
 TEMA DRACIN WAJIB DIPAKAI: "{dracin_theme}"
@@ -341,7 +498,63 @@ PILIH SATU TEMA DRACIN POPULER BERIKUT (yang paling relate dengan tema/premis pe
 
     local_realism_instruction = build_local_realism_rules(target_country)
 
-    if microdrama_mode:
+    if series_mode:
+        series_seed = format_auto_art_direction(build_auto_art_direction(False))
+        prompt = f"""
+Anda adalah Head Writer dan Series Bible Designer untuk drama serial premium.
+{build_local_realism_rules(target_country)}
+{user_prompt}
+{series_seed}
+
+MODE AUTO AI DRAMA SERIES (WAJIB BUKAN TEMPLATE):
+1. Pilih satu kombinasi genre yang segar dan relevan bagi audiens {target_country or 'target'}, misalnya drama
+   keluarga + misteri profesi, romance + dilema etika, workplace + rahasia komunitas, legal fiktif + persahabatan,
+   slice of life + teka-teki benda, atau thriller sosial aman. Hindari otomatis memakai CEO, pewaris, pernikahan
+   kontrak, amnesia, bayi tertukar, balas dendam konglomerat, dan pasangan kaya-miskin.
+2. Rancang engine serial yang dapat menghasilkan banyak episode: lokasi utama berulang, pekerjaan/aktivitas rutin,
+   pertanyaan musim, konflik relasi, rahasia bertahap, serta object/motif yang kembali dengan fungsi berbeda.
+3. Konsep yang ditulis adalah EPISODE PILOT: cold open kuat, pengenalan ensemble melalui aksi, A-plot selesai
+   sebagian, B-plot mulai bergerak, perubahan hubungan, reveal akhir, dan cliffhanger yang membuka episode kedua.
+4. Buat 3-5 karakter dengan nama baru, tujuan pribadi, kontradiksi, hubungan antartokoh, ciri visual permanen,
+   dan informasi yang hanya diketahui sebagian karakter. Jangan membuat tokoh sekadar baik/jahat.
+5. Jangan menuntaskan misteri musim di pilot. Setiap pengungkapan harus menimbulkan pertanyaan baru yang spesifik.
+6. Semua nama, institusi, lokasi mikro, profesi, benda penting, dan konflik harus orisinal serta natural dalam
+   bahasa {target_lang}. Token ART/CONCEPT hanya internal dan tidak boleh muncul di output.
+
+OUTPUT JSON VALID:
+{{
+  "suggested_premise": "Judul serial sementara; engine serial; premis episode pilot 3 paragraf berisi cold open, A/B plot, reveal dan cliffhanger episode berikutnya",
+  "suggested_character": "Karakter 1 - [Nama] (Seed {seed_main}): [peran, tujuan, kontradiksi, relasi, rupa].\\nKarakter 2 - [Nama] (Seed {seed_2}): [...].\\nKarakter 3 - [Nama] (Seed {seed_3}): [...].",
+  "character_seed": {seed_main}
+}}
+"""
+    elif children_mode:
+        children_variation = build_children_variation_packet()
+        art_variation = format_auto_art_direction(build_auto_art_direction(True))
+        prompt = f"""
+Anda adalah kreator serial anak yang merancang konsep episode BARU, aman, lokal, dan tidak template.
+{build_children_localization_rules(target_country, target_lang)}
+{user_prompt}
+{children_variation}
+{art_variation}
+
+WAJIB:
+1. Pilih satu tujuan belajar atau sosial-emosional yang konkret dan berbeda-beda: bahasa, angka, pola, sains,
+   kreativitas, kemandirian, empati, kerja sama, keselamatan, kebiasaan sehat, musik, alam, atau pemecahan masalah.
+2. Tokoh adalah hewan/boneka/makhluk lucu orisinal. Nama, spesies, lokasi, object utama, aktivitas, hook, kesalahan
+   lucu, cara mencoba, dan payoff harus baru. Object wajib menggerakkan alur, bukan sekadar dekorasi.
+3. Jangan menyalin premis preset katalog. Jangan otomatis memakai taman, bola hilang, wortel, pelangi, menara balok,
+   atau nama Momo/Kiko/Bibo/Nino/Cici/Upi/Leo/Mika.
+4. Buat premis 2-3 paragraf dengan konflik ringan, tiga langkah visual, partisipasi anak, dan akhir bahagia.
+
+OUTPUT JSON VALID:
+{{
+  "suggested_premise": "Premis anak baru 2-3 paragraf dalam bahasa {target_lang}",
+  "suggested_character": "Karakter 1 - [Nama baru] (Seed {seed_main}): [spesies, warna, pakaian, ciri].\\nKarakter 2 - [Nama baru] (Seed {seed_2}): [detail berbeda].",
+  "character_seed": {seed_main}
+}}
+"""
+    elif microdrama_mode:
         prompt = f"""
 Anda adalah Microdrama Production AI (Story Brain, Cinematic Director, Prompt Packager, & Quality Assurance Auditor).
 Tugas Anda adalah merancang KONSEP SHORT-FORM VERTICAL MICRODRAMA / DRACIN (3 EPISODE ARC FORMULA) yang sangat adiktif, dramatis, dan emosional (berdasarkan Master System Prompt Production AI):
@@ -414,45 +627,90 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa teks tambahan di luar JSON):
     r_seed = random.randint(100000, 999999)
     r_seed2 = random.randint(100000, 999999)
     r_seed3 = random.randint(100000, 999999)
-    base_theme = theme if theme.strip() else "Petualangan Penjelajah Angkasa di Peradaban Kuno Berpantulan Kristal Neon"
-    fallback_premise = f"Di lanskap sinematik bertema {base_theme}, sebuah perjalanan epik dimulai saat dua tokoh utama menemukan petunjuk kuno yang tersimpan di puncak perbatasan dua samudera. Perjalanan ini menguji keberanian, kesetiaan, dan takdir spiritual yang selama ini tersembunyi di balik kabut legenda.\n\nDalam atmosfer mistis penuh kilauan cahaya sinematik dan debu kosmik, para tokoh berhadapan dengan misteri kuno dan keputusan besar yang akan mengubah takdir peradaban mereka selamanya."
+    if children_mode:
+        base_theme = theme if theme.strip() else "dua sahabat hewan membuat alat penakar hujan dari wadah bening dan belajar membandingkan tinggi air"
+        fallback_premise = f"Dalam episode baru tentang {base_theme}, dua tokoh dengan nama baru menemukan pertanyaan sederhana dari perubahan di sekitar mereka. Mereka mengamati, menghitung, dan mencoba dua cara menggunakan benda buatan tangan yang menjadi bagian penting dari permainan.\n\nPercobaan pertama belum tepat, lalu mereka saling mendengarkan dan memperbaikinya bersama. Hasil akhirnya terlihat jelas, dapat diikuti anak, dan ditutup dengan ajakan menjawab singkat serta perayaan yang hangat."
+    else:
+        base_theme = theme if theme.strip() else "seorang perawat tanaman malam menemukan pola aneh pada pesanan bunga yang menghubungkan tiga keluarga di kota pesisir"
+        fallback_premise = f"Di lingkungan lokal bertema {base_theme}, tokoh utama menemukan benda sehari-hari yang tidak berada pada tempat semestinya. Ia mengikuti rangkaian petunjuk konkret sambil menghadapi pilihan yang mengubah hubungannya dengan orang-orang di sekitarnya.\n\nSetiap temuan membalik pemahamannya tentang masalah awal. Pada klimaks, fungsi sebenarnya dari benda tersebut terbuka melalui tindakan visual, dan tokoh menyelesaikan konflik dengan keputusan yang meninggalkan perubahan nyata pada komunitasnya."
+    fallback_characters = (
+        f"Karakter 1 - Luma (Seed {r_seed}): Anak kapibara mungil berbaju biru awan dengan kantong alat ukur.\n"
+        f"Karakter 2 - Tavi (Seed {r_seed2}): Anak burung hantu cokelat muda berkacamata hijau dengan kartu gambar."
+        if children_mode else
+        f"Tokoh 1 - Utama (Seed {r_seed}): Sosok lokal dengan pakaian dan profesi yang relevan dengan niche.\n"
+        f"Tokoh 2 - Pendamping (Seed {r_seed2}): Sosok dengan siluet, warna pakaian, dan motivasi yang berbeda.\n"
+        f"Tokoh 3 - Penggerak Konflik (Seed {r_seed3}): Sosok orisinal dengan properti cerita yang khas."
+    )
     return {
         "suggested_premise": fallback_premise,
-        "suggested_character": f"Tokoh 1 - Utama (Seed {r_seed}): Sosok karismatik berpakaian jubah linen sinematik kuno.\nTokoh 2 - Pendamping (Seed {r_seed2}): Pemuda pembawa obor bertengger jubah perak.\nTokoh 3 - Penjaga Kuno (Seed {r_seed3}): Sosok bijak bermata zamrud berpakaian hijau gelap.",
+        "suggested_character": fallback_characters,
         "character_seed": r_seed
     }
 
 
-def generate_youtube_metadata(film_title: str, premise: str) -> Dict[str, Any]:
-    """Generate readable, keyword-led YouTube metadata with theme-aware hashtags."""
+def generate_youtube_metadata(
+    film_title: str,
+    premise: str,
+    target_lang: str = "Indonesia",
+    target_country: str = "",
+    aspect_ratio: str = "landscape",
+) -> Dict[str, Any]:
+    """Generate accurate YouTube packaging based on official metadata guidance."""
+    thumbnail_ratio = "9:16" if str(aspect_ratio).lower() in {"portrait", "9:16", "vertical"} else "16:9"
     prompt = f"""
 Anda adalah YouTube SEO Specialist & Content Strategist Terkemuka.
 Berdasarkan judul film "{film_title}" dan premis cerita: "{premise}", rancangkan kit publikasi YouTube lengkap:
 
-1. **3 Pilihan Judul SEO Natural (Ideal 60-90 Karakter termasuk hashtag)**:
+SUMBER KEBENARAN:
+- Teks di atas berisi ringkasan storyboard aktual beserta karakter dan urutan adegannya.
+- Baca SELURUH adegan sebelum menulis metadata. Ambil keyword dari tokoh utama, tujuan, konflik, titik balik,
+  pelajaran, dan payoff yang benar-benar tampak di storyboard.
+- Dilarang menambah tokoh, peristiwa, genre, kemampuan, lokasi, atau twist yang tidak ada di storyboard.
+- Judul dan dua baris pertama deskripsi harus mencerminkan hook serta payoff terkuat dari storyboard, bukan
+  frasa generik seperti "kisah luar biasa", "petualangan seru", atau "konflik yang mengubah segalanya".
+- Tags harus berupa kombinasi keyword utama, nama tokoh aktual, topik/masalah aktual, format konten, dan variasi
+  pencarian long-tail yang masuk akal. Jangan mengisi tags dengan nama teknologi pembuat video kecuali memang
+  isi videonya membahas teknologi tersebut.
+
+BAHASA DAN PASAR TARGET (WAJIB):
+- Bahasa output: {target_lang}
+- Negara/audiens: {target_country or 'internasional'}
+- Judul, deskripsi, CTA, hashtag, dan tag kata kunci WAJIB 100% ditulis natural dalam bahasa {target_lang}.
+- Gunakan kosakata pencarian dan gaya judul yang natural bagi penonton {target_country or target_lang}; jangan menerjemahkan secara kaku.
+- DILARANG memakai Bahasa Indonesia kecuali target_lang memang Indonesia.
+- Hanya `thumbnail_prompt` yang tetap ditulis dalam Bahasa Inggris untuk generator gambar.
+
+1. **3 Pilihan Judul Akurat dan Menarik (target 70-100 karakter, maksimal mutlak 100 karakter)**:
    - Gunakan kapitalisasi normal yang nyaman dibaca; DILARANG menulis seluruh judul dengan HURUF KAPITAL.
-   - Letakkan keyword pencarian utama dekat awal judul, lalu tambahkan hook spesifik yang menarik tanpa terasa spam.
-   - Wajib akhiri setiap judul dengan 1-2 hashtag populer yang benar-benar relevan dengan tema/karakter video.
-2. **Deskripsi YouTube (3 Paragraf Struktur Rapi)**:
-   - Paragraf 1: Hook pembuka & rangkuman cerita film.
-   - Paragraf 2: Penjelasan teknologi AI sinematik yang digunakan.
-   - Paragraf 3: Target penonton & ajakan.
-   - Diakhiri dengan Call to Action (CTA Subscribe & Like) dan 5 Hashtag relevan.
-3. **Prompt Thumbnail YouTube (Midjourney/Flux/Flow Prompt Bahasa Inggris)**:
-   - Deskripsi visual thumbnail resolusi tinggi 16:9 yang eye-catching dengan teks bercahaya.
-4. **10 Tag Kata Kunci Long-Tail**:
-   - 10 frase kata kunci (3-4 kata) yang dipisahkan oleh koma.
+   - Letakkan satu keyword utama secara natural dekat awal dan jelaskan konflik atau nilai spesifik video.
+   - Buat tiga sudut berbeda: searchable, curiosity-driven, dan story/emotion-driven.
+   - Harus akurat terhadap isi; dilarang clickbait menyesatkan, klaim palsu, spam, dan keyword stuffing.
+   - Akhiri setiap judul dengan 1-2 hashtag paling relevan. Panjang judul BESERTA hashtag tidak boleh melebihi 100 karakter.
+2. **Deskripsi YouTube Unik**:
+   - Dua baris pertama langsung menjelaskan konflik atau nilai utama dengan keyword utama secara natural karena bagian ini terlihat sebelum Show more.
+   - Berikutnya rangkum alur tanpa membocorkan semua kejutan, lalu CTA singkat yang relevan.
+   - Jangan mengarang link, kredit, chapter, nama channel, atau teknologi produksi yang tidak disebutkan input.
+   - Akhiri dengan tepat 3 hashtag yang langsung terkait isi video.
+3. **Prompt Thumbnail / Cover YouTube (Midjourney/Flux/Flow Prompt Bahasa Inggris)**:
+   - Video sumber berformat {thumbnail_ratio}. Prompt cover WAJIB memakai komposisi {thumbnail_ratio}, bukan rasio lain.
+   - Satu subjek utama, emosi jelas, konflik mudah dibaca, kontras kuat, dan teks thumbnail maksimal 2-4 kata.
+   - Thumbnail harus memenuhi janji judul dan tidak menyesatkan.
+4. **Hashtag**: tepat 3 hashtag tanpa spasi, spesifik, dan relevan.
+5. **Tag Kata Kunci Backend YouTube**:
+   - 8-12 tag dipisahkan koma. Prioritaskan topik utama, variasi pencarian natural, nama karakter penting, dan variasi ejaan yang mungkin salah.
+   - Jangan memakai #, jangan mengulang frasa, dan jangan memasukkan viral/trending tanpa alasan. Tags hanya pendukung discovery.
 
 OUTPUT WAJIB FORMAT JSON VALID:
 {{
   "titles": [
-    "Judul SEO natural 1 #TemaUtama #Karakter",
-    "Judul SEO natural 2 #TemaUtama #Karakter",
-    "Judul SEO natural 3 #TemaUtama #Karakter"
+    "Judul searchable yang akurat",
+    "Judul curiosity-driven yang akurat",
+    "Judul story/emotion-driven yang akurat"
   ],
-  "description": "Paragraf 1...\\n\\nParagraf 2...\\n\\nParagraf 3...\\n\\n👉 Subscribe & Like...\\n\\n#Hashtag1 #Hashtag2",
-  "thumbnail_prompt": "High-impact 16:9 YouTube thumbnail prompt in English...",
-  "tags": "kata kunci 1, kata kunci 2, kata kunci 3, kata kunci 4, kata kunci 5, kata kunci 6, kata kunci 7, kata kunci 8, kata kunci 9, kata kunci 10"
+  "description": "Dua baris pembuka yang kuat...\\n\\nRingkasan unik...\\n\\nCTA singkat...\\n\\n#Hashtag1 #Hashtag2 #Hashtag3",
+  "thumbnail_prompt": "High-impact {thumbnail_ratio} YouTube cover prompt in English...",
+  "hashtags": ["#Hashtag1", "#Hashtag2", "#Hashtag3"],
+  "tags": "topik utama, variasi pencarian, nama karakter, variasi ejaan"
 }}
 """
     from .youtube_seo import normalize_youtube_seo_kit
@@ -460,8 +718,17 @@ OUTPUT WAJIB FORMAT JSON VALID:
     try:
         result = generate_text(prompt, json_output=True)
         parsed = json.loads(_extract_json_text(result.text))
+        if str(target_lang).strip().lower() in {"korea", "korean", "한국어"}:
+            language_sample = " ".join([
+                *[str(item) for item in (parsed.get("titles") or parsed.get("seo_titles") or [])],
+                str(parsed.get("description") or ""),
+            ])
+            if len(re.findall(r"[\uac00-\ud7af]", language_sample)) < 10:
+                raise ValueError("Provider SEO tidak mematuhi bahasa Korea; mencoba provider berikutnya.")
         parsed["generated_via"] = result.provider
-        return normalize_youtube_seo_kit(parsed, film_title, premise)
+        parsed["target_lang"] = target_lang
+        parsed["target_country"] = target_country
+        return normalize_youtube_seo_kit(parsed, film_title, premise, aspect_ratio=aspect_ratio)
     except Exception as ex:
         log.warning("Gagal generate metadata YouTube dari provider AI: %s", ex)
         web_txt = _call_web2api(prompt)
@@ -469,21 +736,55 @@ OUTPUT WAJIB FORMAT JSON VALID:
             try:
                 parsed = json.loads(_extract_json_text(web_txt))
                 if parsed:
+                    if str(target_lang).strip().lower() in {"korea", "korean", "한국어"}:
+                        language_sample = " ".join([
+                            *[str(item) for item in (parsed.get("titles") or parsed.get("seo_titles") or [])],
+                            str(parsed.get("description") or ""),
+                        ])
+                        if len(re.findall(r"[\uac00-\ud7af]", language_sample)) < 10:
+                            raise ValueError("Fallback SEO tidak menghasilkan bahasa Korea.")
+                    parsed["target_lang"] = target_lang
+                    parsed["target_country"] = target_country
                     log.info("Metadata YouTube berhasil via fallback Web2API!")
-                    return normalize_youtube_seo_kit(parsed, film_title, premise)
+                    return normalize_youtube_seo_kit(parsed, film_title, premise, aspect_ratio=aspect_ratio)
             except Exception as w_ex:
                 log.warning("Fallback Web2API mengembalikan JSON metadata tidak valid: %s", w_ex)
-        fallback = {
-            "titles": [
+        is_korean = str(target_lang).strip().lower() in {"korea", "korean", "한국어"}
+        if is_korean:
+            fallback_titles = [
+                f"{film_title} | 두 전설의 충돌, 마지막 순간 드러난 진짜 승자는? #애니메이션 #단편영화",
+                f"{film_title}에서 무슨 일이 벌어졌나? 운명을 바꾼 차원의 대결 #AI영화 #액션",
+                f"두 영웅이 맞선 순간, 예상 못한 선택이 세상을 바꿨다 | {film_title} #스토리",
+            ]
+            fallback_description = (
+                f"{film_title}: {premise}\n"
+                "등장인물들의 운명을 바꾸는 갈등과 선택을 끝까지 확인해 보세요.\n\n"
+                "가장 인상 깊었던 장면을 댓글로 남겨 주세요.\n\n"
+                "#AI영화 #단편영화 #스토리"
+            )
+            fallback_hashtags = ["#AI영화", "#단편영화", "#스토리"]
+            fallback_tags = f"{film_title}, {film_title} 전체 영상, {film_title} 이야기, AI 영화, 단편 영화, 한국어 이야기"
+        else:
+            fallback_titles = [
                 f"{film_title}: Pertarungan sinematik dengan alur paling menegangkan",
                 f"{film_title}: Siapa yang akan memenangkan pertarungan luar biasa ini?",
-                f"Saksikan {film_title}, kisah aksi sinematik yang penuh kejutan"
+                f"Saksikan {film_title}, kisah aksi sinematik yang penuh kejutan",
+            ]
+            fallback_description = f"{film_title} menghadirkan {premise}.\nIkuti konflik utama dan keputusan yang mengubah perjalanan para karakternya.\n\nTonton sampai akhir, lalu bagikan pendapatmu tentang momen yang paling berkesan.\n\n#FilmAI #CeritaAI #FilmPendek"
+            fallback_hashtags = ["#FilmAI", "#CeritaAI", "#FilmPendek"]
+            fallback_tags = f"{film_title}, {film_title} full video, {film_title} cerita, film pendek ai, cerita sinematik ai, film ai indonesia"
+        fallback = {
+            "titles": [
+                *fallback_titles
             ],
-            "description": f"Saksikan film AI sinematik {film_title}. Cerita ini menceritakan tentang {premise}.\n\nDibuat secara otomatis menggunakan Gemini 3.6 Flash dan Google Flow Omni.\n\nJangan lupa Like, Comment, dan Subscribe untuk konten AI sinematik lainnya!\n\n#FilmAI #GoogleFlow #Gemini36Flash #AIVideoGenerator #TutorialAI",
-            "thumbnail_prompt": f"Dramatic cinematic movie thumbnail for {film_title}, 16:9 aspect ratio, 8k resolution, glowing neon title text, highly detailed photorealistic character.",
-            "tags": "cara buat film ai, tutorial google flow omni, generate video ai konsisten, karakter ai tetap konsisten, buat film ai 10 menit, gemini 36 flash storyboard, ai video generator gratis, tutorial ai sinematik indonesia, multi angle kamera ai, workflow otomatisasi film ai"
+            "description": fallback_description,
+            "hashtags": fallback_hashtags,
+            "thumbnail_prompt": f"Dramatic cinematic cover for {film_title}, {thumbnail_ratio} aspect ratio, strong focal subject, readable composition, highly detailed character.",
+            "tags": fallback_tags,
+            "target_lang": target_lang,
+            "target_country": target_country,
         }
-        return normalize_youtube_seo_kit(fallback, film_title, premise)
+        return normalize_youtube_seo_kit(fallback, film_title, premise, aspect_ratio=aspect_ratio)
 
 
 def generate_storyboard(
@@ -493,14 +794,25 @@ def generate_storyboard(
     aspect_ratio: str = "landscape",
     character_info: str = "",
     custom_instructions: str = "",
+    creative_brief: Optional[Dict[str, Any]] = None,
     character_seed: Optional[int] = None,
     microdrama_mode: bool = False,
     ugc_mode: bool = False,
+    ugc_variant: str = "realism",
+    ugc_platform: str = "TikTok",
+    ugc_tone: str = "Natural, fresh, friendly",
+    ugc_emotional_arc: str = "",
+    ugc_environment: str = "auto",
+    ugc_lighting: str = "auto",
     target_country: str = "",
     dracin_theme: str = "",
     target_total_duration: Optional[int] = None,
     fixed_scene_duration: Optional[int] = None,
     children_mode: bool = False,
+    visual_style: str = "live_action",
+    visual_vibe: str = "none",
+    lighting_style: str = "none",
+    color_palette: str = "none",
     script_mode: bool = False,
     affiliate_config: Optional[Dict[str, Any]] = None,
     target_lang: str = "",
@@ -512,6 +824,87 @@ def generate_storyboard(
     scene_count = max(1, min(60, int(scene_count or 4)))
     cfg = settings.get_settings()
     seed = character_seed or random.randint(100000, 999999)
+    estimated_duration = target_total_duration or ((fixed_scene_duration or 10) * scene_count)
+    creative_brief = dict(creative_brief or {})
+    if affiliate_config.get("enabled") and not str(creative_brief.get("product_value") or "").strip():
+        creative_brief["product_value"] = (
+            f"Produk: {affiliate_config.get('name') or 'produk referensi'}. "
+            f"Manfaat/USP yang diizinkan: {affiliate_config.get('benefits') or 'analisis dari konteks dan visual tanpa mengarang klaim'}. "
+            f"CTA: {affiliate_config.get('cta') or 'ajakan natural sesuai alur'}."
+        )
+    creative_brief = normalize_creative_brief(
+        creative_brief, premise=premise, aspect_ratio=aspect_ratio,
+        target_country=target_country, target_lang=target_lang,
+        scene_count=scene_count, duration_seconds=estimated_duration,
+    )
+    creative_brief_rules = build_creative_brief_prompt(creative_brief)
+    visual_style_contracts = {
+        "live_action": "LIVE-ACTION CINEMATIC PHOTOGRAPHY: real human actors, natural skin pores, realistic hair and fabric, physically based lighting. Never cartoon, anime, illustration, cel shading, or stylized 3D.",
+        "3d_cartoon": "STYLIZED 3D ANIMATION: consistent sculpted 3D characters, rounded modeled forms, physically based 3D materials, feature-animation lighting. Never live-action humans, photoreal photography, 2D drawing, anime, or cel animation.",
+        "2d_animation": "HAND-DRAWN 2D ANIMATION: consistent line art, flat graphic shapes, controlled cel shading, painted 2D backgrounds, fixed model-sheet proportions. Never live-action photography, realistic skin pores, 3D render, clay, or photorealism.",
+        "anime_2d": "2D ANIME PRODUCTION STYLE: consistent anime model sheets, clean ink lines, cel shading, expressive anime faces, painted 2D backgrounds. Never live-action photography, photoreal skin, western 3D cartoon, clay, or realistic CGI.",
+        "toy_brick": "ORIGINAL TOY-BRICK 3D ANIMATION: interlocking plastic-brick environments, original block-figure characters, simple cylindrical heads and claw-like hands, glossy molded plastic materials, stop-motion-inspired movement. Never use LEGO logos, branded sets, licensed minifigures, live-action humans, 2D drawing, or photoreal skin.",
+        "line_character": "MINIMALIST LINE-CHARACTER ANIMATION: consistent clean monoline characters, simple geometric bodies, sparse flat colour accents, white or restrained backgrounds, precise readable silhouettes. Never photorealism, 3D volume, textured skin, painterly shading, or style changes between scenes.",
+        "claymation": "HANDCRAFTED CLAYMATION STOP-MOTION: consistent sculpted clay puppets, visible handmade fingerprints, miniature practical sets, tactile clay surfaces, frame-by-frame stop-motion movement. Never live-action actors, smooth CGI plastic, 2D illustration, or photoreal skin.",
+        "storybook_watercolor": "WATERCOLOR STORYBOOK ANIMATION: consistent hand-painted watercolor characters, soft pigment blooms, textured cold-press paper, delicate ink contours, layered storybook backgrounds. Never live-action photography, 3D CGI, plastic materials, anime cel shading, or photorealism.",
+        "paper_cutout": "PAPER-CUTOUT ANIMATION: layered hand-cut paper characters, visible paper fibres, hinged flat limbs, collage scenery, soft tabletop shadows, consistent stop-motion cutout construction. Never live-action humans, 3D CGI characters, clay, or photoreal skin.",
+        "pixel_art": "CINEMATIC PIXEL-ART ANIMATION: one consistent pixel grid, deliberate limited colour palette, crisp pixel silhouettes, detailed retro-game backgrounds, sprite-consistent character proportions. Never smooth vector lines, live action, 3D rendering, anti-aliased photorealism, or mixed pixel resolutions.",
+        "comic_book": "CINEMATIC COMIC-BOOK ANIMATION: consistent graphic-novel character design, bold ink contours, controlled halftone shading, dramatic panel-like compositions, limited print-inspired palette. Never live-action photography, 3D CGI, watercolor, or model redesign between scenes.",
+    }
+    default_visual_style = "3d_cartoon" if children_mode else "live_action"
+    visual_style = visual_style if visual_style in visual_style_contracts else default_visual_style
+    visual_style_contract = visual_style_contracts.get(visual_style, visual_style_contracts["live_action"])
+    five_realism_rules = build_five_realism_prompt(visual_style)
+    finishing_maps = {
+        "vibe": {
+            "none": "", "pro_cinematic": "polished professional cinematic production design, premium YouTube storytelling finish",
+            "clean_commercial": "clean commercial art direction, uncluttered composition, highly readable subject separation",
+            "documentary": "grounded observational documentary mood, authentic environments, restrained production design",
+            "sci_fi": "original futuristic science-fiction production design, coherent technology language, no licensed franchises",
+            "ugc_natural": "authentic creator-led UGC mood, natural smartphone immediacy, candid everyday staging",
+            "korean_drama": "refined Korean drama mood, elegant emotional framing, polished romantic television finish",
+            "microdrama": "fast-paced short-form microdrama staging, expressive reactions, clear visual story beats",
+            "kids_colorful": "cheerful child-friendly energy, playful production design, bright readable visual storytelling",
+            "cozy_lifestyle": "warm intimate lifestyle mood, relaxed domestic staging, inviting tactile comfort",
+            "luxury_premium": "high-end luxury editorial finish, refined materials, elegant restrained composition",
+            "dark_thriller": "mysterious suspense-thriller atmosphere, controlled shadows, tense but clearly readable staging",
+        },
+        "lighting": {
+            "none": "", "soft_light": "soft diffused key light with gentle shadows", "golden_hour": "warm golden-hour directional light",
+            "volumetric": "controlled volumetric light shafts and atmospheric depth", "chiaroscuro": "dramatic chiaroscuro key-to-fill contrast",
+            "low_key": "low-key cinematic lighting with readable faces", "backlight": "strong rim backlight with clear silhouettes",
+            "rainy": "overcast rainy ambience with wet-surface reflections",
+        },
+        "color": {
+            "none": "", "warm": "cohesive warm amber colour palette", "cool": "cohesive cool blue-cyan colour palette",
+            "vibrant": "controlled vibrant saturation with protected skin and character colours", "pastel": "soft cohesive pastel palette",
+            "earthy": "natural earthy ochre, olive and brown palette", "complementary": "controlled complementary colour harmony",
+            "teal_orange": "cinematic teal-and-orange palette with consistent grading",
+        },
+    }
+    visual_vibe = visual_vibe if visual_vibe in finishing_maps["vibe"] else "none"
+    lighting_style = lighting_style if lighting_style in finishing_maps["lighting"] else "none"
+    color_palette = color_palette if color_palette in finishing_maps["color"] else "none"
+    auto_art_direction = build_auto_art_direction(children_mode)
+    effective_auto_direction = dict(auto_art_direction)
+    if visual_vibe != "none":
+        effective_auto_direction["mode"] = "support the manually selected vibe without replacing it"
+    if lighting_style != "none":
+        effective_auto_direction["lighting"] = "the manually selected lighting above is authoritative"
+    if color_palette != "none":
+        effective_auto_direction["palette"] = "the manually selected colour palette above is authoritative"
+    auto_art_direction_text = format_auto_art_direction(effective_auto_direction)
+    manual_finishing = "; ".join(filter(None, (
+        finishing_maps["vibe"][visual_vibe], finishing_maps["lighting"][lighting_style], finishing_maps["color"][color_palette]
+    )))
+    auto_fields = []
+    if visual_vibe == "none":
+        auto_fields.append("AI must infer a niche-appropriate mood from the premise")
+    if lighting_style == "none":
+        auto_fields.append(f"use/adapt this lighting direction: {auto_art_direction['lighting']}")
+    if color_palette == "none":
+        auto_fields.append(f"use/adapt this non-template palette: {auto_art_direction['palette']}")
+    finishing_contract = "; ".join(filter(None, [manual_finishing, *auto_fields]))
 
     # Load reference images for Gemini Vision analysis
     pil_images = []
@@ -534,24 +927,71 @@ ATURAN SPECIAL MICRODRAMA PRODUCTION AI (MASTER SYSTEM PROMPT PDF):
 5. **Tema Dracin**: {dracin_theme.strip() or f"Pilih salah satu tema dracin populer paling relate berikut: {', '.join(DRACIN_THEME_POOL)}"}
 """ if microdrama_mode else ""
 
+    ugc_variant = "commercial" if str(ugc_variant).lower() == "commercial" else "realism"
+    ugc_style_contract = (
+        "premium commercial advertising: deliberate art direction, controlled studio/location lighting, elegant product hero composition, precise dolly or locked camera, refined but believable materials"
+        if ugc_variant == "commercial" else
+        "creator-made UGC realism: plausible smartphone capture, available natural light, minor handheld inertia, candid framing, lived-in location, natural pauses and imperfect-but-intentional human delivery"
+    )
+    environment_presets = {
+        "home_window": "a believable lived-in home beside a daylight window",
+        "bathroom_vanity": "a clean but naturally used bathroom vanity",
+        "modern_kitchen": "a functional modern kitchen with activity-relevant props",
+        "work_desk": "a lived-in work desk with laptop and context-appropriate objects",
+        "cafe_terrace": "an urban cafe terrace with plausible ambient activity",
+        "tropical_beach": "a tropical beach appropriate for genuine outdoor product use",
+        "poolside": "a poolside setting appropriate for water or sun exposure",
+        "minimal_studio": "a neutral minimal studio with restrained production design",
+        "premium_podium": "a premium product podium with controlled commercial lighting",
+    }
+    environment_direction = environment_presets.get(str(ugc_environment), str(ugc_environment or "auto"))
+    if environment_direction == "auto":
+        environment_direction = (
+            "AI must recommend one contextually necessary location by reading the product, pain point, audience, "
+            "usage moment, tone and platform. Prefer a place where the creator would genuinely use the product; "
+            "avoid generic luxury rooms, random beaches, empty studios, or the same template location across niches"
+        )
+    lighting_presets = {
+        "natural_window": "soft natural window light with believable falloff and protected skin highlights",
+        "hard_window": "hard directional window sunlight with physically consistent crisp shadows",
+        "phone_flash": "direct phone-camera flash with realistic falloff, restrained specular highlights and ambient background exposure",
+        "cafe_window": "soft cafe window key light mixed naturally with warm practical ambience",
+        "overcast": "soft overcast daylight with broad shadowless illumination and natural skin tone",
+        "store_light": "credible convenience-store practical fluorescent light with controlled mixed colour temperature",
+        "night_street": "motivated night street lighting from storefronts and street lamps with readable faces",
+        "golden_hour": "low warm golden-hour sunlight with consistent direction and natural exposure rolloff",
+        "softbox_commercial": "controlled commercial softbox key, subtle fill and product-separating rim light",
+    }
+    lighting_direction = lighting_presets.get(str(ugc_lighting), str(ugc_lighting or "auto"))
+    if lighting_direction == "auto":
+        lighting_direction = (
+            "AI must choose a physically plausible lighting setup derived from the selected environment, time of day, "
+            "product material, skin tone and production mode; name its source, direction, softness, colour temperature "
+            "and exposure behavior. Do not use glossy beauty light or dramatic neon unless context requires it"
+        )
     ugc_rules = f"""
-ATURAN TEMPLATE PROMPT STORYBOARD VIDEO UGC AESTHETIC SANGAT MAHAL:
-1. **Jumlah Adegan Mengikuti Input Pengguna (WAJIB TEPAT {scene_count} Scene)**:
-   - Buat persis {scene_count} objek di array `scenes`; dilarang mengurangi menjadi 3–4 scene.
-   - Setiap scene adalah satu video tersendiri dengan durasi yang dipilih pengguna. Bagikan alur cerita
-     secara mulus ke seluruh {scene_count} scene tanpa mempercepat atau melompati perkembangan cerita.
-
-2. **Kesan Sinematik SANGAT MAHAL & EKSKLUSIF (High-End Luxury Vibe)**:
-   - Master Style Wajib: `cinematic UGC aesthetic, clean infographic storyboard, TikTok/Reels format, premium lifestyle photography, realistic lighting, smooth scene transition, consistent character face, ultra detailed, soft depth of field, modern luxury atmosphere, camera iPhone 16 Pro cinematic quality`.
-   - Sentuhan Kemewahan ("Mahal"): Sertakan detail arsitektur penthouse/mansion modern mewah, lantai marmer reflektif, lampu gantung kristal, perabotan desainer, tekstur kain sutra/linen halus, dan pencahayaan studio alami yang sangat elegan.
-
-3. **Smart Aesthetic Add-On (Disesuaikan 100% dengan Tema Cerita)**:
-   - Girly Aesthetic Add-On (`pastel aesthetic, luxury lifestyle mood, cinematic bokeh lights, realistic skin texture, soft shadows, glossy lighting, premium social media content, smooth motion blur, high fashion composition, realistic environment details`) HANYA dipakai jika temanya sesuai (misal: beauty, girly, baking, skincare, cute morning routine).
-   - Untuk tema lain, gunakan add-on aesthetic yang 100% RELEVAN (misal: `corporate executive luxury, sleek architectural interior, modern professional mood, sharp 8k detail` untuk Working Girl; `scenic vacation aesthetic, vibrant golden hour, luxury travel vibe` untuk Travel Vlog; `modest elegant aesthetic, warm ambient lighting, peaceful spiritual atmosphere` untuk Muslimah Lifestyle).
-   - Pilihan Add-On harus selalu serasi dengan konteks cerita agar kesan visualnya tetap terasa MAHAL dan natural.
-
-4. **Text Overlay Aesthetic**: Sertakan field "text_overlay" (Bahasa {target_lang} pendek ala TikTok/Reels caption, max 6 kata) untuk setiap adegan.
-5. **Karakter Utama**: karakter utama wanita/pria dengan rupa & seed konsisten, outfit sesuai aktivitas, ekspresi natural candid, luxury lifestyle aesthetic.
+UGC / AFFILIATE PRODUCTION BOARD — {ugc_variant.upper()}:
+- Platform: {ugc_platform}; tone: {ugc_tone}; emotional arc: {ugc_emotional_arc or 'problem → curiosity → try → visible proof → relief → natural CTA'}.
+- Environment direction: {environment_direction}. Establish a master environment ledger (layout, time of day,
+  light direction, key materials and 2-4 recurring objects). Keep it stable across connected scenes; location
+  changes require a visible transition and a narrative reason.
+- Lighting direction: {lighting_direction}. Manual lighting is authoritative. Keep key-light direction, practical
+  sources, colour temperature, shadow softness, skin exposure and product reflections continuous between shots.
+- Produce exactly {scene_count} scenes. Every scene requires one `scene_purpose`, one visible `activity`, a
+  specific `expression`, `visual_composition`, `shot_type`, `camera_movement`, and a `transition_bridge` that
+  motivates the next scene. Random beauty shots without narrative function are forbidden.
+- Style contract: {ugc_style_contract}. Do not force luxury interiors, pastel beauty styling, or cinematic
+  decoration when the product, audience, location, or selected mode does not justify it.
+- Use a complete content arc: contextual hook/pain point → product appears through motivated action → clear
+  handling or application → visible/sensible benefit evidence → honest reaction → CTA. Do not claim results
+  that cannot be shown or supported by the supplied brief.
+- Separate references conceptually: Character Master controls identity; Product Master controls packaging and
+  scale; Environment Reference controls place/light only. Never borrow a face from an environment image or
+  redesign product text/logo from imagination.
+- Dialogue/VO must sound spoken, fit the duration, and follow the emotional state. Add breaths or micro-pauses
+  only where natural. Product close-ups must follow a hand action or gaze cue, not appear as an unrelated insert.
+- Fill top-level `logline`, `platform`, `video_type`, `tone`, `visual_notes`, `emotional_arc`, and
+  `reference_plan`. Text overlay remains an editing instruction and is never rendered by the video model.
 """ if ugc_mode else ""
 
     target_lang = resolve_target_language(target_country, target_lang)
@@ -565,10 +1005,18 @@ anamorphic lens, teal-and-orange grading, human child characters.
 `shot_type` cukup sederhana (Wide Shot / Medium Shot / Close Up) dan gerakan kamera lembut & pelan.
 """ if children_mode else ""
     action_density_rules = CHILDREN_ACTION_RULES if children_mode else ADULT_ACTION_RULES
+    premise_lower = str(premise or "").lower()
+    battle_vs_mode = (
+        not children_mode
+        and bool(re.search(r"\b(?:battle|duel|versus|vs)\b", premise_lower))
+        and any(token in premise_lower for token in ("anime", "superhero", "pahlawan", "mecha", "ninja", "jurus"))
+    )
+    battle_vs_rules = BATTLE_VS_RULES if battle_vs_mode else ""
     # Children's mode uses anthropomorphic animals, so human ethnicity/skin-tone rules would
     # conflict with its visual contract. Its country adaptation is handled below instead.
     local_realism_rules = build_local_realism_rules(target_country) if target_country and not children_mode else ""
     children_localization_rules = build_children_localization_rules(target_country, target_lang) if children_mode else ""
+    children_variation_rules = build_children_variation_packet() if children_mode and not script_mode else ""
 
     script_mode_rules = f"""
 MODE SCRIPT SENDIRI — FORMATTER TEKNIS SAJA (PRIORITAS TERTINGGI):
@@ -665,13 +1113,34 @@ BAHASA OUTPUT UTAMA: {target_lang} (Semua ringkasan aksi, narasi voiceover, teks
 {duration_rules}
 
 {action_density_rules}
+{battle_vs_rules}
 
 {microdrama_rules}
 {ugc_rules}
 {local_realism_rules}
 {children_localization_rules}
+{children_variation_rules}
 {POLICY_SAFE_RULES}
 {children_visual_rules}
+VISUAL STYLE LOCK — PRIORITAS TERTINGGI, WAJIB SAMA DI SEMUA SCENE:
+{visual_style_contract}
+FINISHING LOOK LOCK: {finishing_contract}.
+{auto_art_direction_text}
+AUTO/MULTI CREATIVE RULES:
+- "Auto" is active AI direction, never an empty/default setting. Adapt the candidate art direction to the niche
+  and premise while keeping it recognisably different from generic teal-orange, rainbow, or beige templates.
+- The hero object must cause, reveal, solve, measure, or visually track an event. Do not add decorative props
+  with no story function. Give recurring objects exact colour, material, count, condition, and position.
+- Build 2-4 supporting objects that are specific to each location and culture; vary their shapes/materials while
+  maintaining the object ledger across scenes. Do not reuse the same generic phone, envelope, coffee cup, sofa,
+  luxury lobby, classroom, or garden setup unless the premise genuinely requires it.
+- Keep one master palette for continuity, but vary colour dominance by location/scene and reserve one accent colour
+  for reveals or payoff. Manual Vibe/Lighting/Color choices override the corresponding Auto suggestion.
+- Never print the internal ART token in titles, dialogue, narration, overlays, or generated visuals.
+Salin kontrak gaya ini secara eksplisit ke awal SETIAP `prompt_for_flow`. Dilarang mengganti medium,
+rendering technique, bentuk anatomi, material, atau jenis karakter di tengah film.
+{creative_brief_rules}
+{five_realism_rules}
 {script_mode_rules}
 {affiliate_rules}
 
@@ -686,11 +1155,10 @@ ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
    memindahkan tokoh bolak-balik ke lokasi jauh pada setiap adegan. Jika cerita memang harus pindah lokasi,
    adegan sebelum/sesudahnya WAJIB menunjukkan jembatan visual yang masuk akal (keluar pintu, masuk kendaraan,
    tiba di lobi/gerbang), bukan teleportasi atau lompatan waktu mendadak.
-3a. **Tiga Sampai Lima Shot Dalam Satu Video 10 Detik**: Pilih berdasarkan isi, bukan acak buta: 3 shot
-   untuk dialog/emosi (0-3.3s, 3.3-6.6s, 6.6-10s), 4 shot untuk drama normal (0-2.5s, 2.5-5s,
-   5-7.5s, 7.5-10s), dan 5 shot untuk aksi/perang/kejaran/konflik cepat (0-2s, 2-4s, 4-6s, 6-8s,
-   8-10s). Semua shot adalah sudut kamera berbeda dari SATU kejadian berantai di SATU lokasi dan waktu
-   kontinu—bukan adegan cerita terpisah. Setiap beat wajib mengandung minimal dua aksi fisik terkait.
+3a. **Kepadatan Shot Mengikuti Isi, Bukan Dipaksakan**: Untuk konten anak/edukasi gunakan satu pengambilan
+   kontinu atau 1-3 beat kamera agar aksi mudah dibaca. Untuk dialog/emosi gunakan maksimal 3 shot; drama normal
+   3-4 shot; hanya aksi/perang/kejaran cepat yang boleh 4-5 shot. Semua coverage harus merekam SATU kejadian
+   berantai di SATU lokasi dan waktu kontinu—bukan beberapa adegan cerita yang dijejalkan ke satu klip.
 4. **Flow Prompt Professional**: Setiap `prompt_for_flow` ditulis dalam Bahasa Inggris yang murni visual, mendetail (Karakter & Seed IDs + Multi-Angle Camera Shot + Aksi Tokoh + Studio 8K Lighting).
 4a. **AKSI HARUS TERJADI DI DALAM KLIP (Wajib)**: `prompt_for_flow` WAJIB mendeskripsikan gerakan yang benar-benar
    berlangsung selama klip, bukan pose diam atau tablo. Tuliskan progresi jelas memakai penanda urutan waktu
@@ -700,6 +1168,53 @@ ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
    Sertakan kata kerja gerak eksplisit (slams, snatches, shoves, storms out, collapses, spins around, lunges). Jika UGC Mode aktif, akhiri prompt dengan Aesthetic Add-On yang 100% cocok dengan tema (Girly/Pastel untuk Beauty, Corporate Luxury untuk Working Girl, Travel Vacation untuk Travel, dll.).
 4b. **BAHASA AUDIO/DIALOG VIDEO (WAJIB)**: Jika karakter berbicara, WAJIB tulis dialog ASLI dalam bahasa {target_lang} di dalam `prompt_for_flow`. (TERJEMAHKAN KE {target_lang} SECARA MUTLAK!).
 4c. **Tanpa Logo/Watermark (Wajib)**: Dilarang ada logo/watermark di `prompt_for_flow`.
+4d. **FLOW PROMPT BLUEPRINT — DETAIL YANG DAPAT DIEKSEKUSI (WAJIB)**:
+   Setiap `prompt_for_flow` harus berupa satu paragraf produksi lengkap, bukan kumpulan kata sifat generik.
+   Susun isinya dalam urutan berikut:
+   a) **Continuity opening**: untuk scene pertama jelaskan lokasi dan blocking awal; untuk scene berikutnya WAJIB
+      mulai dengan `Continue seamlessly/directly from the previous scene...` lalu sebutkan benda, posisi,
+      pose, arah pandang, cahaya, dan tata lokasi yang harus sama dari `end_state` sebelumnya.
+   b) **Full identity lock**: tulis ulang deskripsi fisik, warna, pakaian, aksesori, skala tubuh, dan ciri permanen
+      SETIAP karakter yang tampak. Nama/seed saja tidak cukup dan frasa kabur seperti `same character` dilarang.
+   c) **Ordered visible actions**: jelaskan aksi nyata secara kronologis memakai `Begin with...`, `then...`,
+      `during the final second...`, dan `End with...`. Sebutkan tangan/kaki/properti yang bergerak, siapa bereaksi,
+      dan apa yang berubah; jangan hanya menulis emosi, pose, tema, atau ringkasan cerita.
+   d) **Exact final frame**: kalimat `End with...` WAJIB menetapkan posisi akhir karakter, tangan, arah pandang,
+      properti yang tetap/muncul/terbuka, serta komposisi frame. Isi ini harus sama secara faktual dengan `end_state`
+      dan menjadi bahan pembuka scene berikutnya.
+   e) **Production lock**: tutup dengan medium/style yang dipilih, lighting spesifik, palet warna, bentuk/anatomi,
+      aspect composition, framing/lensa atau gerak kamera, dan kualitas gerak yang relevan.
+   f) **Scene-specific negatives**: tulis larangan konkret yang mencegah kegagalan scene, misalnya `no extra
+      characters`, `no object disappearance`, `no location change`, `no character redesign`, `stable anatomy`,
+      `no malformed text`; tambahkan larangan sensitif sesuai tema. Jangan mengandalkan `high quality` atau `8K`.
+   Panjang target setiap `prompt_for_flow` adalah 130–220 kata bahasa Inggris. Detail harus spesifik untuk scene
+   tersebut; dilarang memakai paragraf template identik pada semua scene. Untuk konten anak/edukasi prioritaskan
+   satu kejadian kontinu, gerakan sederhana yang terbaca, dan 1–3 beat kamera; jangan memaksakan lima cut cepat.
+4e. **OBJECT LEDGER (Wajib)**: Properti persisten (kartu, kotak, tas, makanan, kendaraan, senjata, produk,
+   posisi pintu/meja, dan sebagainya) harus memiliki jumlah, status, urutan, dan posisi yang konsisten. Jika pada
+   akhir scene ada lima kartu dengan dua terbuka, prompt scene berikutnya harus menyebut dua tetap terbuka dan
+   tiga tetap tertutup. Tidak boleh muncul, hilang, berpindah, atau berubah warna tanpa aksi visual.
+4f. **SCRIPT DOCTOR & DRAMATIC FUNCTION (Wajib)**: Audit seluruh cerita sebelum menulis JSON. Setiap scene
+   harus memiliki SATU fungsi utama yang jelas (hook, eskalasi, pengungkapan, konsekuensi, klimaks, atau resolusi),
+   satu aksi utama, maksimal dua aksi pendukung, reaksi emosional yang terlihat, dan final frame yang kuat.
+   Perbaiki kontradiksi hubungan, jabatan, motivasi, kepemilikan, bukti, dan urutan informasi tanpa mengubah premis.
+   Informasi penting harus diperkenalkan sebelum dipakai; pengungkapan membutuhkan sebab/bukti/reaksi; hindari
+   pengulangan dialog, permintaan maaf, atau rekonsiliasi yang tidak mengembangkan cerita. Jangan menulis pikiran
+   abstrak yang tidak dapat difilmkan melalui aksi, ekspresi, dialog, atau properti.
+4g. **DIALOG, AUDIO & LIP-SYNC LOCK (Wajib)**: Total dialog scene harus realistis untuk durasinya (10 detik
+   maksimal sekitar 18–22 kata; skala proporsional untuk durasi lain). Dialog dalam `prompt_for_flow` harus sama
+   persis dengan `dialogue.line`, tetap dalam bahasa {target_lang}, dan tidak boleh menambah ucapan baru. Hanya
+   speaker aktif yang menggerakkan bibir; karakter lain menutup mulut dan bereaksi secara fisik. Jangan tumpuk
+   dialog dengan narasi bila waktunya tidak cukup. Minta natural {target_lang} pronunciation, accurate lip-sync,
+   clean dialogue, subtle room tone/SFX, dan musik tidak menutupi suara bila audio memang dipakai.
+4h. **CAMERA FEASIBILITY & SCREEN DIRECTION (Wajib)**: Maksimal satu gerakan kamera utama per scene,
+   halus dan masuk akal dalam durasi. Pertahankan posisi kiri/kanan, eyeline match, serta arah gerak antarscene.
+   Gunakan wide untuk ruang/relasi, medium untuk interaksi/konflik, close-up untuk emosi, dan insert untuk bukti.
+   Hindari Dutch angle, sudden zoom, random cuts, dan gerakan kamera bertentangan tanpa alasan dramatik.
+4i. **NO GENERATED TEXT (Wajib)**: `text_overlay` adalah panduan editing terpisah (2–5 kata), bukan teks yang
+   dirender Flow. Jangan meminta tulisan overlay dalam `prompt_for_flow`; selalu larang subtitles, captions,
+   watermark, logo, serta automatically generated on-screen text. Jika cerita memerlukan kartu/surat/ponsel,
+   prioritaskan simbol atau bentuk visual sederhana dan hindari teks AI yang mudah rusak.
 5. **Time Range Timestamp Wajib**: Sertakan field "time_range".
 6. **ATURAN MUTLAK BAHASA OUTPUT**: SELURUH ACTION SUMMARY, NARRATION, TEXT OVERLAY, DAN NAMA KARAKTER HARUS 100% DALAM BAHASA {target_lang} DAN BERGAYA NEGARA {target_country or target_lang}. JANGAN GUNAKAN NAMA INDONESIA ATAU TEKS INDONESIA SAMA SEKALI, MESKIPUN PREMISNYA INDONESIA! TRANSLATE EVERYTHING TO {target_lang}!
 {elegant_rules}
@@ -725,12 +1240,39 @@ PARAMETIK REQUEST (WAJIB 100% PATUH & RELEVAN):
 10. **State Continuity (Wajib)**: Isi "start_state" dan "end_state" dengan posisi tubuh, tangan, properti,
    arah pandang, dan lokasi persis. start_state adegan N+1 harus melanjutkan end_state adegan N kecuali ada
    transisi visual eksplisit.
+11. **Speaker Presence Lock (Wajib)**: Setiap `speaker_id` harus terdaftar di `characters` DAN hadir di
+   `characters_in_scene`. Karakter yang tidak tercantum tidak boleh terlihat, berbicara, atau melakukan aksi penting.
+12. **Timeline Arithmetic (Wajib)**: Hitung `time_range` dari jumlah kumulatif duration. Tidak boleh ada jeda,
+   tumpang tindih, atau timestamp perkiraan. `scene_count` harus sama dengan panjang array `scenes`.
+13. **Final Internal Audit Sebelum Output**: Verifikasi jumlah/urutan scene, duration dan time_range, ID karakter,
+   kehadiran speaker, budget dialog, logika hubungan, object ledger, sambungan start/end state, bahasa, style lock,
+   rasio, serta validitas JSON. Perbaiki diam-diam sebelum mengembalikan object.
 
 OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
 {{
   "film_title": "Judul Film / Cerita",
+  "logline": "Satu kalimat: karakter + konteks + masalah + peran produk/tujuan cerita",
+  "platform": "{ugc_platform if ugc_mode else 'Platform sesuai brief'}",
+  "video_type": "{'Commercial Premium' if ugc_mode and ugc_variant == 'commercial' else 'UGC Review' if ugc_mode else 'Story Content'}",
+  "tone": "{ugc_tone if ugc_mode else 'Tone sesuai brief'}",
+  "visual_notes": "Cahaya, lokasi, warna dominan, tekstur, dan aturan pacing yang spesifik",
+  "environment_direction": "Lokasi terpilih + alasan relevansinya, layout, waktu, arah cahaya, material, dan recurring objects",
+  "lighting_direction": "Sumber, arah, softness, colour temperature, exposure, skin tone, dan product reflections",
+  "emotional_arc": "{ugc_emotional_arc or 'Perubahan emosi dari hook sampai payoff'}",
+  "reference_plan": {{"character_master": "identity only", "product_master": "packaging and scale only", "environment_reference": "location and light only"}},
   "genre_style": "Gaya Visual & Mood Sinematik",
   "art_direction": "Mood board produksi premium",
+  "visual_style": "{visual_style}",
+  "visual_vibe": "{visual_vibe}",
+  "lighting_style": "{lighting_style}",
+  "color_palette": "{color_palette}",
+  "realism_audit": {{
+    "visual_realism": "Bukti medium, cahaya, anatomi/material, dan detail bebas artefak",
+    "character_consistency": "Lock wajah/model, outfit, produk, properti, dan lingkungan",
+    "story_realism": "Konteks, tujuan, sebab-akibat, dan dialog natural",
+    "motion_realism": "Gerak tubuh, kontak objek, tatapan, ekspresi, dan kamera wajar",
+    "humanization": "Jeda, napas, intonasi, ambient sound, dan editing tertahan"
+  }},
   "character_seed": {seed},
   "consistent_characters": "Deskripsi Lengkap Karakter-Karakter",
   "characters": [
@@ -749,14 +1291,19 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "affiliate_scene": false,
       "time_range": "0:00–0:02",
       "title": "Judul Adegan 1 (misal Opening Activity)",
+      "scene_purpose": "Hook / context / problem / product reveal / demonstration / proof / payoff / CTA",
+      "activity": "Aktivitas fisik tunggal yang benar-benar dilakukan model",
+      "expression": "Ekspresi awal, pemicu, lalu perubahan ekspresi yang terlihat",
+      "visual_composition": "Posisi model, produk, foreground/background, eyeline, dan ruang negatif",
+      "transition_bridge": "Aksi, arah pandang, properti, atau match cut yang mengantar scene berikutnya",
       "action_summary": "Ringkasan aksi adegan (WAJIB DITULIS DALAM BAHASA {target_lang} SECARA KESELURUHAN)",
       "shot_type": "Framing baku, pilih SATU: Extreme Wide Shot / Wide Shot / Medium Shot / Medium Close Up / Close Up / Extreme Close Up / Over-The-Shoulder / Point of View",
       "characters_in_scene": [1],
       "dialogue": [{{"speaker_id": 1, "line": "Kalimat persis", "screen_position": "left/center/right"}}],
       "start_state": "Posisi tubuh, tangan, properti, arah pandang, dan lokasi pada frame awal",
       "end_state": "Posisi tubuh, tangan, properti, arah pandang, dan lokasi pada frame akhir",
-      "prompt_for_flow": "Detailed English video prompt for Google Flow ending with Girly Aesthetic Add-On: pastel aesthetic, luxury lifestyle mood, cinematic bokeh lights, realistic skin texture, soft shadows, glossy lighting, premium social media content, smooth motion blur, high fashion composition, realistic environment details",
-      "text_overlay": "WAJIB DIISI di semua mode: teks overlay pendek (WAJIB DITULIS DALAM BAHASA {target_lang}, maks 6 kata) yang muncul di layar",
+      "prompt_for_flow": "One 130-220 word English production paragraph: continuity opening; full visible character identity and wardrobe; ordered physical actions; exact final frame and object status; selected visual medium, lighting, palette, aspect composition and camera movement; scene-specific negative constraints",
+      "text_overlay": "Panduan teks editing 2-5 kata dalam bahasa {target_lang}; jangan minta Flow merender teks ini di dalam prompt_for_flow",
       "camera_movement": "Pergerakan kamera saja, terpisah dari shot_type (misal: Slow push-in, Handheld tracking, Static locked-off)",
       "lighting_mood": "Mood pencahayaan (misal: Soft natural lighting, cinematic bokeh lights)",
       "narration_id": "Teks Narasi Voiceover (WAJIB DITULIS DALAM BAHASA {target_lang}, JANGAN INDONESIA JIKA BUKAN INDONESIA)",
@@ -797,7 +1344,21 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
         storyboard["characters"] = ensure_unique_character_signatures(storyboard.get("characters") or [])
         storyboard["character_seed"] = seed
         storyboard["children_mode"] = children_mode
+        storyboard["visual_style"] = visual_style
+        storyboard["visual_vibe"] = visual_vibe
+        storyboard["lighting_style"] = lighting_style
+        storyboard["color_palette"] = color_palette
+        storyboard["auto_art_direction"] = auto_art_direction_text
+        storyboard["target_lang"] = target_lang
+        storyboard["target_country"] = target_country
         storyboard["script_mode"] = script_mode
+        storyboard["ugc_variant"] = ugc_variant
+        storyboard["ugc_platform"] = ugc_platform
+        storyboard["ugc_tone"] = ugc_tone
+        storyboard["ugc_environment"] = ugc_environment
+        storyboard["ugc_lighting"] = ugc_lighting
+        storyboard["creative_brief"] = creative_brief
+        storyboard["realism_framework"] = "visual, character consistency, story, motion, humanization"
         if script_mode:
             storyboard["source_script"] = premise
         if affiliate_config.get("enabled"):
@@ -823,7 +1384,21 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
             storyboard["characters"] = ensure_unique_character_signatures(storyboard.get("characters") or [])
             storyboard["character_seed"] = seed
             storyboard["children_mode"] = children_mode
+            storyboard["visual_style"] = visual_style
+            storyboard["visual_vibe"] = visual_vibe
+            storyboard["lighting_style"] = lighting_style
+            storyboard["color_palette"] = color_palette
+            storyboard["auto_art_direction"] = auto_art_direction_text
+            storyboard["target_lang"] = target_lang
+            storyboard["target_country"] = target_country
             storyboard["script_mode"] = script_mode
+            storyboard["ugc_variant"] = ugc_variant
+            storyboard["ugc_platform"] = ugc_platform
+            storyboard["ugc_tone"] = ugc_tone
+            storyboard["ugc_environment"] = ugc_environment
+            storyboard["ugc_lighting"] = ugc_lighting
+            storyboard["creative_brief"] = creative_brief
+            storyboard["realism_framework"] = "visual, character consistency, story, motion, humanization"
             if script_mode:
                 storyboard["source_script"] = premise
             if affiliate_config.get("enabled"):
@@ -866,6 +1441,17 @@ WAJIB HASILKAN VARIANT BARU ADEGAN {scene_number} (10 DETIK):
 3. Narasi Dubbing Voiceover 10 Detik (Bahasa {target_lang} & English). Jika ada yang berbicara, WAJIB terjemahkan ke bahasa {target_lang} di dalam prompt_for_flow.
 4. Detailed English 10s Video Prompt for Google Flow (mencantumkan Seeds Karakter + Kamera 10s + Aksi + 8k Lighting).
    -> Sisipkan dialog dalam tanda kutip `speaking angrily in natural {target_lang}: "..."` jika karakter berbicara.
+5. `prompt_for_flow` wajib 130–220 kata dan berupa satu paragraf produksi yang konkret dengan urutan:
+   - pembuka lokasi, blocking, dan kondisi properti;
+   - deskripsi fisik, pakaian, aksesori, skala, serta ciri permanen setiap karakter yang tampil (nama/seed saja tidak cukup);
+   - aksi kronologis memakai `Begin with...`, `then...`, `during the final second...`, dan `End with...`;
+   - frame akhir yang menetapkan posisi tubuh, tangan, arah pandang, dan status semua properti;
+   - style/medium, lighting, palet, aspect composition, framing/lensa, dan camera movement;
+   - larangan spesifik seperti no extra characters, no object disappearance, no location change, no character redesign,
+     stable anatomy, no malformed text. Jangan mengganti detail konkret dengan kata generik `high quality` atau `8K`.
+6. Jika adegan merupakan kelanjutan, awali dengan `Continue seamlessly from the previous scene` dan pertahankan
+   object ledger secara eksplisit: jumlah, urutan, status terbuka/tertutup, warna, dan posisi properti tidak berubah
+   kecuali perubahan tersebut benar-benar diperlihatkan di dalam klip.
 
 OUTPUT WAJIB FORMAT JSON VALID (Tanpa teks lain di luar JSON):
 {{

@@ -19,7 +19,12 @@
 
   async function findExistingFlowTab(chromeApi) {
     const tabs = await chromeApi.tabs.query({ url: '*://labs.google/*' });
-    return (tabs || []).find(item => item.active) || (tabs || [])[0] || null;
+    const flowTabs = (tabs || []).filter(item => /\/fx\/tools\/flow(?:\/|$)/i.test(item.url || ''));
+    const candidates = flowTabs.length ? flowTabs : (tabs || []);
+    return candidates.find(item => item.active && item.currentWindow)
+      || candidates.find(item => item.active)
+      || [...candidates].sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0]
+      || null;
   }
 
   async function ensureFlowTab(chromeApi, options = {}) {

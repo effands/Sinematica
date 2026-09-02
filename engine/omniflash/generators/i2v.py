@@ -159,7 +159,9 @@ async def generate_video_r2v(bridge, prompt: str, aspect: str, project_id: str,
     model_key = f"abra_t2v_{duration}s"
     aspect_ratio_enum = "VIDEO_ASPECT_RATIO_PORTRAIT" if aspect == "portrait" else "VIDEO_ASPECT_RATIO_LANDSCAPE"
 
-    ref_objs = [{"mediaId": mid} for mid in reference_image_ids if mid]
+    # Google Flow accepts at most seven image references for one Ingredients request.
+    # Keep this defensive cap even though the backend selector already prioritizes them.
+    ref_objs = [{"mediaId": mid} for mid in reference_image_ids if mid][:7]
 
     request = {
         "aspectRatio": aspect_ratio_enum,

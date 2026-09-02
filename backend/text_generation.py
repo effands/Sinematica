@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import base64
+import json
 from io import BytesIO
 import logging
 import threading
@@ -11,6 +12,21 @@ from .provider_config import ALL_TEXT_PROVIDERS, normalize_keys, provider_order
 
 log = logging.getLogger("sinematica.text_generation")
 _settings_lock = threading.RLock()
+
+
+def _extract_json_payload(raw: str) -> str:
+    """Return the JSON body even when a provider wraps it in a markdown fence."""
+    text = (raw or "").strip()
+    if "```json" in text:
+        return text.split("```json", 1)[1].split("```", 1)[0].strip()
+    if "```" in text:
+        return text.split("```", 1)[1].split("```", 1)[0].strip()
+    return text
+
+
+def _validate_json_output(text: str) -> None:
+    """Reject truncated/malformed model output before provider failover stops."""
+    json.loads(_extract_json_payload(text))
 
 
 def build_chat_completions_endpoint(base_url: str) -> str:
@@ -198,15 +214,32 @@ class TextGenerationManager:
             keys = self.key_store.keys(provider)
             model = cfg.get(f"{provider}_model") or default_model(provider)
             for index, key in enumerate(keys, start=1):
-                try:
-                    text = adapter.generate(prompt, key, model, json_output=json_output)
-                    log.info("Teks berhasil dibuat via %s key #%d (%s).", provider, index, model)
-                    return ProviderResult(text=text, provider=provider, model=model, key_index=index)
-                except ProviderCallError as ex:
-                    last_error = ex
-                    log.warning("Provider %s key #%d gagal (%s).", provider, index, ex.classification)
-                    if ex.classification == "quota":
-                        self.key_store.demote(provider, key)
+                # A successful HTTP response can still contain JSON cut off by the
+                # model's output limit. Retry that key once, then continue through
+                # the normal key/provider failover chain.
+                attempts = 2 if json_output else 1
+                for attempt in range(1, attempts + 1):
+                    try:
+                        text = adapter.generate(prompt, key, model, json_output=json_output)
+                        if json_output:
+                            _validate_json_output(text)
+                        log.info("Teks berhasil dibuat via %s key #%d (%s).", provider, index, model)
+                        return ProviderResult(text=text, provider=provider, model=model, key_index=index)
+                    except json.JSONDecodeError as ex:
+                        last_error = ProviderCallError(
+                            provider, "invalid_output", None,
+                            f"Respons JSON tidak lengkap/valid: {ex}",
+                        )
+                        log.warning(
+                            "Provider %s key #%d menghasilkan JSON tidak valid (percobaan %d/%d): %s",
+                            provider, index, attempt, attempts, ex,
+                        )
+                    except ProviderCallError as ex:
+                        last_error = ex
+                        log.warning("Provider %s key #%d gagal (%s).", provider, index, ex.classification)
+                        if ex.classification == "quota":
+                            self.key_store.demote(provider, key)
+                        break
         if last_error:
             raise last_error
         raise RuntimeError("Tidak ada API key provider AI yang dikonfigurasi.")

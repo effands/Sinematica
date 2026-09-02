@@ -140,7 +140,8 @@ async def generate_character_image(bridge, prompt: str, aspect: str = "landscape
     global _IMG_REF_VARIANT_IDX, _ALL_REF_VARIANTS_REJECTED
 
     aspect_ratio = IMAGE_ASPECTS.get(aspect, "IMAGE_ASPECT_RATIO_LANDSCAPE")
-    ref_ids = [m for m in (reference_media_ids or []) if m]
+    # Match Flow's per-request image-reference limit. Preserve caller priority/order.
+    ref_ids = [m for m in (reference_media_ids or []) if m][:7]
     proj = project_id or "aaa1ca86-92ee-4436-b4d5-ace19f4481c9"
     endpoint = f"/v1/projects/{proj}/flowMedia:batchGenerateImages"
 

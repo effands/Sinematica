@@ -8,12 +8,15 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="icon" type="image/x-icon" href="favicon.ico?v=1.2.0">
-  <link rel="stylesheet" href="style.css?v=1.3.2">
+  <link rel="stylesheet" href="style.css?v=1.3.5">
 </head>
 <body>
   <div class="app-container">
     <!-- Sidebar Glass -->
     <aside class="sidebar">
+      <button type="button" class="sidebar-toggle" id="sidebarToggleBtn" aria-label="Minimize sidebar" aria-expanded="true" title="Minimize sidebar">
+        <span aria-hidden="true">‹</span>
+      </button>
       <div class="brand">
         <div class="brand-icon" style="background: none; border-radius: 12px; overflow: hidden; padding: 0;">
           <img src="logo.png?v=1.0.3" alt="Sinematica AI Logo" style="width: 44px; height: 44px; object-fit: cover; border-radius: 12px;" />
@@ -43,6 +46,9 @@
         </button>
         <button class="nav-item" data-tab="tab-gallery">
           <span class="nav-icon">🎞️</span> Video Gallery
+        </button>
+        <button class="nav-item" data-tab="tab-ugc-affiliate">
+          <span class="nav-icon">🛍️</span> UGC Affiliate
         </button>
         <button class="nav-item" data-tab="tab-actors">
           <span class="nav-icon">🎭</span> Casting Karakter
@@ -157,6 +163,7 @@
                   <label style="font-size: 14px; font-weight: 700; color: #e9d5ff; margin-bottom: 8px; display: block;">🎯 Katalog Genre & Preset Cerita:</label>
                   <select id="genreCatalogSelect" style="width: 100%; height: 44px; border-radius: 12px; padding: 0 14px; font-size: 13px; background: rgba(4, 7, 16, 0.9); border: 1px solid var(--neon-purple); color: #ffffff; cursor: pointer;">
                     <option value="">-- Pilih Katalog Genre / Tema --</option>
+                    <option value="__auto_ai__">✨ Auto AI — Buat Niche, Tema, Karakter & Object Baru</option>
                     <optgroup label="🐉 Drama China — Wuxia, Xianxia & Balas Dendam Istana (Asia Timur)">
                       <option data-country="China" value="Dracin Wuxia Kuno: Pendekar Wanita Lin Xue & Pangeran Terbuang Zhao Feng merebut tahta kekaisaran Dinasti Tianyuan di tengah pertarungan pedang salju abadi.">🐉 Dracin Wuxia - Pendekar Pedang & Kerajaan</option>
                       <option data-country="China" value="Dracin Xianxia Dewa: Pertemuan Dewa Perang Kerajaan Langit & Siluman Rubah Sembilan Ekor di tengah bencana segel iblis purba.">✨ Dracin Xianxia - Mitologi Dewa & Rubah Emas</option>
@@ -187,11 +194,25 @@
                     </optgroup>
 
                     <optgroup label="🇰🇷 K-Drama & Webtoon (Korea Selatan)">
+                      <option value="__auto_drama_series__" data-series="true">✨ Auto AI Drama Series — Serial & Episode Baru</option>
                       <option data-country="South Korea" value="K-Drama Chaebol Romance: Pewaris tunggal konglomerat grup Hansung menyamar jadi asisten pengacara idealis demi mengusut konspirasi kematian ayahnya, berujung cinta penuh intrik di Seoul.">🏢 K-Drama Chaebol - Pewaris Konglomerat & Pengacara Idealis</option>
                       <option data-country="South Korea" value="K-Drama Romcom Blind Date: Karyawati biasa menggantikan sahabatnya dalam kencan buta mewah, namun ternyata pria yang ia temui adalah CEO baru di perusahaannya sendiri.">💘 K-Drama Romcom - Kencan Buta dengan CEO Sendiri</option>
                       <option data-country="South Korea" value="K-Drama Revenge Bully: Mantan siswi korban perundungan di SMA elit kembali 10 tahun kemudian sebagai guru wali kelas para pelaku untuk membongkar kejahatan mereka.">⚖️ K-Drama Revenge - Pembalasan Korban Bullying Sekolah Elit</option>
                       <option data-country="South Korea" value="K-Fantasy Hunter Gate: Pemuda biasa terbangun dengan skill level-up tak terbatas saat dungeon misterius runtuh di tengah kota Seoul, menjadi Hunter Rank-S terkuat.">⚔️ K-Fantasy Hunter - Dungeon Gate Awakening Solo Rank-S</option>
                       <option data-country="South Korea" value="K-Saeguk Joseon: Kisah cinta rahasia antara Putra Mahkota Dinasti Joseon dan tabib wanita pemberani di tengah perebutan takhta istana beracun.">🏯 K-Saeguk Sejarah - Cinta Rahasia Putra Mahkota Joseon</option>
+                    </optgroup>
+
+                    <optgroup label="📚 Manhwa, Manhua & Manga — Cerita Panel Orisinal">
+                      <option data-country="South Korea" data-visual-style="comic_book" value="Manhwa aksi orisinal: Seorang kurir malam dapat melihat jalur keputusan bercahaya selama tujuh detik ke masa depan, tetapi setiap pilihan yang ia ubah menghapus satu kenangan penting. Episode pertama dimulai dari paket tanpa alamat, pengejaran non-lethal di Seoul fiktif, dan cliffhanger saat penerima paket ternyata mengenal masa lalunya.">⚡ Manhwa Action — Kurir Tujuh Detik</option>
+                      <option data-country="South Korea" data-visual-style="comic_book" value="Manhwa dungeon orisinal: Arsiparis museum yang tidak memiliki kemampuan tempur dapat membaca kelemahan dungeon melalui benda-benda rusak. Ia membentuk tim dengan petarung yang dianggap gagal, memecahkan lantai pertama lewat strategi, lalu menemukan bahwa dungeon menyimpan potongan kota yang hilang.">🗝️ Manhwa Dungeon — Arsiparis Benda Rusak</option>
+                      <option data-country="South Korea" data-visual-style="comic_book" value="Manhwa romance mystery orisinal: Editor webtoon menemukan bahwa sketsa anonim yang masuk setiap tengah malam menggambarkan kejadian esok hari. Ia bekerja sama dengan ilustrator tetangga yang tertutup untuk mencegah sebuah perpisahan, tetapi wajah mereka sendiri muncul pada panel terakhir.">💌 Manhwa Romance — Panel dari Hari Esok</option>
+                      <option data-country="South Korea" data-visual-style="comic_book" value="Manhwa school fantasy orisinal: Klub sekolah yang hampir dibubarkan menemukan ruang kelas yang hanya muncul saat hujan. Setiap anggota dapat meminjam satu bakat dari versi dirinya di dunia lain selama sepuluh menit, tetapi harus menyelesaikan masalah nyata sebelum pintunya tertutup.">🌧️ Manhwa School — Kelas Saat Hujan</option>
+                      <option data-country="China" data-visual-style="comic_book" value="Manhua wuxia orisinal: Perajin kipas dari kota kanal menyimpan teknik bela diri dalam pola lipatan kertas. Ketika peta sungai dicuri, ia berduel secara non-lethal dengan ahli gema lonceng, membuka jurus Kipas Seribu Arus, dan mengetahui pencuri sedang mencegah bencana yang lebih besar.">🪭 Manhua Wuxia — Kipas Seribu Arus</option>
+                      <option data-country="China" data-visual-style="comic_book" value="Manhua cultivation orisinal: Murid kebun obat tidak dapat menyerap energi spiritual, tetapi mampu menumbuhkan tanaman yang menyimpan emosi manusia. Ia menyembuhkan rivalnya dengan bunga keberanian dan menemukan benih hitam yang bereaksi pada kebohongan para tetua sekte.">🌱 Manhua Cultivation — Kebun Emosi</option>
+                      <option data-country="Japan" data-visual-style="anime_2d" value="Manga slice of life orisinal: Penjaga toko kamera bekas membantu pelanggan menemukan foto yang belum pernah mereka ambil. Setiap episode mengikuti satu benda, satu penyesalan kecil, dan satu keputusan baru, sementara misteri kamera tanpa nomor seri berkembang perlahan.">📷 Manga Slice of Life — Foto yang Belum Diambil</option>
+                      <option data-country="Japan" data-visual-style="anime_2d" value="Manga mystery orisinal: Siswa perpustakaan menemukan catatan kaki yang berubah setiap kali sebuah kebohongan diucapkan di sekolah. Bersama ketua klub radio, ia menelusuri pesan tersembunyi melalui buku-buku yang dipinjam dan berakhir pada siaran dari ruangan yang tidak tercatat.">📖 Manga Mystery — Catatan Kaki Berubah</option>
+                      <option data-country="Japan" data-visual-style="anime_2d" value="Manga sports orisinal: Tim olahraga layang-layang kompetitif di kota pesisir menggabungkan lari, strategi angin, dan desain tali. Seorang perancang pemalu dan pelari impulsif harus menyatukan gaya mereka untuk menghadapi tim juara tanpa meniru olahraga atau seri terkenal.">🪁 Manga Sports — Liga Angin Pesisir</option>
+                      <option data-country="Japan" data-visual-style="anime_2d" value="Manga sci-fi orisinal: Teknisi kereta terakhir memperbaiki gerbong yang dapat berhenti di stasiun dari ingatan penumpang. Setiap pemberhentian mengungkap konflik emosional berbeda, sementara ia mencari stasiun masa kecilnya yang hilang dari seluruh peta.">🚆 Manga Sci-Fi — Kereta Stasiun Ingatan</option>
                     </optgroup>
 
                     <optgroup label="🇯🇵 Anime Shonen, Samurai & Slice of Life (Jepang)">
@@ -200,6 +221,19 @@
                       <option data-country="Japan" value="Samurai Ronin Noir: Ronin pengembara bermata satu membela desa petani teh dari serbuan klan bandit kejam di bawah rintik hujan musim gugur Kyoto.">⚔️ Samurai Ronin - Pengembara Pedang Melindungi Desa Kyoto</option>
                       <option data-country="Japan" value="Tokyo Midnight Izakaya: Kisah hangat pemilik kedai ramen gang sempit di Shinjuku yang menyembuhkan luka hati para pelanggan larut malam dengan masakan penuh kenangan.">🍜 Slice of Life Tokyo - Kedai Ramen Larut Malam & Tamu Misterius</option>
                       <option data-country="Japan" value="J-Horror Kutukan Kuil: Mahasiswi arkeologi tanpa sengaja memutar kaset rekaman terkutuk dari kuil Shinto terlantar di pegunungan berkabut Nagano.">⛩️ J-Horror Misteri - Rekaman Terkutuk Kuil Pegunungan Nagano</option>
+                    </optgroup>
+
+                    <optgroup label="⚡ Anime & Superhero Battle / VS — Adu Kekuatan & Jurus Andalan">
+                      <option data-country="Japan" data-battle="true" data-visual-style="anime_2d" value="Anime Battle VS orisinal: Pendekar api biru bernama Akito berduel melawan pengendali badai bernama Raiga di arena terapung. Tampilkan pembukaan aura, adu kecepatan, jurus Api Naga Langit, counter Perisai Guntur, ultimate masing-masing, benturan energi non-lethal, dan pemenang yang ditentukan oleh strategi. Semua tokoh, kostum, kekuatan, dan nama jurus wajib orisinal tanpa meniru franchise apa pun.">🔥 Anime VS — Api Naga vs Pengendali Badai</option>
+                      <option data-country="Japan" data-battle="true" data-visual-style="anime_2d" value="Anime Battle VS orisinal: Ksatria es wanita bernama Setsuna menghadapi petarung magma bernama Guren di lembah kristal. Masing-masing memperlihatkan teknik dasar, pertahanan khas, kelemahan elemen, jurus andalan Istana Es Seribu Cermin dan Tinju Inti Vulkanik, lalu final clash non-lethal dengan hasil jelas.">❄️ Anime VS — Ratu Es vs Petarung Magma</option>
+                      <option data-country="Japan" data-battle="true" data-visual-style="anime_2d" value="Anime Ninja VS orisinal: Ninja bayangan Kagehiro melawan pendekar cahaya Hikari Ren di kota kuil futuristik. Bangun duel taktik berisi klon bayangan orisinal, jebakan cahaya, teleportasi pendek, pembacaan gerak lawan, jurus Gerhana Tanpa Suara dan Tebasan Fajar Prisma, lalu kemenangan melalui kecerdikan tanpa luka atau kematian.">🥷 Anime VS — Ninja Bayangan vs Pendekar Cahaya</option>
+                      <option data-country="Japan" data-battle="true" data-visual-style="anime_2d" value="Anime Mecha VS orisinal: Robot pilot Crimson Aegis beradu dengan unit Azure Tempest di orbit bulan buatan. Tampilkan manuver khas, sistem perisai, senjata energi non-lethal, mode transformasi unik, jurus Solar Breaker dan Cyclone Rail Burst, kerusakan mekanis ringan tanpa korban, serta duel final yang dimenangkan lewat penguasaan medan.">🤖 Mecha VS — Crimson Aegis vs Azure Tempest</option>
+                      <option data-country="Japan" data-battle="true" data-visual-style="anime_2d" value="Anime Martial Arts VS orisinal: Petarung gravitasi Daichi melawan ahli angin Sora dalam turnamen persahabatan. Setiap ronde memperlihatkan gaya bertarung berbeda, saling membaca kelemahan, jurus Medan Gravitasi Delapan Arah dan Langkah Topan Kosong, ultimate counter, serta penutup sportif dengan pemenang yang jelas.">🥋 Anime VS — Gravitasi vs Angin</option>
+                      <option data-country="United States" data-battle="true" data-visual-style="comic_book" value="Original Superhero VS: Pahlawan tenaga surya Solar Vanguard menghadapi vigilante pengendali kinetik Pulse Knight di rooftop kota fiktif. Tampilkan demonstrasi kekuatan masing-masing, penyelamatan warga sebagai bagian duel, Solar Halo Drive, Kinetic Reversal, benturan ultimate non-lethal, dan resolusi yang menjelaskan siapa unggul dan mengapa. Jangan gunakan nama, logo, kostum, atau kemampuan karakter franchise terkenal.">☀️ Superhero VS — Solar Vanguard vs Pulse Knight</option>
+                      <option data-country="United States" data-battle="true" data-visual-style="comic_book" value="Original Superhero VS: Penjaga lapis baja Ironwood Sentinel melawan pahlawan elastis energi Neon Flux di pelabuhan futuristik. Susun adu kekuatan, kelincahan, pertahanan, pemanfaatan lingkungan, jurus Bastion Overdrive dan Spectrum Sling, lalu final clash aman yang menguji strategi bukan sekadar tenaga.">🛡️ Superhero VS — Armor Sentinel vs Neon Flux</option>
+                      <option data-country="United States" data-battle="true" data-visual-style="comic_book" value="Original Superhero VS: Pengendali gravitasi Nova Warden berduel dengan pelari hipercepat Velocity Arc di arena simulasi kota. Perlihatkan speed trail, zona gravitasi, feint, counter, jurus Singularity Cage dan Seven-Second Thunder Run, lalu payoff visual yang menentukan pemenang tanpa kehancuran kota atau cedera berat.">🌌 Superhero VS — Gravitasi vs Kecepatan</option>
+                      <option data-country="Indonesia" data-battle="true" data-visual-style="comic_book" value="Superhero Nusantara orisinal VS: Penjaga energi petir Langit Aruna menghadapi pendekar batu hidup Bumi Raksa di arena kawah fiktif Indonesia. Tampilkan kekuatan petir, daya tahan batu, taktik medan, jurus Cakra Kilat Aruna dan Benteng Inti Bumi, ultimate masing-masing, serta akhir sportif non-lethal. Gunakan desain budaya lokal secara hormat tanpa meniru tokoh legenda atau franchise.">⚡ Superhero Nusantara VS — Petir vs Batu</option>
+                      <option data-country="United States" data-battle="true" data-visual-style="comic_book" value="Superhero Team VS orisinal: Duo pahlawan cahaya dan suara menghadapi duo pahlawan air dan magnet dalam pertandingan latihan terkontrol. Beri setiap tokoh kemampuan dan jurus andalan berbeda, combo dua orang, counter-combo, pergantian keunggulan, final team ultimate non-lethal, dan kemenangan berdasarkan kerja sama paling efektif.">💥 Team Battle VS — Cahaya & Suara vs Air & Magnet</option>
                     </optgroup>
 
                     <optgroup label="🇹🇷 Drama Turki / Dizi (Bosphorus & Ottoman)">
@@ -326,6 +360,34 @@
                       <option data-children="true" data-age-group="preschool" data-learning-domain="budaya" value="Sahabat hewan mengunjungi perayaan keluarga atau komunitas yang umum di negara target. Mereka belajar sapaan, makanan, musik, pakaian, dan kebiasaan setempat dengan hangat tanpa stereotip.">🌍 Hari Perayaan di Kotaku</option>
                       <option data-children="true" data-age-group="preschool" data-learning-domain="profesi" value="Anak-anak hewan mengenal beberapa penolong di komunitas seperti guru, tenaga kesehatan, petugas keselamatan, dan pekerja layanan. Seragam, tempat kerja, serta sebutan profesi disesuaikan dengan negara target.">🏘️ Para Penolong di Sekitar Kita</option>
                     </optgroup>
+
+                    <optgroup label="🌟 Kisah Baru Anak — Petualangan & Kebiasaan Baik">
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="kreativitas" value="Dua sahabat hewan ingin membuat hadiah dari bahan sederhana yang tersedia di sekitar mereka. Percobaan pertama belum berhasil, lalu mereka saling bertukar ide, memperbaiki karya, dan menemukan bahwa proses mencoba sama menyenangkannya dengan hasil akhir.">🎁 Hadiah Buatan Sahabat</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="sosial" value="Sekelompok sahabat hewan mengadakan permainan bergiliran. Ketika dua teman ingin menjadi yang pertama, mereka membuat penanda giliran, belajar menunggu dengan kegiatan kecil, lalu memastikan semua mendapat kesempatan yang adil.">🎠 Giliranku, Giliranmu</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="pemecahan-masalah" value="Sahabat hewan menemukan jalan piknik tertutup genangan kecil. Mereka mengamati benda di sekitar, mengusulkan beberapa cara aman, menguji ide satu per satu, lalu membuat jalur yang dapat dilewati bersama tanpa merusak taman.">🌧️ Jalan Kecil Setelah Hujan</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="kejujuran" value="Seekor anak hewan tanpa sengaja menukar kotak bekalnya dengan milik teman. Ia sempat bingung, lalu berkata jujur, mencari pemiliknya, mengembalikan kotak yang benar, dan mereka makan bersama dengan lega.">🥪 Kotak Bekal yang Tertukar</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="empati" value="Seorang sahabat hewan tampak lebih diam dari biasanya ketika hasil karyanya rusak. Teman-temannya belajar bertanya dengan lembut, mendengarkan tanpa memotong, menawarkan bantuan, lalu membuat karya baru bersama.">💛 Aku Mau Mendengarkan</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="kemandirian" value="Seekor anak hewan belajar menyiapkan tas kegiatan sendiri memakai daftar gambar sederhana. Ada satu benda yang terlupa, tetapi ia memeriksa kembali, memperbaikinya tanpa dimarahi, dan berangkat dengan percaya diri.">🎒 Tas Siap Berangkat</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="alam" value="Sahabat hewan mengikuti jejak daun, biji, dan suara lembut di taman untuk menemukan tempat yang cocok bagi tanaman baru. Mereka mengamati tanpa mengganggu hewan liar dan belajar meninggalkan alam tetap bersih.">🍃 Jejak Rahasia di Taman</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="musik" value="Tiga sahabat hewan membuat irama dari tepukan, ketukan kaki, dan benda aman di rumah. Awalnya bunyi mereka bertabrakan, lalu mereka belajar mendengar, mengikuti pola, dan memainkan lagu pendek bersama.">🥁 Orkestra Bunyi Kecil</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="bahasa" value="Sahabat hewan mencari kata-kata yang berlawanan melalui permainan gerak dan benda: besar-kecil, cepat-lambat, atas-bawah, penuh-kosong. Contoh, nama, serta dialog disesuaikan dengan bahasa target.">↕️ Pasangan Kata Ajaib</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="matematika" value="Dua sahabat membuka kios bermain dan mengelompokkan benda berdasarkan warna, bentuk, serta ukuran. Seorang pelanggan membawa benda yang membingungkan, lalu mereka mendiskusikan lebih dari satu cara mengelompokkannya.">🧺 Kios Kelompok Benda</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="rutinitas" value="Ketika rencana pagi berubah, seekor anak hewan merasa bingung. Orang dewasa tepercaya menunjukkan jadwal gambar baru, membantu memilih langkah berikutnya, dan mengajarkan bahwa perubahan dapat dihadapi dengan tenang.">🗓️ Rencana Baru Hari Ini</option>
+                      <option data-children="true" data-age-group="preschool" data-learning-domain="kerja-sama" value="Sekelompok sahabat ingin memindahkan keranjang yang terlalu besar untuk satu orang. Mereka membagi tugas sesuai kemampuan masing-masing, berkomunikasi dengan kata singkat, lalu mencapai tujuan tanpa berlomba atau saling menyalahkan.">🧺 Keranjang Kerja Sama</option>
+                    </optgroup>
+
+                    <optgroup label="🕌 Anak Belajar Agama Islam — Akhlak, Ibadah & Doa">
+                      <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Sekelompok sahabat hewan Muslim belajar mengenal lima rukun Islam melalui kartu gambar, lagu pendek, dan contoh sederhana dalam kehidupan sehari-hari. Gunakan bahasa ramah anak usia 4-6 tahun, suasana hangat, tanpa menggambarkan Allah, nabi, malaikat, atau tokoh suci secara visual.">🖐️ Mengenal Lima Rukun Islam</option>
+                      <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Kelinci kecil belajar urutan wudu dengan benar bersama guru yang lembut: niat, membasuh tangan, berkumur, membersihkan hidung, wajah, tangan, kepala, telinga, dan kaki. Setiap langkah ditampilkan jelas, sederhana, bersih, dan ceria.">💧 Ayo Belajar Wudu</option>
+                      <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Dua sahabat hewan belajar gerakan salat secara tertib bersama orang dewasa tepercaya, mulai berdiri, rukuk, sujud, hingga salam. Fokus pada urutan, kebersihan, ketenangan, dan rasa hormat; jangan menampilkan teks bacaan panjang atau klaim hukum agama yang rumit.">🧎 Gerakan Salat dengan Tertib</option>
+                      <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Anak beruang belajar doa dan kebiasaan baik sebelum makan: mencuci tangan, duduk rapi, membaca basmalah, makan dengan tangan kanan, tidak berlebihan, lalu mengucapkan hamdalah. Gunakan kalimat pendek dan pengulangan yang mudah diikuti.">🍽️ Adab dan Doa Sebelum Makan</option>
+                      <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Sahabat hewan mempraktikkan akhlak baik: mengucapkan salam, berkata jujur, meminta izin, membantu teman, berbagi, meminta maaf, dan mengucapkan terima kasih. Pembelajaran ditunjukkan melalui tindakan sederhana, bukan ceramah panjang.">🤲 Akhlak Baik Setiap Hari</option>
+                      <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Anak kucing mengikuti rutinitas sebelum tidur: merapikan mainan, membersihkan diri, membaca doa tidur singkat bersama orang tua, berbaring dengan tenang, lalu bangun pagi sambil bersyukur. Suasana aman, lembut, dan menenangkan.">🌙 Doa dan Adab Sebelum Tidur</option>
+                      <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Sekelompok sahabat hewan belajar makna puasa Ramadan dengan cara sederhana: menahan diri, berkata baik, membantu keluarga, berbagi makanan, dan bergembira saat berbuka. Tidak ada adegan anak dipaksa lapar atau terlihat sakit.">🌟 Belajar Puasa dan Berbagi</option>
+                      <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Sahabat hewan mengunjungi masjid bersama orang dewasa dan belajar adab sederhana: berpakaian bersih, masuk dengan tenang, menjaga suara, merapikan sandal, menjaga kebersihan, dan menghormati orang yang beribadah.">🕌 Adab Baik di Masjid</option>
+                      <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Anak-anak hewan belajar mengenal huruf hijaiyah dasar dari alif sampai tsa melalui kartu besar, benda berwarna, irama lembut, dan permainan mencocokkan bentuk. Pengucapan dibuat perlahan dan diulang agar mudah diikuti.">🔤 Mengenal Huruf Hijaiyah</option>
+                      <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Dua sahabat hewan melihat keindahan alam seperti matahari, hujan, tumbuhan, dan hewan, lalu belajar bersyukur, merawat ciptaan, tidak merusak lingkungan, dan berbagi kebaikan. Jangan memvisualisasikan Allah atau sosok gaib apa pun.">🌿 Bersyukur dan Menjaga Ciptaan</option>
+                    </optgroup>
                   </select>
                 </div>
 
@@ -342,6 +404,20 @@
                   <small id="scriptModeHint" style="display:none; color:#7dd3fc; margin-top:7px; line-height:1.45;">Alur dan dialog dipertahankan. AI hanya membagi scene dan menambahkan arahan teknis kamera, blocking, pencahayaan, serta durasi.</small>
                 </div>
 
+                <details class="creative-brief-panel" id="creativeBriefPanel">
+                  <summary>🧠 Creative Brief B.R.I.E.F <span>Opsional · AI melengkapi yang kosong</span></summary>
+                  <p class="creative-brief-help">Sumber utama untuk hook, cerita, visual, audio, produk, CTA, dan audit realism.</p>
+                  <div class="creative-brief-grid">
+                    <textarea id="briefBackgroundInput" rows="3" placeholder="B — Background: brand/produk, konteks, masalah, kompetitor..."></textarea>
+                    <textarea id="briefResultInput" rows="3" placeholder="R — Result: tujuan, platform, format, hasil yang ingin dicapai..."></textarea>
+                    <textarea id="briefAudienceInput" rows="3" placeholder="I — Intended Audience: umur, lokasi, kebiasaan, pain point, desire..."></textarea>
+                    <textarea id="briefProductValueInput" rows="3" placeholder="Produk: fungsi, waktu penggunaan, pain point, 1–2 USP/manfaat..."></textarea>
+                    <textarea id="briefExecutionInput" rows="3" placeholder="E — Execution: angle, tone, hook, pesan utama, CTA, referensi..."></textarea>
+                    <textarea id="briefConstraintsInput" rows="3" placeholder="F — Final Constraint: wajib/tidak boleh, brand/legal, batas teknis..."></textarea>
+                  </div>
+                  <div class="realism-badges"><span>Visual</span><span>Karakter</span><span>Cerita</span><span>Gerak</span><span>Humanization</span></div>
+                </details>
+
                 <!-- Dropzone Gambar Referensi -->
                 <div class="form-group" style="margin: 0;">
                   <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px; display: block;">📸 Gambar Referensi Karakter / Gaya Visual (Opsional):</label>
@@ -350,7 +426,7 @@
                     <span style="font-size: 26px;">📸</span>
                     <div style="text-align: left;">
                       <p style="font-size: 13px; font-weight: 700; color: var(--text-primary); margin: 0;">Klik atau drag & drop gambar referensi di sini</p>
-                      <small style="color: var(--text-muted); font-size: 11px;">Mendukung 1 atau lebih gambar gaya visual / wajah karakter</small>
+                      <small style="color: var(--text-muted); font-size: 11px;">Mendukung maksimal 7 gambar gaya visual / wajah karakter</small>
                     </div>
                     <div class="image-preview-list" id="imagePreviewList"></div>
                   </div>
@@ -393,10 +469,14 @@
                     <small style="color:#94a3b8; line-height:1.45;">Posisi kosong = otomatis dua scene tengah (contoh film 12 scene memakai scene 6–7). Produk tetap menjadi bagian dari alur, bukan iklan tempelan.</small>
                   </div>
                 </div>
+
+                <!-- Moved here at runtime from Parameter Video Studio so story targeting
+                     stays grouped directly below affiliate story integration. -->
+                <div id="storyTargetingControls" style="display:flex; flex-direction:column; gap:18px;"></div>
               </div>
 
               <!-- RIGHT COLUMN: Parameter Produksi -->
-              <div style="display: flex; flex-direction: column; gap: 18px; background: rgba(8, 12, 24, 0.5); padding: 22px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.08);">
+              <div id="productionParametersColumn" style="display: flex; flex-direction: column; gap: 18px; background: rgba(8, 12, 24, 0.5); padding: 22px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.08);">
                 <h4 style="font-size: 15px; font-weight: 800; color: var(--neon-cyan); margin: 0 0 4px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 10px; display: flex; align-items: center; gap: 8px;">
                   <span>⚙️</span> Parameter Video Studio
                 </h4>
@@ -434,6 +514,70 @@
 
                 <!-- Aspect Ratio Video -->
                 <div class="form-group" style="margin: 0;">
+                  <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; display: block;">🎨 Visual Style Lock:</label>
+                  <select id="visualStyleSelect" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(168, 85, 247, 0.45); color: #ffffff; font-size: 13px; font-weight: 600;">
+                    <option value="live_action" selected>🎥 Live-Action Sinematik (Manusia Asli)</option>
+                    <option value="3d_cartoon">🧸 Kartun 3D / Feature Animation</option>
+                    <option value="2d_animation">🎨 Kartun 2D / Hand-Drawn Animation</option>
+                    <option value="anime_2d">🌸 Anime 2D / Cel Animation</option>
+                    <option value="toy_brick">🧱 Toy Brick Animation / Figur Balok</option>
+                    <option value="line_character">✏️ Line Character / Kartun Garis Minimalis</option>
+                    <option value="claymation">🪨 Claymation / Stop-Motion Tanah Liat</option>
+                    <option value="storybook_watercolor">📖 Storybook Watercolor / Buku Cerita</option>
+                    <option value="paper_cutout">✂️ Paper Cutout / Kolase Kertas</option>
+                    <option value="pixel_art">👾 Pixel Art / Retro Game</option>
+                    <option value="comic_book">💥 Comic Book / Graphic Novel</option>
+                  </select>
+                  <p style="font-size: 11px; color: var(--text-muted); margin: 6px 0 0;">Dikunci untuk character sheet, storyboard image, dan seluruh video scene.</p>
+                </div>
+
+                <div class="form-group" style="margin:0; padding:12px; border-radius:12px; background:rgba(168,85,247,.06); border:1px solid rgba(168,85,247,.2);">
+                  <label style="font-size:13px; font-weight:800; color:#e9d5ff; margin-bottom:9px; display:block;">✨ Finishing Look YouTube (Opsional)</label>
+                  <select id="visualVibeSelect" hidden>
+                      <option value="none">Vibe: Auto AI</option>
+                      <option value="pro_cinematic">Vibe: Pro Cinematic</option>
+                      <option value="clean_commercial">Vibe: Clean Commercial</option>
+                      <option value="documentary">Vibe: Documentary</option>
+                      <option value="sci_fi">Vibe: Sci-Fi</option>
+                      <option value="ugc_natural">Vibe: UGC Natural</option>
+                      <option value="korean_drama">Vibe: Drama Korea</option>
+                      <option value="microdrama">Vibe: Microdrama</option>
+                      <option value="kids_colorful">Vibe: Kids Colorful</option>
+                      <option value="cozy_lifestyle">Vibe: Cozy Lifestyle</option>
+                      <option value="luxury_premium">Vibe: Luxury Premium</option>
+                      <option value="dark_thriller">Vibe: Dark Thriller</option>
+                  </select>
+                  <select id="lightingStyleSelect" hidden>
+                      <option value="none">Light: Auto</option>
+                      <option value="soft_light">Light: Soft</option>
+                      <option value="golden_hour">Light: Golden Hour</option>
+                      <option value="volumetric">Light: Volumetric</option>
+                      <option value="chiaroscuro">Light: Chiaroscuro</option>
+                      <option value="low_key">Light: Low Key</option>
+                      <option value="backlight">Light: Backlight</option>
+                      <option value="rainy">Light: Rainy</option>
+                  </select>
+                  <select id="colorPaletteSelect" hidden>
+                      <option value="none">Color: Auto</option>
+                      <option value="warm">Color: Warm</option>
+                      <option value="cool">Color: Cool</option>
+                      <option value="vibrant">Color: Vibrant</option>
+                      <option value="pastel">Color: Pastel</option>
+                      <option value="earthy">Color: Earthy</option>
+                      <option value="complementary">Color: Complementary</option>
+                      <option value="teal_orange">Color: Teal–Orange</option>
+                  </select>
+                  <div class="finish-picker-tabs" role="tablist" aria-label="Kategori finishing look">
+                    <button type="button" class="finish-picker-tab active" data-finish-tab="vibe">Vibe</button>
+                    <button type="button" class="finish-picker-tab" data-finish-tab="lighting">Lighting</button>
+                    <button type="button" class="finish-picker-tab" data-finish-tab="color">Color</button>
+                  </div>
+                  <div id="finishingLookCardGrid" class="finish-card-grid"></div>
+                  <p style="font-size:11px; color:var(--text-muted); margin:7px 0 0;">Auto AI meracik palet, cahaya, material, motif, dan object cerita baru sesuai niche. Pilihan manual akan mengunci kategori tersebut.</p>
+                </div>
+
+                <!-- Aspect Ratio Video -->
+                <div class="form-group" style="margin: 0;">
                   <div class="aspect-label-row">
                     <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary);">📱 Aspect Ratio Video:</label>
                     <label class="aspect-default-option">
@@ -442,8 +586,8 @@
                     </label>
                   </div>
                   <select id="aspectSelect" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600;">
-                    <option value="landscape" selected>🖥️ Landscape 16:9 (Film / YouTube)</option>
-                    <option value="portrait">📱 Portrait 9:16 (TikTok / Reels / Shorts)</option>
+                    <option value="landscape">🖥️ Landscape 16:9 (Film / YouTube)</option>
+                    <option value="portrait" selected>📱 Portrait 9:16 (TikTok / Reels / Shorts)</option>
                   </select>
                 </div>
 
@@ -554,15 +698,19 @@
             </div>
 
             <!-- Total Duration Badge -->
-            <div id="totalDurationLabel" style="color: var(--neon-cyan); font-size: 13px; margin-bottom: 24px; font-weight: 700; padding: 14px 22px; background: rgba(56, 189, 248, 0.1); border-radius: 14px; border: 1px solid rgba(56, 189, 248, 0.3); display: flex; align-items: center; justify-content: space-between;">
-              <span>⏱️ Total Durasi Film: <b style="color: #ffffff;">10 Menit 0 Detik (60 Scene x 10s)</b></span>
-              <span style="opacity: 0.9; font-size: 12px; color: var(--neon-purple); font-weight: 700;">⚡ Google Flow Omni Flash Ready</span>
+            <div id="totalDurationLabel" style="color: var(--neon-cyan); font-size: 12px; margin-bottom: 24px; font-weight: 700; padding: 14px 16px; background: rgba(56, 189, 248, 0.1); border-radius: 14px; border: 1px solid rgba(56, 189, 248, 0.3); display: flex; align-items: center; white-space: nowrap;">
+              ⏱️ Total: 1 Menit (6 Scene × 10s) • Flow: 6 × 15 = <b style="color:#c4b5fd; margin-left:4px;">90 Kredit</b>
             </div>
 
             <!-- Tombol Eksekusi Utama -->
-            <button type="submit" class="btn-primary full-width" id="generateStoryboardBtn" style="height: 56px; font-size: 16px; font-weight: 800; border-radius: 14px; background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple)); border: none; color: #ffffff; cursor: pointer; transition: all 0.3s; box-shadow: 0 10px 30px rgba(168, 85, 247, 0.4); letter-spacing: 0.5px;">
-              ✨ Generate Full AI Storyboard (Gemini 3.6 Flash)
-            </button>
+            <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:12px; align-items:stretch;">
+              <button type="submit" class="btn-primary full-width" id="generateStoryboardBtn" style="height: 56px; font-size: 16px; font-weight: 800; border-radius: 14px; background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple)); border: none; color: #ffffff; cursor: pointer; transition: all 0.3s; box-shadow: 0 10px 30px rgba(168, 85, 247, 0.4); letter-spacing: 0.5px;">
+                ✨ Generate Full AI Storyboard (Gemini 3.6 Flash)
+              </button>
+              <button type="button" class="btn-secondary" id="openImportStoryboardBtn" style="min-width:210px; height:56px; padding:0 20px; border-radius:14px; border:1px solid var(--neon-cyan); color:#e0f2fe; background:rgba(14,165,233,.12); font-size:14px; font-weight:800; cursor:pointer;">
+                📥 Import Storyboard JSON
+              </button>
+            </div>
           </form>
         </div>
       </section>
@@ -892,6 +1040,47 @@
         </div>
       </section>
 
+      <section class="tab-page" id="tab-ugc-affiliate" style="max-width:1200px;margin:0 auto;width:100%;">
+        <div class="card asset-lab">
+          <div class="asset-lab-header">
+            <div><h3>🛍️ UGC Affiliate Asset Lab</h3><p>Validasi aset dahulu, bangun Character/Product Master, lalu teruskan ke produksi.</p></div>
+            <div class="asset-workflow"><span class="active">1 Asset</span><b>→</b><span>2 Brief</span><b>→</b><span>3 Storyboard</span><b>→</b><span>4 Render</span></div>
+          </div>
+          <div class="ugc-story-config">
+            <div><label>Mode Produksi</label><select id="ugcProductionMode"><option value="realism">UGC Realism — Natural & Relatable</option><option value="commercial">Commercial — Premium Product Ads</option></select></div>
+            <div><label>Platform</label><select id="ugcPlatform"><option>TikTok</option><option>Instagram Reels</option><option>YouTube Shorts</option><option>YouTube</option></select></div>
+            <div><label>Tone</label><input id="ugcTone" type="text" value="Natural, fresh, friendly"></div>
+            <div class="wide"><label>Latar / Background</label><div class="ugc-background-row"><select id="ugcBackground"><option value="auto">✨ Rekomendasi AI dari produk & brief</option><option value="home_window">Rumah dekat jendela — natural creator UGC</option><option value="bathroom_vanity">Vanity kamar mandi bersih</option><option value="modern_kitchen">Dapur modern yang benar-benar digunakan</option><option value="work_desk">Meja kerja/laptop yang lived-in</option><option value="cafe_terrace">Teras kafe urban</option><option value="tropical_beach">Pantai tropis — produk outdoor</option><option value="poolside">Tepi kolam — produk tahan air/outdoor</option><option value="minimal_studio">Studio minimal netral</option><option value="premium_podium">Podium produk premium</option><option value="custom">✦ Custom (ketik sendiri)</option></select><input id="ugcCustomBackground" type="text" placeholder="Deskripsikan lokasi, waktu, material, cahaya, dan elemen penting..." disabled></div></div>
+            <div class="wide"><label>Pencahayaan / Lighting</label><div class="ugc-background-row"><select id="ugcLighting"><option value="auto">✨ Rekomendasi AI sesuai background & produk</option><option value="natural_window">Natural Window Light — lembut dan realistis</option><option value="hard_window">Hard Window Light — bayangan matahari tegas</option><option value="phone_flash">Phone Camera Flash — raw creator/night UGC</option><option value="cafe_window">Cafe Window Light — warm ambient</option><option value="overcast">Overcast Daylight — rata dan lembut</option><option value="store_light">Convenience Store Light — practical fluorescent</option><option value="night_street">Night Street Lighting — practical city lights</option><option value="golden_hour">Golden Hour — outdoor hangat</option><option value="softbox_commercial">Softbox Commercial — produk premium terkontrol</option><option value="custom">✦ Custom (ketik sendiri)</option></select><input id="ugcCustomLighting" type="text" placeholder="Deskripsikan sumber, arah, kualitas, temperatur, exposure..." disabled></div></div>
+            <div class="wide"><label>Logline / Konsep Konten</label><textarea id="ugcLogline" rows="2" placeholder="Siapa creator-nya, sedang di mana, masalah apa, mengapa produk relevan..."></textarea></div>
+            <div class="wide"><label>Emotional Arc</label><input id="ugcEmotionArc" type="text" value="Masalah → penasaran → mencoba → bukti → lega → CTA natural"></div>
+          </div>
+          <div class="asset-lab-grid">
+            <article class="asset-tool-card">
+              <h4>👤 Character Master</h4><p>Periksa resolusi, exposure, dan indikasi blur sebelum membuat referensi 3×3.</p>
+              <label class="asset-drop"><input id="ugcCharacterAsset" type="file" accept="image/jpeg,image/png,image/webp"><span>＋ Pilih foto karakter utama</span></label>
+              <div id="ugcCharacterAudit" class="asset-audit empty">Belum ada aset yang diperiksa.</div>
+              <textarea id="ugcCharacterIdentity" rows="3" placeholder="Identitas yang dikunci: usia, rambut, warna kulit, bentuk wajah, proporsi..."></textarea>
+              <textarea id="ugcOutfitRequest" rows="2" placeholder="Outfit pengganti (opsional). Hanya pakaian yang boleh berubah..."></textarea>
+              <div class="asset-actions"><button type="button" class="btn-primary" id="generateCharacterSheetPrompt">Buat Prompt Contact Sheet</button><button type="button" class="btn-secondary" id="sendCharacterToCasting">Kirim ke Casting</button></div>
+            </article>
+            <article class="asset-tool-card">
+              <h4>📦 Product Master</h4><p>Kunci bentuk, warna, tutup, logo, label, material, dan skala produk dari berbagai sudut.</p>
+              <label class="asset-drop"><input id="ugcProductAsset" type="file" accept="image/jpeg,image/png,image/webp"><span>＋ Pilih foto produk terbaik</span></label>
+              <div id="ugcProductAudit" class="asset-audit empty">Belum ada aset yang diperiksa.</div>
+              <input id="ugcProductName" type="text" placeholder="Nama produk">
+              <textarea id="ugcProductIdentity" rows="3" placeholder="Ciri produk: bentuk kemasan, warna, material, posisi logo/label, ukuran..."></textarea>
+              <div class="asset-actions"><button type="button" class="btn-primary" id="generateProductSheetPrompt">Buat Prompt Product Sheet</button><button type="button" class="btn-secondary" id="sendProductToStoryboard">Pakai di Storyboard</button></div>
+            </article>
+          </div>
+          <article class="asset-prompt-result">
+            <div><h4>✨ Prompt Asset Master</h4><button type="button" class="btn-secondary" id="copyAssetPrompt">📋 Copy Prompt</button></div>
+            <textarea id="assetMasterPrompt" rows="12" readonly placeholder="Prompt Contact Sheet akan muncul di sini..."></textarea>
+          </article>
+          <div class="asset-note"><strong>Asset gate:</strong> resolusi rendah, exposure buruk, atau indikasi blur diberi status “Perlu diperbaiki”. Verifikasi wajah dan logo tetap dilakukan pengguna sebelum produksi.</div>
+        </div>
+      </section>
+
       <!-- TAB 6: Actors / Casting Karakter -->
       <section class="tab-page" id="tab-actors" style="max-width: 1200px; margin: 0 auto; width: 100%;">
         <div class="card" style="padding: 32px; background: linear-gradient(145deg, rgba(12, 18, 36, 0.85), rgba(20, 29, 54, 0.75)); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 20px; backdrop-filter: blur(24px); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);">
@@ -1025,7 +1214,7 @@
 
   <!-- YouTube SEO Kit Modal Glass -->
   <div class="modal-overlay" id="seoKitModal">
-    <div class="modal-card" style="width: 680px; max-height: 88vh; overflow-y: auto;">
+    <div class="modal-card seo-modal-card" style="width: 680px; max-height: 88vh;">
       <div class="modal-header">
         <h3>🚀 YouTube SEO & Marketing Kit</h3>
         <button class="close-modal-btn" id="closeSeoModalBtn">&times;</button>
@@ -1045,6 +1234,48 @@
       </div>
       <div class="modal-body" id="historyModalBody">
         <div style="text-align: center; padding: 20px; color: var(--text-secondary);">Memuat riwayat storyboard tersimpan...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import Storyboard JSON Modal -->
+  <div class="modal-overlay" id="importStoryboardModal">
+    <div class="modal-card" style="width:min(920px, 94vw); max-height:92vh; overflow-y:auto;">
+      <div class="modal-header">
+        <div>
+          <h3 id="importStoryboardModalTitle" style="margin:0;">📥 Import Storyboard dari AI Lain</h3>
+          <p id="importStoryboardModalSubtitle" style="margin:6px 0 0; color:var(--text-secondary); font-size:12px;">Salin prompt, kirim ke AI pilihanmu, lalu tempel hasil JSON-nya di bawah.</p>
+        </div>
+        <button class="close-modal-btn" id="closeImportStoryboardBtn">&times;</button>
+      </div>
+      <div class="modal-body" style="display:grid; gap:18px;">
+        <section style="padding:14px; border-radius:12px; border:1px solid rgba(56,189,248,.22); background:rgba(56,189,248,.05);">
+          <label for="externalAiStoryIdea" style="display:block; margin-bottom:9px; font-size:13px; font-weight:800; color:#e0f2fe;">1. Ide cerita & jumlah scene</label>
+          <div style="display:grid; grid-template-columns:minmax(0,1fr) 150px; gap:10px; align-items:start;">
+            <textarea id="externalAiStoryIdea" rows="4" placeholder="Tulis ide atau naskah cerita di sini..." style="width:100%; box-sizing:border-box; resize:vertical; padding:12px; border-radius:10px; border:1px solid rgba(56,189,248,.35); background:rgba(2,6,23,.88); color:#f8fafc; font:13px/1.5 inherit;"></textarea>
+            <div>
+              <label for="externalAiSceneCount" style="display:block; margin-bottom:6px; color:var(--text-secondary); font-size:11px; font-weight:700;">JUMLAH SCENE</label>
+              <input id="externalAiSceneCount" type="number" min="1" max="100" value="6" style="width:100%; height:44px; box-sizing:border-box; padding:0 12px; border-radius:10px; border:1px solid rgba(168,85,247,.45); background:rgba(2,6,23,.88); color:#fff; font-size:14px; font-weight:800;">
+            </div>
+          </div>
+          <small style="display:block; margin-top:8px; color:#94a3b8;">Template di bawah akan diperbarui otomatis dan siap ditempel ke Gemini atau GPT.</small>
+        </section>
+        <section>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px;">
+            <label for="externalAiPromptTemplate" style="font-size:13px; font-weight:800; color:#e0f2fe;">2. Template prompt untuk AI lain</label>
+            <button type="button" class="btn-secondary" id="copyExternalAiPromptBtn" style="padding:8px 14px; border-color:var(--neon-cyan); color:var(--neon-cyan); font-weight:700; transition:all .2s ease;">📋 Copy Prompt</button>
+          </div>
+          <textarea id="externalAiPromptTemplate" readonly rows="13" spellcheck="false" style="width:100%; box-sizing:border-box; resize:vertical; padding:14px; border-radius:12px; border:1px solid rgba(56,189,248,.35); background:rgba(2,6,23,.82); color:#cbd5e1; font:12px/1.55 Consolas,monospace;"></textarea>
+        </section>
+        <section>
+          <label for="importStoryboardJsonInput" style="display:block; margin-bottom:8px; font-size:13px; font-weight:800; color:#e9d5ff;">3. Tempel JSON hasil AI</label>
+          <textarea id="importStoryboardJsonInput" rows="13" spellcheck="false" placeholder='Tempel mulai dari { sampai } — blok ```json juga boleh.' style="width:100%; box-sizing:border-box; resize:vertical; padding:14px; border-radius:12px; border:1px solid rgba(168,85,247,.4); background:rgba(2,6,23,.9); color:#f8fafc; font:12px/1.55 Consolas,monospace;"></textarea>
+          <div id="importStoryboardValidationMsg" style="min-height:20px; margin-top:8px; color:var(--text-secondary); font-size:12px;"></div>
+        </section>
+        <div style="display:flex; justify-content:flex-end; gap:10px;">
+          <button type="button" class="btn-secondary" id="cancelImportStoryboardBtn">Batal</button>
+          <button type="button" class="btn-primary" id="confirmImportStoryboardBtn" style="padding:10px 20px; font-weight:800;">✅ Validasi & Import</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1124,6 +1355,6 @@
   </div>
 
   <script src="history_selection.js?v=1.0.0"></script>
-  <script src="app.js?v=1.3.17"></script>
+  <script src="app.js?v=1.3.30"></script>
 </body>
 </html>

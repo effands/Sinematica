@@ -3,6 +3,8 @@ import unittest
 from backend.jobs_executor import (
     build_video_reference_ids,
     build_live_action_guard,
+    build_visual_style_guard,
+    build_finishing_look_guard,
     choose_instance_for_project,
     fictionalize_character_names,
     resolve_affiliate_scene_numbers,
@@ -25,7 +27,46 @@ class VideoReferenceSelectionTests(unittest.TestCase):
     def test_children_mode_does_not_receive_live_action_guard(self):
         self.assertEqual(build_live_action_guard(children_mode=True), "")
 
-    def test_all_character_sheets_and_storyboard_fit_up_to_ten(self):
+    def test_each_visual_medium_has_exclusive_negative_constraints(self):
+        three_d = build_visual_style_guard("3d_cartoon")
+        two_d = build_visual_style_guard("2d_animation")
+        anime = build_visual_style_guard("anime_2d")
+        self.assertIn("STYLIZED 3D ANIMATION ONLY", three_d)
+        self.assertIn("NO live-action", three_d)
+        self.assertIn("HAND-DRAWN 2D ANIMATION ONLY", two_d)
+        self.assertIn("NO live-action", two_d)
+        self.assertIn("2D ANIME PRODUCTION STYLE ONLY", anime)
+
+    def test_specialized_visual_styles_have_medium_specific_contracts(self):
+        self.assertIn("TOY-BRICK 3D ANIMATION ONLY", build_visual_style_guard("toy_brick"))
+        self.assertIn("LINE-CHARACTER ANIMATION ONLY", build_visual_style_guard("line_character"))
+        self.assertIn("CLAYMATION STOP-MOTION ONLY", build_visual_style_guard("claymation"))
+        self.assertIn("WATERCOLOR STORYBOOK", build_visual_style_guard("storybook_watercolor"))
+        self.assertIn("PAPER-CUTOUT ANIMATION ONLY", build_visual_style_guard("paper_cutout"))
+        self.assertIn("PIXEL-ART ANIMATION ONLY", build_visual_style_guard("pixel_art"))
+        self.assertIn("COMIC-BOOK ANIMATION ONLY", build_visual_style_guard("comic_book"))
+
+    def test_youtube_finishing_look_combines_vibe_light_and_color(self):
+        guard = build_finishing_look_guard({
+            "visual_vibe": "pro_cinematic",
+            "lighting_style": "golden_hour",
+            "color_palette": "warm",
+        })
+        self.assertIn("professional cinematic", guard)
+        self.assertIn("golden-hour", guard)
+        self.assertIn("warm amber", guard)
+
+    def test_auto_art_direction_reaches_final_flow_prompt_guard(self):
+        guard = build_finishing_look_guard({
+            "visual_vibe": "none",
+            "lighting_style": "none",
+            "color_palette": "none",
+            "auto_art_direction": "AUTO AI ART DIRECTION ART-12345678: jade palette; folding map hero object",
+        })
+        self.assertIn("jade palette", guard)
+        self.assertIn("folding map hero object", guard)
+
+    def test_character_sheets_and_storyboard_fit_within_seven(self):
         self.assertEqual(
             build_video_reference_ids(["char-a", "char-b", "char-c"], "storyboard"),
             ["char-a", "char-b", "char-c", "storyboard"],
@@ -63,9 +104,9 @@ class VideoReferenceSelectionTests(unittest.TestCase):
             ["last-frame", "char-a", "char-b"],
         )
 
-    def test_ten_character_sheets_take_priority_over_storyboard(self):
+    def test_only_seven_character_sheets_take_priority_over_storyboard(self):
         characters = [f"char-{index}" for index in range(10)]
-        self.assertEqual(build_video_reference_ids(characters, "storyboard"), characters)
+        self.assertEqual(build_video_reference_ids(characters, "storyboard"), characters[:7])
 
     def test_storyboard_only_fills_an_unused_slot(self):
         self.assertEqual(
