@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from typing import Any, Dict, List
+import re
 
 
 _SIGNATURES = (
@@ -107,3 +108,48 @@ def build_speaker_lock(scene: Dict[str, Any], characters: List[Dict[str, Any]]) 
         + "\nDuring each line, all non-speakers keep their mouths closed and only react physically. "
           "Never transfer a line, voice, or lip movement to another face."
     )
+
+
+def canonical_dialogue_lines(scene: Dict[str, Any]) -> List[str]:
+    """Return the only spoken lines allowed in a rendered scene, in authored order."""
+    dialogue = scene.get("dialogue") or []
+    if not isinstance(dialogue, list):
+        return []
+    return [
+        str(turn.get("line") or "").strip()
+        for turn in dialogue if isinstance(turn, dict) and str(turn.get("line") or "").strip()
+    ]
+
+
+def enforce_spoken_language_lock(prompt: str, scene: Dict[str, Any], target_lang: str) -> str:
+    """Remove invented quoted speech and make authored local-language dialogue authoritative."""
+    text = str(prompt or "").strip()
+    canonical = canonical_dialogue_lines(scene)
+    allowed = {line.casefold() for line in canonical}
+
+    if canonical:
+        def replace_double(match):
+            value = match.group(2).strip()
+            return match.group(0) if value.casefold() in allowed else "[no additional spoken line]"
+
+        def replace_single(match):
+            value = match.group(1).strip()
+            return match.group(0) if value.casefold() in allowed else "[no additional spoken line]"
+
+        text = re.sub(r'(["“])([^"”\n]{1,240})(["”])', replace_double, text)
+        text = re.sub(r"(?<!\w)'([^'\n]{2,240})'(?!\w)", replace_single, text)
+        exact = "\n".join(f'- "{line.replace(chr(34), chr(39))}"' for line in canonical)
+        rule = (
+            f"SPOKEN LANGUAGE LOCK (HIGHEST AUDIO PRIORITY): all speech is natural {target_lang or 'target-language'} only. "
+            "Ignore and do not vocalize any earlier placeholder, paraphrase, translation, or English speech. "
+            "The ONLY permitted spoken lines, verbatim and in this order, are:\n" + exact
+        )
+    else:
+        text = re.sub(r'(["“])([^"”\n]{1,240})(["”])', "[no spoken dialogue]", text)
+        text = re.sub(r"(?<!\w)'([^'\n]{2,240})'(?!\w)", "[no spoken dialogue]", text)
+        rule = (
+            f"SPOKEN LANGUAGE LOCK (HIGHEST AUDIO PRIORITY): no improvised speech in any language. "
+            f"If incidental human vocalization is unavoidable, it must be non-verbal and culturally natural for {target_lang or 'the target audience'}."
+        )
+    text = re.sub(r"\n\nSPOKEN LANGUAGE LOCK \(HIGHEST AUDIO PRIORITY\):[\s\S]*$", "", text).rstrip()
+    return f"{text}\n\n{rule}".strip()

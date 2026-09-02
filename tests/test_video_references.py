@@ -5,6 +5,7 @@ from backend.jobs_executor import (
     build_live_action_guard,
     build_visual_style_guard,
     build_finishing_look_guard,
+    adapt_template_for_visual_style,
     choose_instance_for_project,
     fictionalize_character_names,
     resolve_affiliate_scene_numbers,
@@ -72,14 +73,14 @@ class VideoReferenceSelectionTests(unittest.TestCase):
             ["char-a", "char-b", "char-c", "storyboard"],
         )
 
-    def test_continuity_frame_is_first_and_storyboard_is_last_ingredient(self):
+    def test_character_master_precedes_continuity_and_storyboard_is_last(self):
         self.assertEqual(
             build_video_reference_ids(
                 ["char-a", "char-b"],
                 "storyboard",
                 continuity_media_id="last-frame",
             ),
-            ["last-frame", "char-a", "char-b", "storyboard"],
+            ["char-a", "char-b", "last-frame", "storyboard"],
         )
 
     def test_affiliate_product_images_follow_characters_and_precede_storyboard(self):
@@ -90,10 +91,10 @@ class VideoReferenceSelectionTests(unittest.TestCase):
                 continuity_media_id="last-frame",
                 product_media_ids=["product-front", "product-side"],
             ),
-            ["last-frame", "char-a", "product-front", "product-side", "storyboard"],
+            ["char-a", "last-frame", "product-front", "product-side", "storyboard"],
         )
 
-    def test_ingredient_limit_prioritizes_last_frame_then_characters(self):
+    def test_ingredient_limit_prioritizes_character_master_before_last_frame(self):
         self.assertEqual(
             build_video_reference_ids(
                 ["char-a", "char-b", "char-c"],
@@ -101,8 +102,25 @@ class VideoReferenceSelectionTests(unittest.TestCase):
                 continuity_media_id="last-frame",
                 limit=3,
             ),
-            ["last-frame", "char-a", "char-b"],
+            ["char-a", "char-b", "char-c"],
         )
+
+    def test_stylized_character_template_contains_no_photoreal_conflict(self):
+        template = "Ultra photorealistic | Editorial fashion photography | Natural skin texture | Realistic fabric | cartoon style, anime style, painterly rendering"
+        for style in ("3d_cartoon", "anime_2d", "comic_book", "storybook_watercolor"):
+            adapted = adapt_template_for_visual_style(template, style, children_mode=False).lower()
+            self.assertNotIn("photorealistic", adapted)
+            self.assertNotIn("editorial fashion photography", adapted)
+            self.assertNotIn("natural skin texture", adapted)
+            self.assertNotIn("realistic fabric", adapted)
+
+    def test_late_ai_scene_prompt_is_sanitized_before_style_lock(self):
+        prompt = "Ultra photorealistic live-action photography with real human actors and natural skin pores."
+        adapted = adapt_template_for_visual_style(prompt, "anime_2d", children_mode=False).lower()
+        self.assertNotIn("photorealistic", adapted)
+        self.assertNotIn("live-action photography", adapted)
+        self.assertNotIn("real human actors", adapted)
+        self.assertNotIn("natural skin pores", adapted)
 
     def test_only_seven_character_sheets_take_priority_over_storyboard(self):
         characters = [f"char-{index}" for index in range(10)]

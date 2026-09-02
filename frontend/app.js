@@ -1544,6 +1544,18 @@ function initStoryboardForm() {
   if (genreCatalog) {
     genreCatalog.addEventListener('change', () => {
       const val = genreCatalog.value;
+      if (val === '__auto_reading__') {
+        const premiseInput = document.getElementById('premiseInput') || document.getElementById('themeInput');
+        if (premiseInput) premiseInput.value = 'Buat materi belajar membaca baru yang interaktif dan bertahap untuk pembaca pemula. Pilih otomatis fokus fonik, huruf, suku kata, kata, kalimat, kosakata, urutan cerita, atau pemahaman bacaan yang belum berulang. Sesuaikan sepenuhnya dengan bahasa target dan hindari meminta generator video merender paragraf panjang.';
+        const childrenBox = document.getElementById('chkChildrenMode');
+        if (childrenBox) { childrenBox.checked = true; childrenBox.dispatchEvent(new Event('change')); }
+        ['chkMicrodramaMode', 'chkUgcMode'].forEach(id => { const box = document.getElementById(id); if (box) box.checked = false; });
+        const charInput = document.getElementById('characterInfoInput') || document.getElementById('consistentCharacterInput') || document.getElementById('characterInfo');
+        if (charInput) charInput.value = '';
+        showToast('Auto AI Literasi aktif: merancang latihan membaca baru sesuai bahasa target.', 'info');
+        window.setTimeout(() => document.getElementById('autoSuggestBtn')?.click(), 0);
+        return;
+      }
       if (val === '__auto_ai__') {
         const premiseInput = document.getElementById('premiseInput') || document.getElementById('themeInput');
         if (premiseInput) premiseInput.value = '';
@@ -1615,7 +1627,7 @@ function initStoryboardForm() {
           }
 
           if (isChildrenPreset) {
-            const ageLabel = childAgeGroup === 'toddler' ? 'Toddler 2–3 tahun' : 'Prasekolah 4–6 tahun';
+            const ageLabel = childAgeGroup === 'toddler' ? 'Toddler 2–3 tahun' : childAgeGroup === 'early-reader' ? 'Pembaca pemula 5–8 tahun' : 'Prasekolah 4–6 tahun';
             const domainLabel = learningDomain ? ` • Fokus: ${learningDomain}` : '';
             showToast(`Preset: ${ageLabel}${domainLabel}.`, 'info');
           } else {

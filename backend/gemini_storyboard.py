@@ -1006,6 +1006,20 @@ anamorphic lens, teal-and-orange grading, human child characters.
 """ if children_mode else ""
     action_density_rules = CHILDREN_ACTION_RULES if children_mode else ADULT_ACTION_RULES
     premise_lower = str(premise or "").lower()
+    reading_mode = children_mode and any(token in premise_lower for token in (
+        "belajar membaca", "pembaca pemula", "bunyi awal", "huruf vokal", "suku kata",
+        "kata dua suku", "kata berima", "kata yang sering", "kalimat pendek", "pemahaman bacaan",
+        "urutan cerita", "membaca dengan ekspresi", "arti kata",
+    ))
+    reading_rules = f"""
+MODE LITERASI / BELAJAR MEMBACA (WAJIB):
+- Tentukan satu tingkat yang jelas: kesadaran bunyi → hubungan huruf-bunyi → suku kata/kata → kalimat → pemahaman. Jangan mencampur terlalu banyak target dalam satu video.
+- Fonik, contoh kata, struktur kalimat, rima, dan pengucapan wajib mengikuti bahasa target {target_lang}; jangan menerapkan aturan fonik bahasa Indonesia atau Inggris secara universal.
+- Gunakan pola `model → anak meniru/menjawab → jeda tunggu → bukti visual → pengulangan dengan variasi`. Beri jeda jawab yang nyata, bukan langsung membocorkan jawaban.
+- Maksimal 1–3 unit bacaan baru per scene. Mulut speaker terlihat saat memodelkan bunyi; pengucapan lambat namun natural, tanpa nyanyian atau intonasi robotik kecuali premis meminta lagu.
+- Huruf/kata/kalimat lengkap adalah `text_overlay` untuk editing, bukan teks yang diminta dirender oleh model video. `prompt_for_flow` memakai kartu dengan bentuk/simbol sederhana dan melarang generated text.
+- Setiap scene mengisi tujuan belajar yang dapat diamati pada `scene_purpose`, bukan hanya hiburan. Akhiri dengan cek pemahaman singkat dan dorongan positif tanpa mempermalukan kesalahan.
+""" if reading_mode else ""
     battle_vs_mode = (
         not children_mode
         and bool(re.search(r"\b(?:battle|duel|versus|vs)\b", premise_lower))
@@ -1120,6 +1134,7 @@ BAHASA OUTPUT UTAMA: {target_lang} (Semua ringkasan aksi, narasi voiceover, teks
 {local_realism_rules}
 {children_localization_rules}
 {children_variation_rules}
+{reading_rules}
 {POLICY_SAFE_RULES}
 {children_visual_rules}
 VISUAL STYLE LOCK — PRIORITAS TERTINGGI, WAJIB SAMA DI SEMUA SCENE:

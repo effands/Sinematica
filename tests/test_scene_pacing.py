@@ -6,6 +6,7 @@ from backend.scene_pacing import (
     rewrite_dense_prompt_with_ai,
     should_try_gemini_storyboard_image,
 )
+from backend.scene_direction import enforce_spoken_language_lock
 
 
 class DenseScenePromptTests(unittest.TestCase):
@@ -52,7 +53,10 @@ class DenseScenePromptTests(unittest.TestCase):
 
         rewritten, provider = rewrite_dense_prompt_with_ai(
             "A 10-second shot. Arif shouts in Indonesian: 'Bank menolak!'",
-            {"title": "Krisis di Kantor", "action_summary": "Arif receives a contract"},
+            {"title": "Krisis di Kantor", "action_summary": "Arif receives a contract", "dialogue": [
+                {"speaker_id": 1, "line": "Bank menolak!"},
+                {"speaker_id": 2, "line": "Tandatangani ini."},
+            ]},
             10,
             children_mode=False,
             generator=generator,
@@ -63,11 +67,40 @@ class DenseScenePromptTests(unittest.TestCase):
         self.assertIn("3.3-6.6 seconds", rewritten)
         self.assertIn("6.6-10 seconds", rewritten)
         self.assertIn('"Tandatangani ini."', rewritten)
-        self.assertIn("write two short spoken lines", calls[0][0])
+        self.assertIn("ONLY spoken lines", calls[0][0])
         self.assertIn("THREE SHOTS", calls[0][0])
         self.assertIn("SAME location and SAME continuous time window", calls[0][0])
         self.assertNotIn("one continuous scene/location", calls[0][0])
         self.assertTrue(calls[0][1])
+
+    def test_japanese_canonical_dialogue_replaces_invented_english(self):
+        scene = {"dialogue": [
+            {"speaker_id": 1, "line": "なぜ、ここに？"},
+            {"speaker_id": 2, "line": "選択を変える覚悟はあるか。"},
+        ]}
+        prompt = 'Sota asks, "Why are you here?" Ren replies, "Are you ready?"'
+        locked = enforce_spoken_language_lock(prompt, scene, "Jepang")
+        self.assertNotIn("Why are you here", locked)
+        self.assertNotIn("Are you ready", locked)
+        self.assertIn('"なぜ、ここに？"', locked)
+        self.assertIn('"選択を変える覚悟はあるか。"', locked)
+        self.assertIn("natural Jepang only", locked)
+
+    def test_ai_rewrite_with_english_translation_is_rejected_to_local_guard(self):
+        class Result:
+            provider = "test"
+            text = '{"prompt_for_flow":"0-3.3 seconds: WIDE, Sota says \\"Why?\\" 3.3-6.6 seconds: OTS action. 6.6-10 seconds: CLOSE-UP action."}'
+
+        rewritten, provider = rewrite_dense_prompt_with_ai(
+            'Sota says "なぜ？"',
+            {"dialogue": [{"speaker_id": 1, "line": "なぜ？"}]},
+            10,
+            target_lang="Jepang",
+            generator=lambda *_args, **_kwargs: Result(),
+        )
+        self.assertEqual(provider, "local-guard")
+        self.assertNotIn("Why?", rewritten)
+        self.assertIn("なぜ？", rewritten)
 
     def test_previous_scene_is_supplied_as_location_continuity_context(self):
         calls = []

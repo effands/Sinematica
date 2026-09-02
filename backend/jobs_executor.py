@@ -30,6 +30,7 @@ from .scene_audio_direction import apply_scene_audio_direction, resolve_master_m
 from .scene_direction import (
     apply_no_branding_direction,
     build_speaker_lock,
+    enforce_spoken_language_lock,
     choose_shot_count,
     ensure_unique_character_signatures,
 )
@@ -335,15 +336,15 @@ def build_video_reference_ids(character_ids: List[str], storyboard_media_id: Opt
                               drop_all_references: bool = False,
                               continuity_media_id: Optional[str] = None,
                               product_media_ids: Optional[List[str]] = None) -> List[str]:
-    """Order at most seven Flow Ingredients by continuity, identity, then composition."""
+    """Order at most seven Flow Ingredients by identity, continuity, product, then composition."""
     if drop_all_references:
         return []
     refs = []
-    if continuity_media_id:
-        refs.append(continuity_media_id)
     for media_id in character_ids:
         if media_id and media_id not in refs and len(refs) < limit:
             refs.append(media_id)
+    if continuity_media_id and continuity_media_id not in refs and len(refs) < limit:
+        refs.append(continuity_media_id)
     for media_id in product_media_ids or []:
         if media_id and media_id not in refs and len(refs) < limit:
             refs.append(media_id)
@@ -419,8 +420,6 @@ def build_finishing_look_guard(storyboard: Dict[str, Any]) -> str:
 
 def adapt_template_for_visual_style(template: str, visual_style: str, children_mode: bool) -> str:
     """Remove photoreal-only template instructions when a stylized medium is selected."""
-    if visual_style == "3d_cartoon":
-        return template
     style_labels = {
         "live_action": "LIVE-ACTION CINEMATIC",
         "2d_animation": "HAND-DRAWN 2D ANIMATION",
@@ -434,9 +433,29 @@ def adapt_template_for_visual_style(template: str, visual_style: str, children_m
         "comic_book": "COMIC-BOOK ANIMATION",
     }
     style_label = style_labels.get(visual_style, "LIVE-ACTION CINEMATIC")
-    adapted = template.replace("Ultra photorealistic", "Strictly style-locked")
-    adapted = adapted.replace("Natural skin texture | Realistic fabric", "Medium-consistent surfaces | Style-consistent costume rendering")
-    adapted = adapted.replace("cartoon style, anime style, painterly rendering,", "mixed visual medium, photorealistic photography,")
+    adapted = str(template or "")
+    if visual_style != "live_action":
+        replacements = (
+            (r"\bultra[- ]?photorealistic\b", "strictly medium-consistent"),
+            (r"\bphotorealistic\b", "medium-consistent"),
+            (r"\bphotorealism\b", "mixed-medium rendering"),
+            (r"\beditorial fashion photography\b", f"professional {style_label.lower()} presentation"),
+            (r"\blive[- ]action photography\b", "mixed visual medium"),
+            (r"\bnatural skin (?:texture|pores)\b", "style-consistent facial surfaces"),
+            (r"\brealistic skin (?:texture|pores)\b", "style-consistent facial surfaces"),
+            (r"\brealistic fabric\b", "style-consistent costume materials"),
+            (r"\breal human(?:s| actors| people)?\b", "off-medium character rendering"),
+        )
+        for pattern, replacement in replacements:
+            adapted = re.sub(pattern, replacement, adapted, flags=re.IGNORECASE)
+        # Legacy negative lists explicitly banned the very media now selected. Replace the
+        # whole cluster instead of leaving contradictory tokens beside the final guard.
+        adapted = re.sub(
+            r"cartoon style,\s*anime style,\s*painterly rendering,?",
+            "mixed visual medium, unrequested rendering style, inconsistent art direction,",
+            adapted,
+            flags=re.IGNORECASE,
+        )
     # Children's templates historically embedded 3D in their headings and render
     # directions. Replace those phrases so the user's selected medium is authoritative.
     adapted = adapted.replace("3D CARTOON", style_label)
@@ -912,6 +931,7 @@ async def execute_storyboard_job(
         scene_title = sc.get("title", f"Adegan {idx}")
         is_affiliate_scene = bool(sc.get("affiliate_scene")) or idx in affiliate_scene_numbers
         prompt = sc.get("prompt_for_flow", "")
+        prompt = enforce_spoken_language_lock(prompt, sc, storyboard.get("target_lang") or "")
         scene_duration = duration if force_uniform_duration else resolve_scene_duration(sc, duration)
         if scene_duration == 10 and not storyboard.get("script_mode"):
             shot_count = choose_shot_count(sc, prompt)
@@ -932,6 +952,7 @@ async def execute_storyboard_job(
                 pacing_scene,
                 scene_duration,
                 children_mode=is_children,
+                target_lang=storyboard.get("target_lang") or "",
             )
             log_event(
                 job_id,
@@ -939,6 +960,7 @@ async def execute_storyboard_job(
                 f"{shot_count} shot berbeda, aksi berantai, dialog terkunci, dan kontinuitas tersambung.",
             )
 
+        prompt = enforce_spoken_language_lock(prompt, sc, storyboard.get("target_lang") or "")
         speaker_lock = build_speaker_lock(sc, characters)
         if speaker_lock:
             prompt = f"{prompt.rstrip()}\n\n{speaker_lock}"
@@ -947,6 +969,10 @@ async def execute_storyboard_job(
             prompt, sc, storyboard, music_video=music_video_mode
         )
         prompt = apply_no_branding_direction(prompt)
+        # Sanitize the complete, AI-rewritten scene—not only the base template. This
+        # prevents a late scene prompt from reintroducing photoreal/live-action terms
+        # into an anime, cartoon, comic, watercolor, or other stylized production.
+        prompt = adapt_template_for_visual_style(prompt, visual_style, is_children)
         # Re-assert after AI pacing rewrites so no later stage can silently change medium.
         prompt += build_visual_style_guard(visual_style, is_children)
         prompt += build_finishing_look_guard(storyboard)
@@ -1163,8 +1189,8 @@ async def execute_storyboard_job(
                         log_event(
                             job_id,
                             f"🔗 [Adegan {idx}/{total_scenes}] Ingredients continuity aktif: frame akhir "
-                            f"adegan {idx - 1} ditempatkan pertama, lalu {len(character_ref_ids)} seed "
-                            "karakter dan storyboard terakhir.",
+                            f"adegan {idx - 1} dipakai setelah {len(character_ref_ids)} Character Master; "
+                            "identity/style master tetap diprioritaskan, storyboard ditempatkan terakhir.",
                             profile=target_name,
                         )
 
@@ -1354,11 +1380,15 @@ async def execute_storyboard_job(
                 break
 
             prompt = apply_scene_audio_direction(
-                revised, sc, storyboard, music_video=music_video_mode
+                enforce_spoken_language_lock(revised, sc, storyboard.get("target_lang") or ""),
+                sc, storyboard, music_video=music_video_mode
             )
             prompt = apply_no_branding_direction(prompt)
+            prompt = adapt_template_for_visual_style(prompt, visual_style, is_children)
             prompt += build_visual_style_guard(visual_style, is_children)
             prompt += build_finishing_look_guard(storyboard)
+            prompt += build_scene_blueprint_guard(sc)
+            prompt += build_render_realism_guard(storyboard)
             if drop_all_scene_references:
                 prompt = fictionalize_character_names(
                     prompt,

@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict
 
 from .scene_direction import choose_shot_count, timeline_markers
+from .scene_direction import canonical_dialogue_lines, enforce_spoken_language_lock
 
 
 log = logging.getLogger("sinematica.scene_pacing")
@@ -33,13 +34,13 @@ def _extract_json(raw: str) -> Dict[str, Any]:
     return json.loads(text)
 
 
-def _has_required_timeline(prompt: str, dialogue_required: bool, markers) -> bool:
+def _has_required_timeline(prompt: str, dialogue_required: bool, markers, canonical_lines=None) -> bool:
     lowered = (prompt or "").lower()
     if not all(marker in lowered for marker in markers):
         return False
     if dialogue_required:
-        quoted = re.findall(r'(["\']).+?\1', prompt or "")
-        if len(quoted) < 2:
+        expected = [str(line).strip() for line in (canonical_lines or []) if str(line).strip()]
+        if expected and not all(f'"{line}"' in prompt or f"'{line}'" in prompt for line in expected):
             return False
     return True
 
@@ -50,12 +51,14 @@ def rewrite_dense_prompt_with_ai(
     duration: int,
     *,
     children_mode: bool = False,
+    target_lang: str = "",
     generator=None,
 ):
     """Rewrite the actual scene content into concrete beats via the configured primary AI."""
     if int(duration) != 10:
         return prompt, "unchanged"
-    dialogue_required = has_dialogue(scene, prompt)
+    canonical_lines = canonical_dialogue_lines(scene)
+    dialogue_required = bool(canonical_lines)
     shot_count = choose_shot_count(scene, prompt)
     markers = timeline_markers(shot_count)
     count_word = {3: "THREE", 4: "FOUR", 5: "FIVE"}[shot_count]
@@ -69,9 +72,10 @@ def rewrite_dense_prompt_with_ai(
         "Keep the dramatic tone and character intent of the original scene."
     )
     dialogue_instruction = (
-        "The original contains speech: write two short spoken lines in the original spoken language, "
-        "one in beat 1 or 2 and a reply in the next beat. Put both exact lines in double quotes."
-        if dialogue_required else
+        f"The ONLY spoken lines are these exact {target_lang or 'target-language'} lines, in authored order: "
+        + " | ".join(f'\"{line}\"' for line in canonical_lines)
+        + ". Copy them verbatim; never translate, paraphrase, or invent another line."
+        if canonical_lines else
         "Do not invent dialogue; use three concrete physical story actions."
     )
     previous_context = ""
@@ -108,7 +112,7 @@ Hard requirements:
 - No idle staring, posing, slow motion, empty walking, reaction held for seconds, montage, or dead air.
 - {dialogue_instruction}
 - {tone}
-- Preserve character identities, clothes, location, visual style, and all safety constraints.
+- Preserve character identities, clothes, location, visual style, target spoken language ({target_lang or 'as authored'}), and all safety constraints.
 
 Scene title: {scene.get('title') or ''}
 Action summary: {scene.get('action_summary') or ''}
@@ -119,12 +123,12 @@ Original prompt:
     try:
         result = generator(request, json_output=True)
         rewritten = str(_extract_json(result.text).get("prompt_for_flow") or "").strip()
-        if _has_required_timeline(rewritten, dialogue_required, markers):
-            return rewritten, result.provider
+        if _has_required_timeline(rewritten, dialogue_required, markers, canonical_lines):
+            return enforce_spoken_language_lock(rewritten, scene, target_lang), result.provider
         log.warning("Provider %s returned a sparse 10-second rewrite; using local guard.", result.provider)
     except Exception as ex:
         log.warning("Dense scene rewrite failed; using local guard: %s", ex)
-    return densify_flow_prompt(prompt, scene, duration), "local-guard"
+    return enforce_spoken_language_lock(densify_flow_prompt(prompt, scene, duration), scene, target_lang), "local-guard"
 
 
 def densify_flow_prompt(prompt: str, scene: Dict[str, Any], duration: int) -> str:
