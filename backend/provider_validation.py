@@ -53,6 +53,15 @@ def adapter_for(provider: str, timeout: int = 20, base_url: str = "", transport=
             transport=transport,
             timeout=timeout,
         )
+    if provider == "9router":
+        return OpenAICompatibleAdapter(
+            "9router",
+            build_chat_completions_endpoint(
+                base_url or "http://127.0.0.1:20128/v1"
+            ),
+            transport=transport,
+            timeout=timeout,
+        )
     raise ValueError(f"Provider tidak dikenal: {provider}")
 
 

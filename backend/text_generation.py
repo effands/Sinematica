@@ -8,7 +8,7 @@ import logging
 import threading
 from typing import Any, Dict, Optional
 
-from .provider_config import ALL_TEXT_PROVIDERS, normalize_keys, provider_order
+from .provider_config import ALL_TEXT_PROVIDERS, normalize_keys, provider_order, provider_settings_prefix
 
 log = logging.getLogger("sinematica.text_generation")
 _settings_lock = threading.RLock()
@@ -73,19 +73,21 @@ class SettingsKeyStore:
     def keys(self, provider: str):
         from . import settings
         cfg = settings.get_settings()
-        keys = normalize_keys(cfg.get(f"{provider}_api_keys") or cfg.get(f"{provider}_api_key"))
+        prefix = provider_settings_prefix(provider)
+        keys = normalize_keys(cfg.get(f"{prefix}_api_keys") or cfg.get(f"{prefix}_api_key"))
         return keys
 
     def demote(self, provider: str, key: str):
         from . import settings
         with _settings_lock:
+            prefix = provider_settings_prefix(provider)
             keys = self.keys(provider)
             if key in keys:
                 keys.remove(key)
                 keys.append(key)
                 settings.save_settings({
-                    f"{provider}_api_keys": keys,
-                    f"{provider}_api_key": keys[0] if keys else "",
+                    f"{prefix}_api_keys": keys,
+                    f"{prefix}_api_key": keys[0] if keys else "",
                 })
 
 
@@ -191,6 +193,10 @@ class TextGenerationManager:
                 "xai",
                 "https://api.x.ai/v1/chat/completions",
             ),
+            "9router": OpenAICompatibleAdapter(
+                "9router",
+                "http://127.0.0.1:20128/v1/chat/completions",
+            ),
         }
         self.key_store = key_store or SettingsKeyStore()
         self.settings_loader = settings_loader or _load_settings
@@ -206,13 +212,13 @@ class TextGenerationManager:
             adapter = self.adapters.get(provider)
             if not adapter:
                 continue
-            if provider == "xai" and isinstance(adapter, OpenAICompatibleAdapter):
+            if provider in ("xai", "9router") and isinstance(adapter, OpenAICompatibleAdapter):
                 adapter.endpoint = build_chat_completions_endpoint(
-                    cfg.get("xai_base_url")
-                    or "https://api.x.ai/v1"
+                    cfg.get(f"{provider_settings_prefix(provider)}_base_url")
+                    or ("https://api.x.ai/v1" if provider == "xai" else "http://127.0.0.1:20128/v1")
                 )
             keys = self.key_store.keys(provider)
-            model = cfg.get(f"{provider}_model") or default_model(provider)
+            model = cfg.get(f"{provider_settings_prefix(provider)}_model") or default_model(provider)
             for index, key in enumerate(keys, start=1):
                 # A successful HTTP response can still contain JSON cut off by the
                 # model's output limit. Retry that key once, then continue through
@@ -251,6 +257,7 @@ def default_model(provider):
         "openai": "gpt-4.1-mini",
         "deepseek": "deepseek-chat",
         "xai": "grok-4.3",
+        "9router": "premium-coding",
     }[provider]
 
 

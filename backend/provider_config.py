@@ -3,8 +3,12 @@
 from typing import Any, Dict, Iterable, List
 
 
-CLOUD_PROVIDERS = ("gemini", "openai", "deepseek", "xai")
+CLOUD_PROVIDERS = ("gemini", "openai", "deepseek", "xai", "9router")
 ALL_TEXT_PROVIDERS = (*CLOUD_PROVIDERS, "web2api")
+
+
+def provider_settings_prefix(provider: str) -> str:
+    return "nine_router" if provider == "9router" else provider
 
 
 def normalize_keys(value: Any) -> List[str]:
@@ -36,8 +40,9 @@ def normalize_settings_update(data: Any) -> Dict[str, Any]:
         result = dict(data)
 
     for provider in CLOUD_PROVIDERS:
-        plural = f"{provider}_api_keys"
-        singular = f"{provider}_api_key"
+        prefix = provider_settings_prefix(provider)
+        plural = f"{prefix}_api_keys"
+        singular = f"{prefix}_api_key"
         if plural in result or singular in result:
             keys = normalize_keys(result.get(plural, result.get(singular)))
             result[plural] = keys

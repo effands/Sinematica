@@ -3022,20 +3022,27 @@ async function loadSettingsTab() {
     const openAIKeys = s.openai_api_keys?.length ? s.openai_api_keys : (s.openai_api_key ? [s.openai_api_key] : []);
     const deepSeekKeys = s.deepseek_api_keys?.length ? s.deepseek_api_keys : (s.deepseek_api_key ? [s.deepseek_api_key] : []);
     const xaiKeys = s.xai_api_keys?.length ? s.xai_api_keys : (s.xai_api_key ? [s.xai_api_key] : []);
+    const nineRouterKeys = s.nine_router_api_keys?.length ? s.nine_router_api_keys : (s.nine_router_api_key ? [s.nine_router_api_key] : []);
     const openAIKeyEl = document.getElementById('settingOpenAIKeyTab');
     const deepSeekKeyEl = document.getElementById('settingDeepSeekKeyTab');
     const xaiKeyEl = document.getElementById('settingXAIKeyTab');
+    const nineRouterKeyEl = document.getElementById('setting9RouterKeyTab');
     if (openAIKeyEl) openAIKeyEl.value = openAIKeys.join('\n');
     if (deepSeekKeyEl) deepSeekKeyEl.value = deepSeekKeys.join('\n');
     if (xaiKeyEl) xaiKeyEl.value = xaiKeys.join('\n');
+    if (nineRouterKeyEl) nineRouterKeyEl.value = nineRouterKeys.join('\n');
     const openAIModelEl = document.getElementById('settingOpenAIModelTab');
     const deepSeekModelEl = document.getElementById('settingDeepSeekModelTab');
     const xaiModelEl = document.getElementById('settingXAIModelTab');
     const xaiBaseUrlEl = document.getElementById('settingXAIBaseUrlTab');
+    const nineRouterModelEl = document.getElementById('setting9RouterModelTab');
+    const nineRouterBaseUrlEl = document.getElementById('setting9RouterBaseUrlTab');
     if (openAIModelEl) openAIModelEl.value = s.openai_model || 'gpt-4.1-mini';
     if (deepSeekModelEl) deepSeekModelEl.value = s.deepseek_model || 'deepseek-chat';
     if (xaiModelEl) xaiModelEl.value = s.xai_model || 'grok-4.3';
     if (xaiBaseUrlEl) xaiBaseUrlEl.value = s.xai_base_url || 'https://api.x.ai/v1';
+    if (nineRouterModelEl) nineRouterModelEl.value = s.nine_router_model || 'premium-coding';
+    if (nineRouterBaseUrlEl) nineRouterBaseUrlEl.value = s.nine_router_base_url || 'http://127.0.0.1:20128/v1';
 
     const projTabEl = document.getElementById('settingFlowProjectIdTab') || document.getElementById('settingFlowProjectId');
     if (projTabEl && (s.default_flow_project_id || s.flow_project_id)) {
@@ -3063,6 +3070,7 @@ function initSettingsTab() {
   const openAITestBtn = document.getElementById('testOpenAIKeyTabBtn');
   const deepSeekTestBtn = document.getElementById('testDeepSeekKeyTabBtn');
   const xaiTestBtn = document.getElementById('testXAIKeyTabBtn');
+  const nineRouterTestBtn = document.getElementById('test9RouterKeyTabBtn');
 
   const statusLabels = {
     valid: '✅ Valid & terhubung',
@@ -3141,6 +3149,9 @@ function initSettingsTab() {
   if (xaiTestBtn) xaiTestBtn.addEventListener('click', () => testProviderKeys(
     'xai', document.getElementById('settingXAIKeyTab'), document.getElementById('settingXAIModelTab'),
     xaiTestBtn, document.getElementById('testXAIKeyResult'), document.getElementById('settingXAIBaseUrlTab')));
+  if (nineRouterTestBtn) nineRouterTestBtn.addEventListener('click', () => testProviderKeys(
+    '9router', document.getElementById('setting9RouterKeyTab'), document.getElementById('setting9RouterModelTab'),
+    nineRouterTestBtn, document.getElementById('test9RouterKeyResult'), document.getElementById('setting9RouterBaseUrlTab')));
 
   if (saveBtn) {
     saveBtn.addEventListener('click', async () => {
@@ -3157,6 +3168,9 @@ function initSettingsTab() {
       const xaiKeyEl = document.getElementById('settingXAIKeyTab');
       const xaiModelEl = document.getElementById('settingXAIModelTab');
       const xaiBaseUrlEl = document.getElementById('settingXAIBaseUrlTab');
+      const nineRouterKeyEl = document.getElementById('setting9RouterKeyTab');
+      const nineRouterModelEl = document.getElementById('setting9RouterModelTab');
+      const nineRouterBaseUrlEl = document.getElementById('setting9RouterBaseUrlTab');
 
       const rawKeys = keyEl ? keyEl.value.trim() : '';
       const model = modelEl ? modelEl.value : 'gemini-2.5-flash';
@@ -3180,6 +3194,9 @@ function initSettingsTab() {
             xai_api_keys: (xaiKeyEl?.value || '').split(/[\n,]+/).map(k => k.trim()).filter(Boolean),
             xai_model: xaiModelEl?.value.trim() || 'grok-4.3',
             xai_base_url: xaiBaseUrlEl?.value.trim() || 'https://api.x.ai/v1',
+            nine_router_api_keys: (nineRouterKeyEl?.value || '').split(/[\n,]+/).map(k => k.trim()).filter(Boolean),
+            nine_router_model: nineRouterModelEl?.value.trim() || 'premium-coding',
+            nine_router_base_url: nineRouterBaseUrlEl?.value.trim() || 'http://127.0.0.1:20128/v1',
             default_text_provider: defaultProviderEl?.value || 'gemini',
             default_flow_project_id: projId,
             enable_character_seed_image: enableSeed,

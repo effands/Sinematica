@@ -30,6 +30,10 @@ class SettingsUpdateRequest(BaseModel):
     xai_api_keys: Optional[Union[str, List[str]]] = None
     xai_model: Optional[str] = None
     xai_base_url: Optional[str] = None
+    nine_router_api_key: Optional[Union[str, List[str]]] = None
+    nine_router_api_keys: Optional[Union[str, List[str]]] = None
+    nine_router_model: Optional[str] = None
+    nine_router_base_url: Optional[str] = None
     default_text_provider: Optional[str] = None
     text_provider_order: Optional[List[str]] = None
     default_flow_project_id: Optional[str] = None

@@ -34,6 +34,11 @@ class ConcurrencyAdapter:
 
 
 class ProviderValidationTests(unittest.TestCase):
+    def test_9router_probe_uses_local_openai_compatible_endpoint(self):
+        adapter = adapter_for("9router", transport=object())
+
+        self.assertEqual(adapter.endpoint, "http://127.0.0.1:20128/v1/chat/completions")
+
     def test_xai_probe_uses_configured_openai_compatible_endpoint(self):
         adapter = adapter_for(
             "xai",

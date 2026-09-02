@@ -29,7 +29,17 @@ class ProviderSettingsTests(unittest.TestCase):
 
         result = normalize_settings_update(request)
 
-        self.assertEqual(result["text_provider_order"], ["openai", "gemini", "deepseek", "xai", "web2api"])
+        self.assertEqual(result["text_provider_order"], ["openai", "gemini", "deepseek", "xai", "9router", "web2api"])
+
+    def test_9router_keys_and_default_provider_are_supported(self):
+        result = normalize_settings_update({
+            "nine_router_api_keys": "nine-1\nnine-1\nnine-2",
+            "default_text_provider": "9router",
+        })
+
+        self.assertEqual(result["nine_router_api_keys"], ["nine-1", "nine-2"])
+        self.assertEqual(result["nine_router_api_key"], "nine-1")
+        self.assertEqual(result["text_provider_order"][0], "9router")
 
     def test_xai_can_be_the_default_provider(self):
         result = normalize_settings_update({"default_text_provider": "xai"})
