@@ -43,6 +43,15 @@ from omniflash.generators import upload_image, poll_video_status
 class _SheetAlreadyBuilt(Exception):
     """Signals the storyboard sheet was produced by Gemini, so skip the Flow fallback."""
 
+
+def is_flow_auth_error(error: Exception) -> bool:
+    """Return True when retrying with the same Chrome session cannot succeed."""
+    text = str(error).lower()
+    return any(marker in text for marker in (
+        "(401)", "'code': 401", '"code": 401', "unauthenticated",
+        "invalid authentication credentials", "flow_login_expired",
+    ))
+
 log = logging.getLogger("sinematica.jobs_executor")
 
 HISTORY_FILE = settings.DATA_DIR / "jobs_history.json"
@@ -660,7 +669,8 @@ async def execute_storyboard_job(
     aspect_ratio: str = "landscape",
     duration: int = 10,
     flow_project_id: Optional[str] = None,
-    force_uniform_duration: bool = False
+    force_uniform_duration: bool = False,
+    render_scene_limit: Optional[int] = None,
 ):
     """Execute video generation for each scene across available Chrome profiles."""
     bridge = get_bridge()
@@ -712,6 +722,7 @@ async def execute_storyboard_job(
         "duration": duration,
         "force_uniform_duration": force_uniform_duration,
         "flow_project_id": flow_project_id,
+        "render_scene_limit": render_scene_limit,
         "seo_story_context": seo_story_context,
         "seo_storyboard": seo_storyboard,
         "target_lang": storyboard.get("target_lang") or "",
@@ -925,6 +936,17 @@ async def execute_storyboard_job(
                         break
                 except Exception as ex:
                     log_event(job_id, f"⚠️ Gagal generate seed image karakter '{char_name}' (Percobaan {try_cnt}): {ex}.", level="warning")
+                    if is_flow_auth_error(ex):
+                        error_message = (
+                            "Sesi OAuth Google Flow kedaluwarsa. Token lama sudah ditolak Google; "
+                            "buka Flow, lakukan satu generate manual agar extension menangkap token baru, "
+                            "reload extension v1.4.1, lalu Resume job."
+                        )
+                        job_state["status"] = "waiting_for_login"
+                        job_state["error"] = error_message
+                        log_event(job_id, f"🔐 {error_message}", level="error")
+                        _save_history()
+                        return
                     if try_cnt < 4:
                         if is_unsafe_generation_error(ex):
                             if try_cnt == 1:
@@ -985,6 +1007,8 @@ async def execute_storyboard_job(
 
     # Step 2: Render each scene video across connected Chrome profiles
     completed_scene_paths = []
+    rendered_in_batch = 0
+    batch_paused = False
     music_video_mode = bool(storyboard.get("music_track_path"))
     continuity_media_id = None
     continuity_scene_number = None
@@ -1056,6 +1080,24 @@ async def execute_storyboard_job(
         out_filename = f"scene_{idx:02d}.mp4"
         out_path = job_dir / out_filename
 
+        # A quota batch limits only NEW scene videos. Existing files are always discovered
+        # and included for free, so resume never spends a slot on completed work.
+        if (
+            render_scene_limit is not None
+            and rendered_in_batch >= render_scene_limit
+            and not (out_path.exists() and out_path.stat().st_size > 1024)
+        ):
+            batch_paused = True
+            job_state["next_scene"] = idx
+            remaining = total_scenes - idx + 1
+            log_event(
+                job_id,
+                f"⏸️ Batas batch {render_scene_limit} scene baru tercapai. "
+                f"Tersisa {remaining} scene; isi slot batch berikutnya lalu Resume.",
+                level="warning",
+            )
+            break
+
         scene_record = {
             "scene_number": idx,
             "title": scene_title,
@@ -1107,6 +1149,8 @@ async def execute_storyboard_job(
 
         scene_success = False
         last_error = None
+        rendered_in_batch += 1
+        job_state["rendered_in_batch"] = rendered_in_batch
 
         # Step 1.5: Generate ONE storyboard key-frame reference image for this scene (composition/blocking/lighting),
         # used ALONGSIDE the character seed image(s) as a second reference for the video render below.
@@ -1562,15 +1606,23 @@ async def execute_storyboard_job(
             job_state["cinematic_film_path"] = str(film_path)
             final_filename = os.path.basename(film_path)
             job_state["cinematic_film_url"] = f"/storage/jobs/{job_id}/{final_filename}"
-            job_state["status"] = "completed"
+            job_state["status"] = "waiting_for_quota" if batch_paused else "completed"
             record_output_file_size(job_state, film_path)
             finish_job_timing(job_state)
-            log_event(
-                job_id,
-                "✅ [100%] SELURUH PROSES SELESAI! Film sinematik utuh & Subtitle SRT siap diputar "
-                f"di Galeri. Waktu proses total: {job_state['processing_duration']}; "
-                f"ukuran file: {job_state['output_size_display']}.",
-            )
+            if batch_paused:
+                log_event(
+                    job_id,
+                    f"💾 Checkpoint batch tersimpan. Preview sementara berisi "
+                    f"{len(completed_scene_paths)}/{total_scenes} scene; lanjutkan saat slot Flow tersedia.",
+                    level="warning",
+                )
+            else:
+                log_event(
+                    job_id,
+                    "✅ [100%] SELURUH PROSES SELESAI! Film sinematik utuh & Subtitle SRT siap diputar "
+                    f"di Galeri. Waktu proses total: {job_state['processing_duration']}; "
+                    f"ukuran file: {job_state['output_size_display']}.",
+                )
         except Exception as ex:
             log_event(job_id, f"⚠️ Gagal menggabungkan film sinematik: {ex}", level="warning")
             job_state["status"] = "completed_partial"
@@ -1584,7 +1636,7 @@ async def execute_storyboard_job(
     _save_history()
 
 
-def resume_job(job_id: str) -> bool:
+def resume_job(job_id: str, render_scene_limit: Optional[int] = None) -> bool:
     """Resume execution of an existing job from where it left off, reusing finished scenes and character sheets."""
     job = get_job_status(job_id)
     if not job:
@@ -1595,6 +1647,9 @@ def resume_job(job_id: str) -> bool:
 
     job["status"] = "processing"
     job["cancelled"] = False
+    # None deliberately means "all remaining scenes". Always replace the previous
+    # batch limit so clearing the UI field does not accidentally reuse an old quota.
+    job["render_scene_limit"] = render_scene_limit
     _active_jobs[job_id] = job
     _save_history()
 
@@ -1609,6 +1664,7 @@ def resume_job(job_id: str) -> bool:
             duration=job.get("duration", 10),
             flow_project_id=job.get("flow_project_id"),
             force_uniform_duration=job.get("force_uniform_duration", False),
+            render_scene_limit=job.get("render_scene_limit"),
         )
     )
     return True

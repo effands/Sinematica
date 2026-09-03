@@ -1772,6 +1772,8 @@ function initStoryboardForm() {
   const sceneInput = document.getElementById('sceneCountInput');
   const durationSelect = document.getElementById('durationPerSceneSelect');
   const totalLabel = document.getElementById('totalDurationLabel');
+  const flowSceneSlotInput = document.getElementById('flowSceneSlotInput');
+  const flowSceneSlotHint = document.getElementById('flowSceneSlotHint');
 
   function updateTotalDuration() {
     const scenes = parseInt(sceneInput.value) || 1;
@@ -1789,6 +1791,16 @@ function initStoryboardForm() {
       totalLabel.innerHTML = `⏱️ Total: ${fmt(scenes * dur)} (${scenes} Scene × ${dur}s) • Flow: ${scenes} × 15 = <b style="color:#c4b5fd;">${flowCredits} Kredit</b>`;
     }
     totalLabel.title = `Estimasi kredit Google Flow: ${scenes} scene × 15 kredit = ${flowCredits} kredit`;
+    if (flowSceneSlotHint) {
+      const requestedSlots = parseInt(flowSceneSlotInput?.value, 10);
+      const slots = Number.isFinite(requestedSlots) && requestedSlots > 0
+        ? Math.min(requestedSlots, scenes)
+        : scenes;
+      const batches = Math.ceil(scenes / slots);
+      flowSceneSlotHint.innerHTML = Number.isFinite(requestedSlots) && requestedSlots > 0
+        ? `Batch ini maksimal <b>${slots}</b> scene baru. Total ${scenes} scene memerlukan sekitar <b>${batches} batch</b>; scene selesai tidak dihitung ulang saat Resume.`
+        : `Kosong berarti semua <b>${scenes}</b> scene yang belum selesai akan dirender. Sisakan cadangan kuota untuk retry.`;
+    }
   }
 
   if (presetSelect) {
@@ -1806,6 +1818,7 @@ function initStoryboardForm() {
 
   if (sceneInput) sceneInput.addEventListener('input', updateTotalDuration);
   if (durationSelect) durationSelect.addEventListener('change', updateTotalDuration);
+  if (flowSceneSlotInput) flowSceneSlotInput.addEventListener('input', updateTotalDuration);
 
   const multiAngleChk = document.getElementById('chkMultiAngleShotFlow');
   if (multiAngleChk) {
@@ -2269,7 +2282,11 @@ function initStoryboardForm() {
             theme_image_path: currentStoryboard._theme_image_path || null,
             aspect_ratio: aspect,
             duration: durPerScene,
-            force_uniform_duration: !isAutoDur
+            force_uniform_duration: !isAutoDur,
+            render_scene_limit: (() => {
+              const value = parseInt(document.getElementById('flowSceneSlotInput')?.value, 10);
+              return Number.isFinite(value) && value > 0 ? value : null;
+            })()
           })
         });
 
@@ -2336,7 +2353,14 @@ function initStoryboardForm() {
       localStorage.setItem('sinematica_last_job_id', jid);
     } catch (_) {}
     try {
-      const res = await fetch(`/api/jobs/${jid}/resume`, { method: 'POST' });
+      const slotValue = parseInt(document.getElementById('flowSceneSlotInput')?.value, 10);
+      const res = await fetch(`/api/jobs/${jid}/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          render_scene_limit: Number.isFinite(slotValue) && slotValue > 0 ? slotValue : null
+        })
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Gagal melanjutkan job');
       showToast(data.message || 'Job berhasil dilanjutkan!', 'success');
@@ -3710,7 +3734,11 @@ document.addEventListener('DOMContentLoaded', () => {
           body: JSON.stringify({
             storyboard: data.storyboard,
             aspect_ratio: aspect,
-            force_uniform_duration: true
+            force_uniform_duration: true,
+            render_scene_limit: (() => {
+              const value = parseInt(document.getElementById('flowSceneSlotInput')?.value, 10);
+              return Number.isFinite(value) && value > 0 ? value : null;
+            })()
           })
         });
         

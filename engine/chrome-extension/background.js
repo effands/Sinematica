@@ -82,12 +82,17 @@ function recordMetrics(isSuccess, reqType = 'IMAGE', errorMsg = '') {
 // ─── Token Capture via webRequest ───────────────────────────
 chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
+    // Ignore Sinematica's own worker/injected requests. Otherwise an expired token
+    // sent by this extension is immediately captured and persisted again.
+    if (selfRequestsInFlight > 0 || Number(details?.tabId) < 0) return;
     if (!details?.requestHeaders?.length) return;
     const authHeader = details.requestHeaders.find(
       (h) => h.name?.toLowerCase() === 'authorization',
     );
     const value = authHeader?.value || '';
-    if (!value.startsWith('Bearer ya29.')) return;
+    // Google access-token prefixes are implementation details and can change. Restrict
+    // capture by Flow tab + Google API URL instead of requiring the historic ya29 prefix.
+    if (!/^Bearer\s+\S+/i.test(value)) return;
 
     const token = value.replace(/^Bearer\s+/i, '').trim();
     if (!token) return;
@@ -100,8 +105,16 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     }
   },
   { urls: ['https://aisandbox-pa.googleapis.com/*', 'https://labs.google/*', 'https://flow.google.com/*'] },
-  ['requestHeaders'],
+  ['requestHeaders', 'extraHeaders'],
 );
+
+function invalidateFlowAuth(reason = 'FLOW_LOGIN_EXPIRED') {
+  if (!flowKey) return;
+  flowKey = null;
+  chrome.storage.local.remove('flowKey');
+  console.warn('[Sinematica Agent] Flow OAuth token invalidated:', reason);
+  notifyRegistration();
+}
 
 // ─── Capture Flow's own image requests at the network layer ─────────
 // Reading them from the page (injected fetch/XHR hooks) depends on injection timing and on
@@ -855,6 +868,9 @@ async function handleApiRequest(msg) {
 
           const { status, data, error } = executionResult;
           const responseData = data ?? (error ? { error } : {});
+          if (status === 401) {
+            invalidateFlowAuth('FLOW_LOGIN_EXPIRED');
+          }
           if (responseData && typeof responseData === 'object') {
             const rem = responseData.remainingCredits ?? responseData.credits;
             if (rem !== undefined && rem !== null && Number.isFinite(Number(rem))) {

@@ -180,8 +180,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         readiness_error=msg.get("readiness_error"),
                         version=msg.get("version"),
                     )
-                    if msg.get("flow_key"):
-                        bridge.record_instance_token(instance_id, msg["flow_key"])
+                    if "flow_key" in msg:
+                        bridge.record_instance_token(instance_id, msg.get("flow_key"))
 
                 elif msg_type == "token_captured":
                     instance_id = msg.get("instance_id") or instance_id

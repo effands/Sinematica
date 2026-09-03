@@ -172,7 +172,7 @@ class ExtensionBridge:
             self.active_instance_id = None
             self._connected.clear()
 
-    def record_instance_token(self, instance_id: str, flow_key: str):
+    def record_instance_token(self, instance_id: str, flow_key: str | None):
         entry = self._instances.get(instance_id)
         if entry is not None:
             entry["flow_key"] = flow_key
@@ -181,6 +181,8 @@ class ExtensionBridge:
             self._flow_key = flow_key
             if flow_key and (entry is None or entry.get("ready", True)):
                 self._connected.set()
+            elif not flow_key:
+                self._connected.clear()
 
     def update_instance_project(self, instance_id: str, project_id: str):
         entry = self._instances.get(instance_id)
@@ -412,8 +414,8 @@ class ExtensionBridge:
                 ready=msg.get("ready", True),
                 readiness_error=msg.get("readiness_error"),
             )
-            if msg.get("flow_key"):
-                self.record_instance_token(iid, msg["flow_key"])
+            if "flow_key" in msg:
+                self.record_instance_token(iid, msg.get("flow_key"))
 
         elif msg_type == "token_captured":
             iid = msg.get("instance_id") or self.active_instance_id

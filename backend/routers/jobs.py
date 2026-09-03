@@ -2,7 +2,7 @@
 
 import asyncio
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import uuid
 import logging
@@ -21,6 +21,12 @@ class JobCreateRequest(BaseModel):
     flow_project_id: Optional[str] = None
     # False = honour each scene's own duration from the storyboard (varied pacing).
     force_uniform_duration: bool = False
+    # Maximum number of new scene videos for this run. None means render all pending scenes.
+    render_scene_limit: Optional[int] = Field(default=None, ge=1)
+
+
+class JobResumeRequest(BaseModel):
+    render_scene_limit: Optional[int] = Field(default=None, ge=1)
 
 
 @router.post("/create")
@@ -36,7 +42,8 @@ async def create_job(req: JobCreateRequest):
             aspect_ratio=req.aspect_ratio,
             duration=req.duration,
             flow_project_id=req.flow_project_id,
-            force_uniform_duration=req.force_uniform_duration
+            force_uniform_duration=req.force_uniform_duration,
+            render_scene_limit=req.render_scene_limit,
         )
     )
 
@@ -61,8 +68,8 @@ def cancel_running_job(job_id: str):
 
 
 @router.post("/{job_id}/resume")
-async def resume_existing_job(job_id: str):
-    success = resume_job(job_id)
+async def resume_existing_job(job_id: str, req: Optional[JobResumeRequest] = None):
+    success = resume_job(job_id, req.render_scene_limit if req else None)
     if not success:
         raise HTTPException(status_code=400, detail="Job tidak dapat dilanjutkan. Pastikan data storyboard tersimpan dan job valid.")
     return {"success": True, "message": f"Job {job_id} berhasil dilanjutkan dari adegan yang belum selesai."}
