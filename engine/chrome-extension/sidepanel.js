@@ -31,15 +31,24 @@ function initSidePanel() {
     updateToggleUI(isEnabled);
   });
 
+  const isFlowTab = (url) => {
+    try {
+      const p = new URL(url || '');
+      if (p.hostname === 'flow.google.com') return true;
+      if (p.hostname === 'labs.google' && /^\/fx\/(?:[a-z0-9_-]+\/)*(?:tools\/)?flow(?:\/|$)/i.test(p.pathname)) return true;
+      return false;
+    } catch { return false; }
+  };
+
   // Open Flow Tab button
   btnOpenFlow.addEventListener('click', async () => {
     const allTabs = await chrome.tabs.query({});
-    const tabs = allTabs.filter(t => t.url && t.url.includes('labs.google'));
+    const tabs = allTabs.filter(t => isFlowTab(t.url));
     if (tabs && tabs.length > 0) {
       chrome.tabs.update(tabs[0].id, { active: true });
       if (tabs[0].windowId) chrome.windows.update(tabs[0].windowId, { focused: true });
     } else {
-      chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow' });
+      chrome.tabs.create({ url: 'https://flow.google.com/' });
     }
   });
 
@@ -47,7 +56,7 @@ function initSidePanel() {
   btnRefresh.addEventListener('click', async () => {
     btnRefresh.textContent = '⏳ Syncing...';
     const allTabs = await chrome.tabs.query({});
-    const tabs = allTabs.filter(t => t.url && t.url.includes('labs.google'));
+    const tabs = allTabs.filter(t => isFlowTab(t.url));
     if (tabs && tabs.length > 0) {
       try {
         const res = await chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_PAGE_AUTH_TOKEN' });

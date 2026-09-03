@@ -56,7 +56,7 @@
   }
 
   function buildFlowEditorUrl(projectId, workflowId) {
-    return `https://labs.google/fx/tools/flow/project/${encodeURIComponent(projectId)}/edit/${encodeURIComponent(workflowId)}`;
+    return `https://flow.google.com/project/${encodeURIComponent(projectId)}/edit/${encodeURIComponent(workflowId)}`;
   }
 
   return {

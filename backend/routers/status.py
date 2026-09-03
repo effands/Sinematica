@@ -42,19 +42,21 @@ async def get_fleet_credits():
         ready = inst.get("ready", True)
 
         if connected and logged_in and ready:
-            c_val = "Unlimited"
+            c_val = None
             try:
                 res = await bridge.api_request("/v1/credits", None, instance_id=iid, timeout=6)
+                log.info("CREDITS DEBUG %s: %s", iid, res)
                 if res.get("status") == 200:
                     d = res.get("data", {})
                     if isinstance(d, dict) and d.get("credits"):
                         c_val = str(d["credits"])
-            except Exception:
-                pass
+            except Exception as ex:
+                log.error("CREDITS ERROR %s: %s", iid, ex)
             results[iid] = {
-                "success": True,
-                "credits": c_val,
-                "status": "READY"
+                "success": bool(c_val and "Belum Terbaca" not in c_val),
+                "credits": c_val or "Belum Terbaca (Buka Profil di Flow)",
+                "status": "READY",
+                "debug": res if 'res' in locals() else None
             }
         elif connected:
             results[iid] = {
@@ -176,6 +178,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         project_id=msg.get("project_id"),
                         ready=msg.get("ready", True),
                         readiness_error=msg.get("readiness_error"),
+                        version=msg.get("version"),
                     )
                     if msg.get("flow_key"):
                         bridge.record_instance_token(instance_id, msg["flow_key"])
@@ -219,6 +222,7 @@ from omniflash.generators import generate_character_image, generate_video_t2v
 import random
 
 
+
 class TestPromptRequest(BaseModel):
     prompt: Optional[str] = "A handsome wise scholar character portrait, cinematic lighting, 8k"
     seed: Optional[int] = 492817
@@ -226,11 +230,15 @@ class TestPromptRequest(BaseModel):
 
 @router.post("/api/fleet/test_prompt")
 async def test_fleet_prompt(req: TestPromptRequest):
-    """Test sending video generation prompt directly to connected Chrome Google Flow extension."""
+    """Test sending character image seed generation prompt directly to connected Chrome Google Flow extension."""
     bridge = get_bridge()
     instances = bridge.instance_snapshot()
     log.info("test_fleet_prompt instances: %s", instances)
-    ready = [i for i in instances if i.get("connected") and i.get("ready", True)]
+    ready = sorted(
+        [i for i in instances if i.get("connected") and i.get("ready", True)],
+        key=lambda x: (str(x.get("version") or "") >= "1.3.9", bool(x.get("project_id"))),
+        reverse=True
+    )
     if not ready:
         raise HTTPException(
             status_code=400,
@@ -238,26 +246,35 @@ async def test_fleet_prompt(req: TestPromptRequest):
         )
 
     target_prompt = req.prompt or "A handsome wise scholar character portrait, cinematic lighting, 8k"
+    seed_val = req.seed or random.randint(100000, 999999)
 
     try:
         cfg = settings.get_settings()
         proj_id = cfg.get("flow_project_id") or ready[0].get("project_id") or "0fe1acd1-8e99-48a4-aade-cd3b764086d1"
         first_target_id = ready[0].get("instance_id")
 
-        media_ids = await generate_video_t2v(
+        template = cfg.get("character_seed_template") or settings.DEFAULT_CHARACTER_SHEET_TEMPLATE
+        if "{char_name}" in template or "{char_desc}" in template:
+            formatted_prompt = template.replace("{char_name}", "Wise Scholar").replace("{char_seed}", str(seed_val)).replace("{char_desc}", target_prompt)
+        else:
+            formatted_prompt = target_prompt
+
+        res = await generate_character_image(
             bridge=bridge,
-            prompt=target_prompt,
-            aspect="landscape",
+            prompt=formatted_prompt,
+            aspect="portrait",
             project_id=proj_id,
-            duration=10,
-            instance_id=first_target_id
+            instance_id=first_target_id,
         )
 
         return {
             "success": True,
-            "message": "Berhasil submit generasi video ke Google Flow!",
-            "media_ids": media_ids,
-            "profile_used": ready[0].get("name")
+            "message": "Berhasil generate 3×3 Character Contact Sheet di Google Flow!",
+            "media_id": res.get("media_id"),
+            "image_url": res.get("image_url"),
+            "profile_used": ready[0].get("name") or first_target_id,
+            "seed_used": seed_val,
         }
     except Exception as ex:
-        raise HTTPException(status_code=500, detail=f"Gagal generate video T2V: {ex}")
+        log.exception("Gagal test seed character prompt: %s", ex)
+        raise HTTPException(status_code=500, detail=f"Gagal generate seed image karakter: {ex}")

@@ -23,85 +23,85 @@ JOBS_DIR.mkdir(exist_ok=True)
 SETTINGS_FILE = DATA_DIR / "settings.json"
 
 
-DEFAULT_CHARACTER_SHEET_TEMPLATE = """CHARACTER SHEET MASTER PROMPT V4.1
+DEFAULT_CHARACTER_SHEET_TEMPLATE = """3×3 CHARACTER CONTACT SHEET MASTER PROMPT V5.0
 
-Studio Portfolio Edition
-Clean • Elegant • Professional • AI Optimized
+Ultra-Photorealistic Studio Edition • 9-Panel Identity Lock • AI Optimized
 
-Create a clean, elegant, studio-quality Character Sheet for {char_name} (Character Seed: {char_seed}): {char_desc}.
+Create an ultra-photorealistic 3×3 Character Contact Sheet for {char_name} (Character Seed: {char_seed}): {char_desc}.
 
-Transform the subject into a consistent original character design while preserving the overall appearance, proportions, hairstyle, outfit style, silhouette, and recognizable visual language.
+Transform the subject into a consistent, definitive character design while strictly preserving and locking identity, bone structure, facial proportions, skin tone, hairstyle, outfit, silhouette, and recognizable visual language across all 9 panels.
 
-The layout should resemble a professional concept art portfolio page with generous white space, minimal typography, thin divider lines, and a balanced editorial composition.
+COMPOSITION & LAYOUT:
+One single vertical 9:16 image containing a clean, evenly arranged 3×3 contact sheet (9 panels total).
+Title bar at top: "CHARACTER SHEET: {char_name}" with subtle seed tag.
+All 9 panels must be clearly separated by thin, clean divider lines on a neutral studio background with subtle realistic shadows. Balanced margins, professional editorial portfolio presentation.
+Consistent lighting, color, wardrobe, styling, and character identity across all panels. Each panel should feel like a different camera capture of the exact same person in the same studio session.
 
-LAYOUT:
-Large "CHARACTER SHEET" title | Character Name: {char_name} | Soft beige or warm white background | Thin black divider lines | Minimal editorial typography | Spacious composition | Balanced margins | Professional portfolio presentation.
+3×3 GRID — 9 UNIQUE PHOTOGRAPHIC VIEWS:
+Every panel captures a distinct camera angle of the exact same person, with no identity drift and no duplicated camera angle:
+  Panel 1: Front view (direct eye-level camera capture, natural neutral presence)
+  Panel 2: 3/4 view (three-quarter angle revealing cheekbone structure and dimensional facial depth)
+  Panel 3: Side profile view (clean lateral 90-degree profile showing jawline and posture)
+  Panel 4: Low-angle view (subtle upward camera angle, cinematic grounded perspective)
+  Panel 5: Top-down view (slight elevated downward perspective showing crown and shoulder line)
+  Panel 6: Waist-up portrait (medium editorial framing with natural poise and hand gesture)
+  Panel 7: Close-up facial portrait (macro facial capture showing eye detail, natural skin pores, and authentic expression)
+  Panel 8: Over-the-shoulder view (cinematic dimensional capture with natural head turn)
+  Panel 9: Full-body view (complete head-to-toe stance showing full costume silhouette, shoes, and authentic proportions)
 
-TURNAROUND:
-Front View | Side View | Back View
-Use identical character proportions, hairstyle, clothing design, silhouette, and visual appearance across all three views.
+IDENTITY LOCK (HIGHEST PRIORITY):
+Preserve the exact identity of {char_name} across all 9 panels:
+• Identical face structure and bone structure
+• Identical facial proportions
+• Identical skin tone and natural realistic skin texture
+• Preserve natural asymmetry and distinctive facial features
+• Do not beautify, reshape, smooth unnaturally, or alter the face
+• No age change; no hairstyle change unless explicitly requested
+• The same person must be immediately and unmistakably recognizable in every single panel
 
-FACIAL EXPRESSIONS:
-Three close-up portraits only: Neutral, Smile, Thoughtful. Expressions should modify only facial muscles while maintaining the same character appearance.
+PHOTOGRAPHY & RENDER STYLE:
+Ultra-photorealistic editorial photography | 85mm lens equivalent | RAW photography look | Extremely high detail and optical sharpness | Natural realistic skin texture with visible skin pores | Controlled professional studio lighting | Neutral studio background | Subtle realistic shadows | Accurate anatomy and natural fabric behavior.
 
-DYNAMIC POSES:
-Three natural full-body poses only: Walking, Standing, Sitting. Keep body proportions, clothing behavior, hairstyle, and overall design consistent.
-
-REFERENCE PORTRAIT:
-One clean portrait showing the definitive appearance of {char_name}. Centered composition. Natural expression. Soft studio lighting.
-
-CONSISTENCY:
-Maintain a single coherent character design across every panel. Keep consistent: Facial structure | Hairstyle | Body proportions | Clothing construction | Accessories | Colors | Silhouette | Fabric behavior | Visual style.
-
-RENDER STYLE:
-Ultra photorealistic | Editorial fashion photography | Premium concept art | Soft studio lighting | Clean shadows | High detail | Natural skin texture | Accurate anatomy | Realistic fabric | Elegant presentation | Minimalistic portfolio design.
-
-NEGATIVE PROMPT:
-Busy layout, cluttered composition, excessive annotations, technical blueprint, production diagram, material callouts, color palette, measurement chart, camera reference, lighting reference, oversized text, crowded design, duplicate panels, inconsistent character design, different hairstyle, different clothing, different proportions, low quality, blurry textures, AI artifacts, cartoon style, anime style, painterly rendering, distorted anatomy."""
+ANTI-DRIFT & NEGATIVE PROMPT:
+Do NOT change the person's identity, alter facial structure, beautify or airbrush the face, smooth skin unnaturally, change skin tone, redesign facial features, change body proportions, create different people, repeat identical camera angles, stylize into cartoon or anime, introduce inconsistent wardrobe or changing accessories, recoloured clothing, cluttered layout, oversized text, watermark, blurry textures, AI artifacts, extra limbs, distorted anatomy."""
 
 
-DEFAULT_SCENE_STORYBOARD_TEMPLATE = """SCENE STORYBOARD SHEET
+DEFAULT_SCENE_STORYBOARD_TEMPLATE = """SCENE STORYBOARD CONTACT SHEET (4-6 MULTI-ANGLE SHOT FLOW)
 
-Professional film pre-visualization board for ONE scene, laid out as a clean 4-panel
-storyboard page — the scene equivalent of a character sheet.
+Professional cinematic film pre-visualization contact sheet for ONE scene (0–10s), laid out as a
+clean editorial grid of 4 to 6 storyboard panels showing the precise camera angle progression:
 
-SCENE: {scene_title}   |   DURATION: {scene_duration} seconds
-SHOT TYPE: {shot_type}
-CAMERA: {camera_movement}
-ACTION: {scene_action}
+SCENE {scene_number}: {scene_title} | DURATION: {scene_duration} seconds
+ACTION & BEAT: {scene_action}
+ESTABLISHED CAMERA & MOVEMENT: {camera_movement}
 
-LAYOUT:
-Title bar at the top reading "SCENE {scene_number} - {scene_title}" with a small duration tag.
-Below it, a grid/row of 4 storyboard panels with thin borders and generous white space, reading
-left to right as the beat progression of this single scene:
-  PANEL 1 "ESTABLISHING SHOT" — wide setup: character placement, environment, camera angle.
-  PANEL 2 "OPENING ACTION" — how the movement begins: character interaction & motion.
-  PANEL 3 "PEAK ACTION & CLIMAX" — the main key movement/emotional peak of the scene.
-  PANEL 4 "REACTION & RESOLUTION" — close-up reaction or resolution just before the cut.
-Under each panel, a thin caption strip with a short framing note (e.g. "Medium Shot, eye level").
+GRID LAYOUT — 4 TO 6 MULTI-ANGLE SHOT PROGRESSION (0-10s):
+Header reading: "SCENE {scene_number} – Multi-Angle Shot Flow (0–{scene_duration}s)"
+Followed by a clean 2×3 or 1×4 storyboard panel grid with thin borders and distinct photographic camera angles:
+  • PANEL S1 (0–2s): Low Angle Close Up — opening physical action & natural candid expression.
+  • PANEL S2 (2–4s): Medium Wide Shot — interaction with immediate environment, space & blocking.
+  • PANEL S3 (4–6s): Extreme Close-Up / Macro Detail or Over-The-Shoulder — key object focus, hand contact or gaze shift.
+  • PANEL S4 (6–8s): Medium Close / Dynamic Angle — reaction beat, emotion peak or decisive turning point.
+  • PANEL S5 (8–10s): Wide Shot / Final Resolution Look — concluding framing, open relaxed or cliffhanger posture.
+Each panel features a clean dark caption bar below it showing: "[Shot Number] (Timecode) [Camera Angle] — [Brief Shot Description]".
 
 CHARACTER LOCK (HIGHEST PRIORITY):
 The attached character sheet images define exactly who these people are. Reproduce those exact
-faces, skin tones, hairstyles, body proportions, wardrobe, colours and accessories with no
-reinvention whatsoever. Treat the sheets as the single source of truth for appearance — if the
-written description and a sheet ever disagree, the sheet wins. Do not substitute, age, restyle,
-recolour or swap any character, and do not introduce anyone who is not in the sheets.
+faces, skin tones, bone structure, hairstyles, body proportions, wardrobe, colours and accessories
+with no reinvention whatsoever across ALL panels. Treat the sheets as the single source of truth.
 
 CONSISTENCY (CRITICAL):
-All four panels show the SAME characters, SAME wardrobe, SAME hairstyle, SAME set and props,
-SAME time of day and SAME lighting direction. Only the pose, distance and framing change
-between panels. Keep the established art direction, lens character and colour grading: {art_direction}
+All panels depict the IDENTICAL character(s), SAME clothing, SAME hairstyle, SAME environment,
+SAME lighting direction and time of day. Only camera distance, framing angle, and pose advance
+between panels following the {scene_duration}-second timeline. Art direction: {art_direction}
 
 RENDER STYLE:
-Ultra photorealistic panels | Cinematic pre-visualization quality | Accurate character blocking |
-Clear spatial relationships | Consistent set dressing | Natural skin texture | Realistic fabric |
-Correct anatomy | Clean editorial storyboard presentation | Minimal typography.
+Ultra photorealistic editorial contact sheet | High-end cinematic cinematography | Natural skin pores and textures |
+Authentic fabric folds | Believable depth of field | Cohesive color grading | Crisp clean typography.
 
 NEGATIVE PROMPT:
-Cluttered layout, oversized text, unreadable annotations, comic speech bubbles, watermark,
-different character design between panels, wardrobe change between panels, inconsistent lighting,
-new unfamiliar faces, characters that do not match the reference sheets, restyled hair,
-recoloured clothing, low quality, blurry, distorted anatomy, extra limbs."""
+Different people in different panels, facial drift, morphing clothing, cartoon/anime style unless specified,
+inconsistent lighting, comic speech bubbles, oversized floating text, blurry textures, AI artifacts, distorted hands."""
 
 
 def get_settings() -> dict:

@@ -47,6 +47,12 @@
         <button class="nav-item" data-tab="tab-gallery">
           <span class="nav-icon">🎞️</span> Video Gallery
         </button>
+        <button class="nav-item" data-tab="tab-youtube-blueprint">
+          <span class="nav-icon">📺</span> YouTube Blueprint
+        </button>
+        <button class="nav-item" data-tab="tab-content-universe">
+          <span class="nav-icon">🪐</span> Content Universe
+        </button>
         <button class="nav-item" data-tab="tab-ugc-affiliate">
           <span class="nav-icon">🛍️</span> UGC Affiliate
         </button>
@@ -97,7 +103,7 @@
             <div class="empty-state">
               <div class="empty-icon">🔌</div>
               <h4>Belum Ada Profil Chrome Terhubung</h4>
-              <p>Muat unpacked extension <code>engine/chrome-extension</code> di Chrome (chrome://extensions) dan login di labs.google/fx/tools/flow</p>
+              <p>Muat unpacked extension <code>engine/chrome-extension</code> di Chrome (chrome://extensions) dan login di flow.google.com</p>
             </div>
           </div>
         </div>
@@ -412,6 +418,29 @@
                       <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Dua sahabat hewan melihat keindahan alam seperti matahari, hujan, tumbuhan, dan hewan, lalu belajar bersyukur, merawat ciptaan, tidak merusak lingkungan, dan berbagi kebaikan. Jangan memvisualisasikan Allah atau sosok gaib apa pun.">🌿 Bersyukur dan Menjaga Ciptaan</option>
                     </optgroup>
                   </select>
+                  <div class="story-age-target">
+                    <label for="storyAgeTarget">👥 Target Usia:</label>
+                    <select id="storyAgeTarget">
+                      <option value="general" selected>Umum / otomatis</option>
+                      <option value="toddler">Balita 2–4</option>
+                      <option value="early_child">Anak awal 5–7</option>
+                      <option value="older_child">Anak besar 8–10</option>
+                      <option value="preteen">Praremaja 11–13</option>
+                      <option value="teen">Remaja 14–17</option>
+                      <option value="genz_young">Gen Z muda 18–24</option>
+                      <option value="genz_adult">Gen Z dewasa 25–29</option>
+                      <option value="millennial">Milenial 30–44</option>
+                      <option value="genx">Gen X 45–59</option>
+                      <option value="senior">Senior 60+</option>
+                      <option value="family">Keluarga / lintas generasi</option>
+                    </select>
+                  </div>
+                  <div class="story-universe-targets">
+                    <div><label for="storyUniverseSelect">🪐 Universe Kehidupan:</label><select id="storyUniverseSelect"><option value="">Pilih usia terlebih dahulu</option></select></div>
+                    <div><label for="storyConflictSelect">⚡ Konflik Spesifik:</label><select id="storyConflictSelect"><option value="">Pilih universe terlebih dahulu</option></select></div>
+                    <div><label for="storyEmotionSelect">❤️ Emosi Utama:</label><select id="storyEmotionSelect"><option value="merasa dipahami">Merasa dipahami</option><option value="penasaran">Penasaran</option><option value="harapan">Harapan</option><option value="nyaman">Nyaman</option><option value="percaya diri">Percaya diri</option><option value="nostalgia">Nostalgia</option><option value="haru">Haru</option><option value="tawa">Tawa</option></select></div>
+                  </div>
+                  <div class="story-universe-ai"><button type="button" class="btn-secondary" id="generateAudienceUniverseAi">✨ Racik Universe dengan AI</button><span id="audienceUniverseAiStatus">Opsi lokal aktif sebagai fallback.</span></div>
                 </div>
 
                 <!-- Tema & Premis -->
@@ -467,7 +496,7 @@
                 <!-- Optional Affiliate Product Story Integration -->
                 <div class="form-group" style="margin:0; padding:14px; border-radius:14px; border:1px solid rgba(251,146,60,.3); background:rgba(251,146,60,.05);">
                   <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; cursor:pointer; color:#fdba74; font-size:13px; font-weight:800;">
-                    <span>🛍️ Sisipkan Produk Affiliate dalam Cerita</span>
+                    <span>🛍️ Sisipkan Produk Affiliate</span>
                     <input type="checkbox" id="chkAffiliateMode" style="width:17px; height:17px; accent-color:#fb923c;">
                   </label>
                   <div id="affiliateOptionsPanel" style="display:none; margin-top:13px; gap:10px;">
@@ -533,6 +562,11 @@
                       <option value="4">4s / Scene</option>
                     </select>
                   </div>
+                  <!-- Multi-Angle Shot Progression Toggle -->
+                  <label style="display: flex; align-items: center; gap: 8px; margin-top: 8px; cursor: pointer; font-size: 12px; color: var(--neon-cyan); font-weight: 600;">
+                    <input type="checkbox" id="chkMultiAngleShotFlow" checked style="accent-color: var(--neon-cyan); cursor: pointer;" />
+                    <span>🎬 4–6 Multi-Angle Shot Flow (Variasi Angle per Scene)</span>
+                  </label>
                 </div>
 
                 <!-- Aspect Ratio Video -->
@@ -601,22 +635,16 @@
 
                 <!-- Aspect Ratio Video -->
                 <div class="form-group" style="margin: 0;">
-                  <div class="aspect-label-row">
-                    <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary);">📱 Aspect Ratio Video:</label>
-                    <label class="aspect-default-option">
-                      <input type="checkbox" id="aspectDefaultCheckbox" />
-                      <span>Default</span>
-                    </label>
-                  </div>
-                  <select id="aspectSelect" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600;">
+                  <select id="aspectSelect" aria-label="Aspect ratio video" title="Aspect Ratio Video" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600;">
                     <option value="landscape">🖥️ Landscape 16:9 (Film / YouTube)</option>
                     <option value="portrait" selected>📱 Portrait 9:16 (TikTok / Reels / Shorts)</option>
                   </select>
                 </div>
 
+                <div class="story-target-row">
                 <!-- Target Negara / Realisme Lokal -->
-                <div class="form-group" style="margin: 0;">
-                  <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; display: block;">🌏 Target Negara (Skin Tone, Wardrobe, Lingkungan):</label>
+                <div class="form-group story-target-field" style="margin: 0;">
+                  <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; display: block; white-space: nowrap;">🌏 Target (Wardrobe, Lingkungan):</label>
                   <select id="targetCountryInput" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600;">
                     <option value="">-- Generik Internasional (Kosong) --</option>
                     <optgroup label="🌏 Asia Tenggara & Asia Timur">
@@ -664,11 +692,10 @@
                       <option value="New Zealand">🇳🇿 New Zealand</option>
                     </optgroup>
                   </select>
-                  <p style="font-size: 11px; color: var(--text-muted); margin: 6px 0 0 0;">Pilih negara target untuk menyesuaikan wajah, pakaian, & lingkungan.</p>
                 </div>
                 
                 <!-- Target Bahasa (Narasi & Dialog) -->
-                <div class="form-group" style="margin: 0;">
+                <div class="form-group story-target-field" style="margin: 0;">
                   <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; display: block;">🗣️ Target Bahasa (Narasi & Dialog):</label>
                   <select id="targetLanguageInput" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600;">
                     <option value="Indonesia" selected>🇮🇩 Bahasa Indonesia</option>
@@ -693,13 +720,13 @@
                     <option value="Italia">🇮🇹 Italian (Italia)</option>
                     <option value="Portugis">🇧🇷 Portuguese (Portugis)</option>
                   </select>
-                  <p style="font-size: 11px; color: var(--text-muted); margin: 6px 0 0 0;">Pilih bahasa untuk pengisi suara narasi dan teks subtitle.</p>
+                </div>
                 </div>
 
                 <!-- Preset Tema Dracin -->
                 <div class="form-group" style="margin: 0;" id="dracinThemeWrapper">
                   <label style="font-size: 13px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; display: block;">🎭 Preset Tema Dracin (Mode Microdrama):</label>
-                  <select id="dracinThemeSelect" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600;">
+                  <div class="dracin-theme-row"><select id="dracinThemeSelect" style="width: 100%; height: 44px; border-radius: 10px; padding: 0 12px; background: rgba(4, 7, 16, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 13px; font-weight: 600;">
                     <option value="">-- Otomatis (AI pilih paling relate) --</option>
                     <option value="CEO Menyamar Jadi Karyawan Biasa">CEO Menyamar Jadi Karyawan Biasa</option>
                     <option value="Mertua Jahat vs Menantu Sabar">Mertua Jahat vs Menantu Sabar</option>
@@ -715,7 +742,8 @@
                     <option value="Kembaran Jahat Menukar Identitas demi Warisan">Kembaran Jahat Menukar Identitas demi Warisan</option>
                     <option value="Suami Kontrak Jatuh Cinta Sungguhan">Suami Kontrak Jatuh Cinta Sungguhan</option>
                     <option value="Anak Durhaka Menyesal Setelah Orang Tua Sukses Kembali">Anak Durhaka Menyesal Setelah Orang Tua Sukses Kembali</option>
-                  </select>
+                    <optgroup id="dracinRandomOptions" label="🎲 Tema Segar Sesi Ini"></optgroup>
+                  </select><button type="button" class="btn-secondary" id="randomizeDracinThemes" title="Racik delapan kombinasi baru">🎲 Acak 8 Tema</button></div>
                 </div>
               </div>
             </div>
@@ -1076,6 +1104,74 @@
         </div>
       </section>
 
+      <section class="tab-page" id="tab-content-universe" style="max-width:1200px;margin:0 auto;width:100%;">
+        <div class="card content-universe-lab">
+          <div class="asset-lab-header"><div><h3>🪐 Audience & Content Universe</h3><p>Temukan konsep berdasarkan fase hidup, kebutuhan emosional, dan alasan menonton—bukan umur sebagai stereotip.</p></div><div class="asset-workflow"><span class="active">1 Audience</span><b>→</b><span>2 Universe</span><b>→</b><span>3 Select</span><b>→</b><span>4 Storyboard</span></div></div>
+          <div class="universe-controls">
+            <div><label>Kelompok audiens</label><select id="universeAudience"><option value="toddler">Balita 2–4</option><option value="early_child">Anak awal 5–7</option><option value="older_child">Anak besar 8–10</option><option value="preteen">Praremaja 11–13</option><option value="teen">Remaja 14–17</option><option value="genz_young">Gen Z muda 18–24</option><option value="genz_adult">Gen Z dewasa 25–29</option><option value="millennial" selected>Milenial 30–44</option><option value="genx">Gen X 45–59</option><option value="senior">Senior 60+</option><option value="family">Keluarga / lintas generasi</option></select></div>
+            <div><label>Kebutuhan emosional</label><select id="universeEmotion"><option value="belonging">Merasa dimengerti / belonging</option><option value="curiosity">Penasaran & menemukan</option><option value="hope">Harapan & transformasi</option><option value="comfort">Tenang & nyaman</option><option value="confidence">Percaya diri</option><option value="nostalgia">Nostalgia</option><option value="laughter">Hiburan & tawa</option></select></div>
+            <div><label>Tujuan menonton</label><select id="universeGoal"><option value="entertain">Hiburan</option><option value="learn">Belajar</option><option value="relax">Relaksasi</option><option value="reflect">Refleksi</option><option value="solve">Menyelesaikan masalah</option><option value="connect">Ditonton bersama</option></select></div>
+            <div><label>Genre</label><select id="universeGenre"><option value="drama">Drama realistis</option><option value="mystery">Misteri</option><option value="adventure">Petualangan</option><option value="comedy">Komedi</option><option value="documentary">Mini dokumenter</option><option value="education">Edutainment</option><option value="ambience">Ambience / slow content</option></select></div>
+            <div><label>Format</label><select id="universeFormat"><option value="short">Short 30–60 detik</option><option value="episode" selected>Episode 5–12 menit</option><option value="longform">Long-form 15–30 menit</option><option value="series">Serial berkelanjutan</option></select></div>
+            <div><label>Kompleksitas</label><select id="universeComplexity"><option value="simple">Sederhana</option><option value="layered" selected>Berlapis</option><option value="deep">Mendalam</option></select></div>
+            <div class="wide"><label>Konteks / niche opsional</label><input id="universeContext" placeholder="Contoh: keluarga perantau, kehidupan kota, sains laut, nostalgia kampung"></div>
+            <div><label>Target negara</label><input id="universeCountry" value="Indonesia"></div>
+            <div><label>Bahasa dialog</label><input id="universeLanguage" value="Bahasa Indonesia natural"></div>
+          </div>
+          <div class="universe-actions"><button type="button" class="btn-primary" id="generateContentUniverse">✨ Buat 10 Ide</button><button type="button" class="btn-secondary" id="sendUniverseToStoryboard" disabled>Kirim Ide Terpilih ke Storyboard</button><span id="universeStatus">Pilih parameter lalu buat universe.</span></div>
+          <div id="universeResults" class="universe-results"><div class="universe-empty">Sepuluh konsep akan muncul dengan hook, emosi, konflik, payoff, gaya kamera/audio, dan potensi serial.</div></div>
+        </div>
+      </section>
+
+      <section class="tab-page" id="tab-youtube-blueprint" style="max-width:1200px;margin:0 auto;width:100%;">
+        <div class="card youtube-blueprint-lab">
+          <div class="asset-lab-header"><div><h3>📺 YouTube Blueprint Studio</h3><p>Dari positioning channel sampai brief produksi, packaging, QC, dan diagnosis analytics.</p></div><div class="asset-workflow"><span class="active">1 Strategy</span><b>→</b><span>2 Script</span><b>→</b><span>3 Production</span><b>→</b><span>4 Measure</span></div></div>
+          <div class="yt-safety-note"><b>Evidence-first:</b> angka RPM/KPI dari materi bukan jaminan. Jangan meniru naskah kompetitor, mengarang sumber, membeli trafik, menyamarkan kepemilikan akun, atau memakai aset tanpa lisensi.</div>
+          <div class="yt-blueprint-grid">
+            <div><label>Format</label><select id="ytFormat"><option value="cinematic_storytelling">Cinematic Storytelling</option><option value="ambience">Ambience / Soundscape</option><option value="shorts">YouTube Shorts</option></select></div>
+            <div><label>Target market</label><input id="ytMarket" value="United States" placeholder="Negara/region target"></div>
+            <div><label>Bahasa & varian</label><input id="ytLanguage" value="Native US English" placeholder="Contoh: Native US English"></div>
+            <div><label>Micro-niche</label><input id="ytMicroNiche" placeholder="Spesifik, bukan sekadar finance/health"></div>
+            <div><label>Core audience</label><input id="ytAudience" placeholder="Umur, situasi, kebutuhan, pengetahuan awal"></div>
+            <div><label>Janji channel</label><input id="ytPromise" placeholder="Nilai yang konsisten diterima penonton"></div>
+            <div><label>Demand evidence</label><textarea id="ytDemand" rows="2" placeholder="Data pencarian, komentar, pertanyaan nyata, performa katalog"></textarea></div>
+            <div><label>Competitor gap</label><textarea id="ytGap" rows="2" placeholder="Apa yang kurang—tanpa menyalin struktur atau kalimat"></textarea></div>
+            <div><label>Angle original</label><textarea id="ytAngle" rows="2" placeholder="Sudut pandang dan nilai tambah milik channel"></textarea></div>
+            <div><label>Hook / cold open</label><textarea id="ytHook" rows="2" placeholder="Langsung memenuhi janji judul; tanpa bumper"></textarea></div>
+            <div><label>Macro open loop</label><textarea id="ytOpenLoop" rows="2" placeholder="Pertanyaan utama yang benar-benar dituntaskan"></textarea></div>
+            <div><label>Payoff & next-view bridge</label><textarea id="ytPayoff" rows="2" placeholder="Jawaban akhir + video lanjutan relevan, tanpa penutup bertele-tele"></textarea></div>
+            <div><label>Brand architecture</label><select id="ytBrand"><option value="cinematic_deep_dive">Cinematic Deep Dive</option><option value="2d_mascot">2D Mascot Authority</option><option value="immersive_audio">Immersive Audio-Driven</option></select></div>
+            <div><label>2 warna primer</label><input id="ytColors" placeholder="Contoh: navy + muted gold"></div>
+            <div><label>Font signature</label><input id="ytFont" placeholder="Font berlisensi yang konsisten"></div>
+            <div><label>Main keyword</label><input id="ytMainKeyword"></div>
+            <div><label>Relevant keywords</label><input id="ytRelevantKeywords" placeholder="Pisahkan koma"></div>
+            <div><label>Long-tail intent</label><input id="ytLongTail" placeholder="Pertanyaan yang benar-benar dicari audiens"></div>
+            <div class="wide"><label>Sumber & lisensi</label><textarea id="ytSources" rows="2" placeholder="URL/sumber primer, hak footage, musik, gambar, dan batas klaim"></textarea></div>
+          </div>
+          <details class="yt-module-stack" open><summary>🧱 Penguat 7 Modul Super — esensi lama tetap dipertahankan</summary>
+            <div class="yt-module-grid">
+              <article><b>1 · Blueprint</b><small>Audience, niche, promise, evidence, dan moat.</small><textarea id="ytEditorialThesis" rows="2" placeholder="Tesis editorial: pendapat/wawasan khas channel"></textarea><textarea id="ytContentMoat" rows="2" placeholder="Content moat: alasan format ini sulit ditiru"></textarea></article>
+              <article><b>2 · Fleet</b><small>Ownership, role, kapasitas, keamanan, dan biaya.</small><textarea id="ytFleetGovernance" rows="2" placeholder="Owner, editor, reviewer, publisher, 2FA, backup"></textarea><input id="ytProductionCost" type="number" min="0" step="any" placeholder="Biaya produksi/video"></article>
+              <article><b>3 · Monetization</b><small>Orisinalitas, hak, disclosure, dan eligibility.</small><select id="ytAiDisclosure"><option value="review_required">Perlu review disclosure AI</option><option value="required">Disclosure diperlukan</option><option value="not_required">Tidak diperlukan berdasarkan review</option></select><textarea id="ytHumanContribution" rows="2" placeholder="Kontribusi manusia: riset, analisis, komentar, editing"></textarea></article>
+              <article><b>4 · Tier-1 Calibration</b><small>Lokalisasi budaya, bukan sekadar terjemahan.</small><textarea id="ytLocalizationQa" rows="2" placeholder="Idiom, pronunciation, mata uang, satuan, budaya, native review"></textarea></article>
+              <article><b>5 · Soundscape</b><small>Ambience, hak audio, loudness, dan loop QA.</small><textarea id="ytAudioQa" rows="2" placeholder="Lisensi audio, ambience, foley, ducking, loudness/true peak, loop"></textarea></article>
+              <article><b>6 · Storytelling</b><small>Fakta, kontinuitas, open-loop, dan semantic pacing.</small><textarea id="ytContinuityLedger" rows="2" placeholder="Karakter, waktu, lokasi, properti, kostum, cahaya"></textarea><textarea id="ytLoopLedger" rows="2" placeholder="Loop dibuka → bukti → timestamp payoff"></textarea></article>
+              <article><b>7 · Iron Shield</b><small>Risk register dan respons spesifik kebijakan.</small><textarea id="ytRiskRegister" rows="2" placeholder="Risiko copyright, privacy/likeness, claims, invalid traffic, mitigasi"></textarea></article>
+            </div>
+          </details>
+          <fieldset class="yt-gate-panel"><legend>Quality Gates sebelum produksi</legend>
+            <label><input id="ytGateEvidence" type="checkbox"> Evidence — klaim penting punya sumber dan tingkat keyakinan</label>
+            <label><input id="ytGateOriginality" type="checkbox"> Originality — ada tesis, analisis, atau nilai transformasional</label>
+            <label><input id="ytGateRights" type="checkbox"> Rights & disclosure — lisensi, likeness, dan status AI diperiksa</label>
+            <label><input id="ytGatePromise" type="checkbox"> Viewer promise — title/thumbnail/hook/payoff selaras</label>
+            <label><input id="ytGateTechnical" type="checkbox"> Technical QC — visual, kontinuitas, audio, captions, dan artifact diperiksa</label>
+          </fieldset>
+          <div class="yt-blueprint-actions"><button type="button" class="btn-primary" id="buildYoutubeBlueprint">🧭 Bangun Production Blueprint</button><button type="button" class="btn-secondary" id="sendYoutubeToStoryboard">Kirim ke AI Storyboard</button><span id="ytBlueprintStatus">Belum diaudit.</span></div>
+          <textarea id="ytBlueprintOutput" rows="16" readonly placeholder="Blueprint terstruktur akan muncul di sini..."></textarea>
+          <details class="yt-analytics-lab"><summary>📈 Analytics Diagnosis — masukkan data aktual</summary><p>Benchmark dapat berbeda menurut niche, traffic source, umur video, dan durasi. Sistem mendiagnosis hubungan metrik, bukan menjanjikan performa.</p><div class="yt-analytics-grid"><input id="ytCtr" type="number" min="0" max="100" step=".1" placeholder="CTR %"><input id="ytHookRetention" type="number" min="0" max="100" step=".1" placeholder="Retensi 30s %"><input id="ytAvd" type="number" min="0" max="100" step=".1" placeholder="Average viewed %"><input id="ytEndRetention" type="number" min="0" max="100" step=".1" placeholder="Retensi akhir %"><select id="ytRetentionShape"><option value="unknown">Bentuk grafik...</option><option value="early_drop">Drop tajam awal</option><option value="gradual">Turun perlahan</option><option value="mid_dip">Dip tajam di tengah</option><option value="spike">Ada spike/rewatch</option><option value="stable">Stabil</option></select><select id="ytTrafficSource"><option value="unknown">Traffic source...</option><option value="browse">Browse/Home</option><option value="suggested">Suggested</option><option value="search">Search</option><option value="external">External</option><option value="shorts">Shorts feed</option></select><input id="ytNewViewers" type="number" min="0" placeholder="New viewers"><input id="ytReturningViewers" type="number" min="0" placeholder="Returning viewers"><input id="ytRevenue" type="number" min="0" step="any" placeholder="Revenue video"><input id="ytHours" type="number" min="0" step="any" placeholder="Jam produksi"><button type="button" class="btn-secondary" id="diagnoseYoutubeData">Diagnosa</button></div><div id="ytAnalyticsResult" class="yt-analytics-result"></div></details>
+        </div>
+      </section>
+
       <section class="tab-page" id="tab-ugc-affiliate" style="max-width:1200px;margin:0 auto;width:100%;">
         <div class="card asset-lab">
           <div class="asset-lab-header">
@@ -1083,7 +1179,7 @@
             <div class="asset-workflow"><span class="active">1 Asset</span><b>→</b><span>2 Brief</span><b>→</b><span>3 Storyboard</span><b>→</b><span>4 Render</span></div>
           </div>
           <div class="ugc-story-config">
-            <div><label>Mode Produksi</label><select id="ugcProductionMode"><option value="realism">UGC Realism — Natural & Relatable</option><option value="commercial">Commercial — Premium Product Ads</option></select></div>
+            <div><label>Mode Produksi</label><select id="ugcProductionMode"><option value="realism">UGC Realism — Natural & Relatable</option><option value="raw_amateur">Raw Amateur Smartphone — Anti-AI</option><option value="commercial">Commercial — Premium Product Ads</option></select></div>
             <div><label>Platform</label><select id="ugcPlatform"><option>TikTok</option><option>Instagram Reels</option><option>YouTube Shorts</option><option>YouTube</option></select></div>
             <div><label>Tone</label><input id="ugcTone" type="text" value="Natural, fresh, friendly"></div>
             <div class="wide"><label>Latar / Background</label><div class="ugc-background-row"><select id="ugcBackground"><option value="auto">✨ Rekomendasi AI dari produk & brief</option><option value="home_window">Rumah dekat jendela — natural creator UGC</option><option value="bathroom_vanity">Vanity kamar mandi bersih</option><option value="modern_kitchen">Dapur modern yang benar-benar digunakan</option><option value="work_desk">Meja kerja/laptop yang lived-in</option><option value="cafe_terrace">Teras kafe urban</option><option value="tropical_beach">Pantai tropis — produk outdoor</option><option value="poolside">Tepi kolam — produk tahan air/outdoor</option><option value="minimal_studio">Studio minimal netral</option><option value="premium_podium">Podium produk premium</option><option value="custom">✦ Custom (ketik sendiri)</option></select><input id="ugcCustomBackground" type="text" placeholder="Deskripsikan lokasi, waktu, material, cahaya, dan elemen penting..." disabled></div></div>
@@ -1091,6 +1187,52 @@
             <div class="wide"><label>Logline / Konsep Konten</label><textarea id="ugcLogline" rows="2" placeholder="Siapa creator-nya, sedang di mana, masalah apa, mengapa produk relevan..."></textarea></div>
             <div class="wide"><label>Emotional Arc</label><input id="ugcEmotionArc" type="text" value="Masalah → penasaran → mencoba → bukti → lega → CTA natural"></div>
           </div>
+          <article class="ugc-formula-card">
+            <div class="ugc-formula-heading">
+              <div><span class="ugc-formula-kicker">SMART FORMULA</span><h4>⚡ Ide Viral yang Nyambung ke Produk</h4></div>
+              <p>SIAPA + NGAPAIN + DI MANA → momen butuh produk → hook 3 detik → satu emosi utama.</p>
+            </div>
+            <div class="ugc-formula-grid">
+              <div><label>Siapa</label><input id="ugcFormulaWho" type="text" placeholder="Contoh: mahasiswa tingkat akhir"></div>
+              <div><label>Ngapain</label><input id="ugcFormulaAction" type="text" placeholder="Contoh: buru-buru menyelesaikan revisi"></div>
+              <div><label>Di mana</label><input id="ugcFormulaWhere" type="text" placeholder="Contoh: kamar kos, malam hari"></div>
+              <div><label>Kapan produk dibutuhkan</label><input id="ugcFormulaNeed" type="text" placeholder="Contoh: HP tinggal 3% saat menunggu ojol"></div>
+              <div><label>Hook 3 detik</label><input id="ugcFormulaHook" type="text" placeholder="Contoh: Jangan tunggu HP mati di jalan."></div>
+              <div><label>Emosi utama</label><select id="ugcFormulaEmotion"><option value="relate">Relate — “ini gue banget”</option><option value="curious">Penasaran — “terus gimana?”</option><option value="surprise">Kaget — “hah, serius?”</option><option value="funny">Lucu — ingin share</option><option value="frustrated">Gemas/masalah — ingin komentar</option></select></div>
+            </div>
+            <div class="ugc-formula-actions"><button type="button" class="btn-primary" id="buildUgcFormula">🪄 Susun Konsep & Prompt</button><small>Gunakan satu pesan, kalimat pendek, bukti produk yang terlihat, dan CTA natural. Formula membantu pola; tidak menjamin viral.</small></div>
+            <textarea id="ugcFormulaPrompt" rows="5" readonly placeholder="Prompt siap pakai akan muncul di sini..."></textarea>
+            <details class="ugc-viral-guide"><summary>Checklist konten yang layak dites</summary><div><b>Hook:</b> langsung ke masalah dalam 3 detik, tanpa pembuka formal. <b>Retention:</b> satu video satu pesan, aksi mudah dibaca. <b>Emotion:</b> pilih satu respons utama. <b>Conversion:</b> produk hadir tepat saat dibutuhkan dan manfaat dibuktikan, bukan ditempel. <b>Iteration:</b> buat banyak variasi SIAPA/AKSI/LOKASI lalu ukur hasil tes ombak pertama.</div></details>
+          </article>
+          <article class="ugc-conversion-lab">
+            <div class="ugc-formula-heading">
+              <div><span class="ugc-formula-kicker">OBJECTIVE FIRST</span><h4>🎯 Affiliate Conversion Lab</h4></div>
+              <p>Rancang konten untuk tindakan yang terukur. Klaim, proof, dan urgensi harus berasal dari data/aset pengguna—tidak boleh dikarang AI.</p>
+            </div>
+            <div class="ugc-conversion-grid">
+              <div><label>Audiens spesifik</label><input id="ugcAudience" placeholder="Contoh: pekerja kantoran dengan jerawat menjelang meeting"></div>
+              <div><label>Objective</label><select id="ugcObjective"><option value="product_click">Klik produk</option><option value="checkout">Checkout</option><option value="purchase">Pembelian</option><option value="dm">DM</option><option value="lead">Lead</option></select></div>
+              <div><label>Awareness</label><select id="ugcAwareness"><option value="unaware">Unaware — edukasi/cerita</option><option value="problem_aware" selected>Problem-aware — solusi & harapan</option><option value="solution_aware">Solution-aware — diferensiasi</option><option value="product_aware">Product-aware — proof & offer</option></select></div>
+              <div><label>Jenis Hook</label><select id="ugcHookType"><option value="pattern_interrupt">Pattern Interrupt</option><option value="problem" selected>Problem</option><option value="curiosity_gap">Curiosity Gap</option><option value="bold_claim">Bold Claim + bukti</option><option value="relatable">Relatable</option></select></div>
+              <div class="wide"><label>Hook 0–3 detik</label><input id="ugcConversionHook" placeholder="Langsung ke masalah/keinginan; tanpa salam atau intro"></div>
+              <div><label>Angle/keinginan</label><input id="ugcAngle" placeholder="Contoh: percaya diri saat meeting"></div>
+              <div><label>Kenapa bertindak sekarang?</label><input id="ugcWhyNow" placeholder="Alasan nyata; kosong berarti tanpa urgensi"></div>
+              <div><label>Problem</label><textarea id="ugcProblem" rows="2"></textarea></div>
+              <div><label>Agitate</label><textarea id="ugcAgitate" rows="2" placeholder="Dampak nyata, jangan menakut-nakuti"></textarea></div>
+              <div><label>Solution/manfaat</label><textarea id="ugcSolution" rows="2" placeholder="Manfaat yang diizinkan, bukan fitur saja"></textarea></div>
+              <div><label>Proof</label><textarea id="ugcProof" rows="2" placeholder="Demo, testimoni asli, atau hasil yang dapat terlihat"></textarea></div>
+              <div><label>CTA jelas</label><input id="ugcConversionCta" placeholder="Contoh: klik keranjang kuning untuk lihat variannya"></div>
+              <div><label>Variabel yang diuji</label><select id="ugcTestVariable"><option value="hook">Hook</option><option value="angle">Angle</option><option value="model">Model/karakter</option><option value="location">Lokasi</option><option value="cta">CTA/offer</option></select></div>
+              <div><label>Jumlah variasi</label><select id="ugcVariantCount"><option>2</option><option selected>3</option><option>4</option><option>5</option></select></div>
+            </div>
+            <div class="ugc-conversion-actions"><button type="button" class="btn-primary" id="buildConversionBrief">Bangun Brief Konversi</button><span id="ugcConversionStatus">Belum diaudit.</span></div>
+            <textarea id="ugcConversionOutput" rows="7" readonly placeholder="Brief Hook → Problem → Solution → Proof → CTA akan muncul di sini..."></textarea>
+            <details class="ugc-metrics-panel"><summary>📊 Masukkan hasil tes & hitung funnel</summary>
+              <p>Gunakan angka nyata dari platform. Sistem hanya menghitung; tidak mengarang benchmark atau pemenang.</p>
+              <div class="ugc-metrics-grid"><input id="metricImpressions" type="number" min="0" placeholder="Impressions/views"><input id="metric3s" type="number" min="0" placeholder="View ≥3 detik"><input id="metricCompleted" type="number" min="0" placeholder="Selesai menonton"><input id="metricClicks" type="number" min="0" placeholder="Klik produk"><input id="metricPurchases" type="number" min="0" placeholder="Pembelian"><input id="metricSpend" type="number" min="0" step="any" placeholder="Biaya iklan"><input id="metricRevenue" type="number" min="0" step="any" placeholder="Pendapatan"><button type="button" class="btn-secondary" id="calculateUgcMetrics">Hitung</button></div>
+              <div id="ugcMetricResults" class="ugc-metric-results"></div>
+            </details>
+          </article>
           <div class="asset-lab-grid">
             <article class="asset-tool-card">
               <h4>👤 Character Master</h4><p>Periksa resolusi, exposure, dan indikasi blur sebelum membuat referensi 3×3.</p>

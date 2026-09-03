@@ -32,7 +32,17 @@ def test_unreadable_asset_is_flagged_instead_of_crashing(tmp_path):
 
 
 def test_scene_blueprint_survives_final_prompt_rewrite():
-    guard = build_scene_blueprint_guard({"scene_purpose": "product proof", "expression": "ragu menjadi lega", "transition_bridge": "tatapan turun ke produk"})
+    guard = build_scene_blueprint_guard({
+        "scene_purpose": "product proof",
+        "expression": "ragu menjadi lega",
+        "spatial_continuity": "Maya di kiri mobil, tangan kanan pada handle pintu kiri",
+        "emotional_detail": "macro jari melepaskan handle setelah pintu tertutup",
+        "transition_bridge": "tatapan turun ke produk",
+    })
     assert "product proof" in guard
     assert "ragu menjadi lega" in guard
     assert "random coverage" in guard
+    assert "same correct side" in guard
+    assert "never mirror" in guard
+    assert "natural inertia" in guard
+    assert "macro inserts" in guard

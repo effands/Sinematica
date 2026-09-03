@@ -14,6 +14,156 @@ let gallerySeoContexts = new Map();
 let storyboardImportMode = 'new';
 let storyboardImportController = null;
 
+function getUgcConversionBrief() {
+  const value = id => document.getElementById(id)?.value?.trim?.() || '';
+  return {
+    enabled: Boolean(value('ugcAudience') || value('ugcConversionHook') || value('ugcProblem')),
+    audience: value('ugcAudience'), objective: value('ugcObjective') || 'product_click',
+    why_now: value('ugcWhyNow'), awareness_level: value('ugcAwareness') || 'problem_aware',
+    hook_type: value('ugcHookType') || 'problem', hook: value('ugcConversionHook'),
+    angle: value('ugcAngle'), problem: value('ugcProblem'), agitate: value('ugcAgitate'),
+    solution: value('ugcSolution'), proof: value('ugcProof'), cta: value('ugcConversionCta'),
+    test_variable: value('ugcTestVariable') || 'hook', variant_count: Number(value('ugcVariantCount') || 3),
+  };
+}
+
+function auditUgcConversionBrief(brief) {
+  const required = [['audience', 'audiens'], ['hook', 'hook'], ['problem', 'problem'], ['solution', 'solution'], ['proof', 'proof'], ['cta', 'CTA']];
+  const missing = required.filter(([key]) => !brief[key]).map(([, label]) => label);
+  return { ready: brief.enabled && !missing.length, missing };
+}
+
+function calculateUgcFunnelMetrics(values) {
+  const rate = (part, whole) => whole > 0 ? Number((part / whole * 100).toFixed(2)) : null;
+  return {
+    hookRate: rate(values.threeSecond, values.impressions),
+    holdRate: rate(values.completed, values.threeSecond),
+    ctr: rate(values.clicks, values.impressions),
+    cvr: rate(values.purchases, values.clicks),
+    roas: values.spend > 0 ? Number((values.revenue / values.spend).toFixed(2)) : null,
+  };
+}
+
+function getYoutubeBlueprintInput() {
+  const value = id => document.getElementById(id)?.value?.trim?.() || '';
+  return {
+    format: value('ytFormat'), market: value('ytMarket'), language: value('ytLanguage'),
+    microNiche: value('ytMicroNiche'), audience: value('ytAudience'), promise: value('ytPromise'),
+    demand: value('ytDemand'), gap: value('ytGap'), angle: value('ytAngle'), hook: value('ytHook'),
+    openLoop: value('ytOpenLoop'), payoff: value('ytPayoff'), brand: value('ytBrand'),
+    colors: value('ytColors'), font: value('ytFont'), mainKeyword: value('ytMainKeyword'),
+    relevantKeywords: value('ytRelevantKeywords'), longTail: value('ytLongTail'), sources: value('ytSources'),
+    editorialThesis: value('ytEditorialThesis'), contentMoat: value('ytContentMoat'),
+    fleetGovernance: value('ytFleetGovernance'), productionCost: value('ytProductionCost'),
+    aiDisclosure: value('ytAiDisclosure'), humanContribution: value('ytHumanContribution'),
+    localizationQa: value('ytLocalizationQa'), audioQa: value('ytAudioQa'),
+    continuityLedger: value('ytContinuityLedger'), loopLedger: value('ytLoopLedger'), riskRegister: value('ytRiskRegister'),
+    gates: ['Evidence', 'Originality', 'Rights', 'Promise', 'Technical'].filter(name => document.getElementById(`ytGate${name}`)?.checked),
+  };
+}
+
+function diagnoseYoutubeMetrics({ ctr, hookRetention, avd, endRetention, shape, trafficSource = 'unknown', newViewers = null, returningViewers = null, revenue = null, hours = null, cost = null }) {
+  const notes = [];
+  if (ctr != null && hookRetention != null) {
+    if (ctr < 4 && hookRetention >= 60) notes.push('Packaging lemah tetapi isi awal relatif menahan: uji judul/thumbnail, jangan ubah seluruh video sekaligus.');
+    if (ctr >= 6 && hookRetention < 50) notes.push('Klik ada tetapi pembuka tidak memenuhi janji: selaraskan judul/thumbnail dengan kalimat dan visual pertama.');
+  }
+  if (shape === 'early_drop') notes.push('Drop awal: audit promise mismatch, bumper, basa-basi, kualitas VO, dan visual pertama.');
+  if (shape === 'gradual') notes.push('Penurunan gradual: audit repetisi, kepadatan informasi, variasi pacing, serta visual/audio yang terlalu seragam.');
+  if (shape === 'mid_dip') notes.push('Dip tengah: cocokkan timestamp dengan naskah; ringkas segmen, beri konteks/metafora, atau pindahkan bukti lebih awal.');
+  if (shape === 'spike') notes.push('Spike adalah sinyal rewatch: tandai timestamp dan hipotesiskan elemen penyebab sebelum direplikasi.');
+  if (shape === 'stable') notes.push('Retensi relatif stabil: pertahankan struktur dan uji satu variabel packaging atau topik berikutnya.');
+  if (avd != null && endRetention != null && avd > 0 && endRetention < avd * .5) notes.push('Akhir turun jauh: kurangi sinyal penutupan dan hubungkan payoff langsung ke video lanjutan yang relevan.');
+  if (trafficSource === 'search') notes.push('Search dominan: nilai kecocokan intent dan apakah video mengubah pencari baru menjadi returning viewer; jangan bandingkan CTR mentah dengan Browse.');
+  if (trafficSource === 'browse' || trafficSource === 'suggested') notes.push('Traffic rekomendasi: audit kombinasi packaging, kepuasan setelah klik, dan kedekatan topik dengan katalog—bukan thumbnail secara terpisah.');
+  if (newViewers != null && returningViewers != null) {
+    if (newViewers > returningViewers * 4) notes.push('Akuisisi kuat tetapi audiens kembali relatif kecil: bangun seri, format berulang yang bernilai, dan next-view bridge yang relevan.');
+    else if (returningViewers > newViewers * 2) notes.push('Loyalitas kuat tetapi jangkauan baru terbatas: uji topik masuk, angle, dan packaging untuk audiens yang belum mengenal channel.');
+    else notes.push('Komposisi new/returning viewer relatif seimbang; tandai video mana yang berfungsi sebagai acquisition dan mana yang membangun loyalty.');
+  }
+  if (revenue != null && hours != null && hours > 0) notes.push(`Revenue per production hour: ${(revenue / hours).toFixed(2)}. Bandingkan dengan biaya dan performa katalog, bukan RPM saja.`);
+  if (revenue != null && cost != null) notes.push(`Contribution video sebelum overhead: ${(revenue - cost).toFixed(2)}.`);
+  return notes.length ? notes : ['Data belum cukup untuk diagnosis. Isi metrik dan bentuk grafik dari YouTube Studio.'];
+}
+
+const CONTENT_UNIVERSE_PROFILES = {
+  toddler: { label: 'Balita 2–4', subjects: ['tebak bunyi di rumah', 'warna yang hilang dari taman', 'rutinitas tidur si kecil', 'gerak dan berhenti bersama hewan', 'lima benda untuk dihitung'], voice: 'kalimat sangat pendek, pengulangan hangat, satu instruksi per beat', pacing: 'shot tenang dan mudah dibaca; beri jeda nyata untuk menjawab', guard: 'tokoh non-manusia yang ramah, konflik sangat ringan, tanpa bahaya tiruan atau CTA manipulatif', children: true },
+  early_child: { label: 'Anak awal 5–7', subjects: ['tim penolong hewan kecil', 'detektif pola yang hilang', 'hari pertama teman baru', 'benih ajaib yang perlu dirawat', 'belajar jujur setelah kesalahan kecil'], voice: 'jelas, konkret, suportif, dialog bergiliran', pacing: 'aksi sebab-akibat sederhana dan partisipasi anak', guard: 'resolusi aman, koreksi lembut, tanpa mempermalukan atau menakut-nakuti', children: true },
+  older_child: { label: 'Anak besar 8–10', subjects: ['misteri perpustakaan sekolah', 'ekspedisi sains sungai', 'persahabatan setelah salah paham', 'penyelamatan habitat hewan', 'klub penemu barang bekas'], voice: 'cerdas namun mudah diikuti, humor dan rasa ingin tahu', pacing: 'petunjuk bertahap, percobaan, konsekuensi, payoff jelas', guard: 'tanpa instruksi berbahaya; kerja sama dan pemikiran kritis', children: true },
+  preteen: { label: 'Praremaja 11–13', subjects: ['rahasia proyek kelas', 'teman yang berubah setelah viral', 'kompetisi yang menguji integritas', 'misteri sejarah lingkungan', 'belajar menetapkan batas pertemanan'], voice: 'menghormati kecerdasan audiens, tidak menggurui', pacing: 'konflik sosial ringan dengan pilihan dan konsekuensi', guard: 'hindari body shaming, romantisasi bullying, dan tekanan sosial berbahaya', children: true },
+  teen: { label: 'Remaja 14–17', subjects: ['persahabatan yang retak karena unggahan', 'tekanan memilih masa depan', 'identitas di balik akun anonim', 'gagal lalu mencoba kembali', 'keluarga yang tak memahami impian'], voice: 'jujur, luwes, tidak memaksakan slang', pacing: 'emosi dekat, ruang hening, visual digital dan dunia nyata', guard: 'tanpa glorifikasi self-harm, tantangan berbahaya, eksploitasi seksual, atau klaim kesehatan', children: false },
+  genz_young: { label: 'Gen Z muda 18–24', subjects: ['pekerjaan pertama yang tak sesuai bayangan', 'pertemanan delapan tahun yang mendadak sunyi', 'biaya hidup dan mimpi merantau', 'hubungan tanpa kepastian', 'eksperimen lepas media sosial'], voice: 'conversational, sadar diri, spesifik, tidak sok gaul', pacing: 'cold open kuat, detail keseharian, micro-reveal', guard: 'hindari diagnosis mental dan janji finansial tanpa sumber', children: false },
+  genz_adult: { label: 'Gen Z dewasa 25–29', subjects: ['quarter-life reset', 'menikah atau mengejar karier', 'pulang setelah gagal di kota', 'teman yang tumbuh ke arah berbeda', 'membangun hidup tanpa peta lama'], voice: 'intim, reflektif, merakyat', pacing: 'dialog natural, gestur kecil, payoff emosional', guard: 'konflik dewasa tanpa manipulasi atau stereotip generasi', children: false },
+  millennial: { label: 'Milenial 30–44', subjects: ['drama rumah tangga realistis', 'sandwich generation', 'konflik pekerjaan dan keluarga', 'rumah pertama dan tekanan finansial', 'pernikahan setelah masa romantis', 'parenting tanpa kehilangan identitas', 'nostalgia 1990–2000-an', 'burnout dan memulai ulang hidup', 'kisah bisnis kecil', 'dokumenter perubahan teknologi', 'renovasi dan kehidupan rumah', 'true story keputusan finansial', 'misteri keluarga dan warisan'], voice: 'hangat, membumi, panggilan keluarga yang luwes', pacing: 'drama situasional, konsekuensi nyata, close-up emosi seperlunya', guard: 'klaim finansial/kesehatan harus bersumber; jangan mengeksploitasi penderitaan', children: false },
+  genx: { label: 'Gen X 45–59', subjects: ['karier kedua setelah PHK', 'anak dewasa meninggalkan rumah', 'warisan yang memecah saudara', 'menjaga orang tua sambil bekerja', 'profesi lama yang mulai hilang'], voice: 'tenang, jelas, berbobot tanpa menggurui', pacing: 'lebih lapang, bukti dan konteks diberi waktu', guard: 'hindari ageism dan solusi hidup yang terlalu sederhana', children: false },
+  senior: { label: 'Senior 60+', subjects: ['dua cangkir teh setiap sore', 'surat lama untuk cucu', 'resep keluarga dan cerita di baliknya', 'persahabatan yang ditemukan kembali', 'kampung yang berubah setelah puluhan tahun'], voice: 'jelas, hangat, tempo nyaman, istilah sederhana', pacing: 'shot lebih panjang, wajah dan tindakan mudah dibaca, subtitle besar', guard: 'kontras tinggi, audio bersih; hindari infantilization, fear marketing, serta nasihat medis tanpa ahli', children: false },
+  family: { label: 'Keluarga lintas generasi', subjects: ['cucu mengajari nenek teknologi', 'resep lama menyatukan tiga generasi', 'rumah warisan menyimpan surat', 'bertukar pekerjaan sehari', 'lagu lama membuka rahasia keluarga'], voice: 'setiap generasi punya cara bicara berbeda namun saling menghormati', pacing: 'parallel action dan reaksi antargenerasi yang jelas', guard: 'hindari stereotip usia; konflik ditutup dengan pemahaman, bukan ceramah', children: false },
+};
+
+const STORY_CONFLICTS = {
+  toddler: ['benda favorit hilang', 'belum memahami giliran', 'takut mencoba hal aman', 'rutinitas berubah'],
+  early_child: ['salah paham dengan teman', 'gagal pada percobaan pertama', 'harus berkata jujur', 'belajar meminta bantuan'],
+  older_child: ['petunjuk saling bertentangan', 'kerja tim tidak kompak', 'pilihan adil yang sulit', 'kesalahan perlu diperbaiki'],
+  preteen: ['tekanan kelompok', 'batas pertemanan', 'takut dianggap berbeda', 'integritas saat berkompetisi'],
+  teen: ['tekanan masa depan', 'konflik pertemanan digital', 'ekspektasi keluarga', 'identitas dan penerimaan diri'],
+  genz_young: ['pekerjaan pertama mengecewakan', 'biaya hidup meningkat', 'hubungan tanpa kepastian', 'pertemanan menjauh'],
+  genz_adult: ['karier atau hubungan', 'pulang setelah gagal', 'takut tertinggal', 'memulai ulang tanpa dukungan'],
+  millennial: ['orang tua sakit dan biaya sekolah anak', 'kehilangan pekerjaan diam-diam', 'konflik pembagian tanggung jawab', 'utang rumah tersembunyi', 'menunda impian pribadi', 'bisnis kecil hampir tutup', 'saudara berebut warisan'],
+  genx: ['PHK dan karier kedua', 'anak dewasa meninggalkan rumah', 'merawat orang tua', 'warisan memecah saudara'],
+  senior: ['kesepian setelah kehilangan pasangan', 'hubungan renggang dengan anak', 'kampung berubah', 'rahasia lama ditemukan'],
+  family: ['nilai lama bertemu kebiasaan baru', 'rumah warisan diperebutkan', 'salah paham tiga generasi', 'tradisi keluarga hampir hilang'],
+  general: ['keinginan terhalang pilihan sulit', 'rahasia mengubah hubungan', 'kesalahan memunculkan konsekuensi', 'kesempatan kedua datang terlambat']
+};
+
+const usedDracinCombinations = new Set();
+function generateDracinThemeOptions(count = 8) {
+  const leads = ['pemilik warung yang diremehkan', 'perawat kontrak yang pendiam', 'arsitek muda dari kampung', 'ayah tunggal pengemudi malam', 'pengacara bantuan hukum', 'penjahit rumahan', 'mantan atlet yang jatuh miskin', 'karyawan gudang yang jujur', 'janda pemilik toko bunga', 'guru honorer'];
+  const triggers = ['menemukan surat wasiat yang sengaja disembunyikan', 'dituduh mencuri di depan keluarga besar', 'harus menggantikan saudara pada sebuah pernikahan', 'menolong orang asing saat kecelakaan', 'menerima pesan dari seseorang yang dianggap meninggal', 'menang lelang rumah masa kecilnya', 'menemukan bayi dengan liontin keluarga', 'dipaksa menandatangani utang yang bukan miliknya'];
+  const secrets = ['ternyata pewaris perusahaan saingan', 'menyimpan bukti korupsi keluarga terpandang', 'adalah cinta pertama sang direktur', 'mempunyai saudara kembar yang mengambil identitasnya', 'diam-diam pemegang saham mayoritas', 'merupakan anak yang tertukar dua puluh tahun lalu', 'pernah menyelamatkan tokoh berkuasa saat kecil', 'memegang rekaman yang dapat membalikkan seluruh perkara'];
+  const stakes = ['sebelum pesta pernikahan dimulai', 'ketika perusahaan berada di ambang bangkrut', 'di tengah perebutan hak asuh', 'saat kampung mereka akan digusur', 'menjelang pembacaan warisan', 'ketika skandal itu disiarkan langsung', 'sebelum kontrak pernikahan berakhir', 'pada malam reuni keluarga'];
+  const tones = ['romansa perlahan', 'misteri keluarga', 'balas dendam elegan', 'drama kelas sosial', 'pengorbanan orang tua', 'second-chance romance', 'thriller korporat', 'melodrama merakyat'];
+  const shuffle = items => {
+    const result = [...items];
+    for (let index = result.length - 1; index > 0; index--) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+    }
+    return result;
+  };
+  const shuffled = {
+    leads: shuffle(leads), triggers: shuffle(triggers), secrets: shuffle(secrets),
+    stakes: shuffle(stakes), tones: shuffle(tones)
+  };
+  const results = [];
+  for (let index = 0; index < Math.min(count, 8); index++) {
+    let theme = `${shuffled.leads[index]} ${shuffled.triggers[index]}; ${shuffled.secrets[index]} ${shuffled.stakes[index]}. Nada: ${shuffled.tones[index]}.`;
+    if (usedDracinCombinations.has(theme)) {
+      const nextSecret = shuffled.secrets[(index + 1) % shuffled.secrets.length];
+      const nextStake = shuffled.stakes[(index + 2) % shuffled.stakes.length];
+      theme = `${shuffled.leads[index]} ${shuffled.triggers[index]}; ${nextSecret} ${nextStake}. Nada: ${shuffled.tones[index]}.`;
+    }
+    usedDracinCombinations.add(theme);
+    results.push(theme.charAt(0).toUpperCase() + theme.slice(1));
+  }
+  if (usedDracinCombinations.size > 80) [...usedDracinCombinations].slice(0, 40).forEach(item => usedDracinCombinations.delete(item));
+  return results;
+}
+
+let selectedUniverseIdea = null;
+function buildContentUniverse(input) {
+  const profile = CONTENT_UNIVERSE_PROFILES[input.audience] || CONTENT_UNIVERSE_PROFILES.millennial;
+  const emotion = { belonging: 'merasa dipahami', curiosity: 'penasaran', hope: 'harapan', comfort: 'ketenangan', confidence: 'percaya diri', nostalgia: 'nostalgia', laughter: 'tawa' }[input.emotion] || 'penasaran';
+  const goal = { entertain: 'menghibur', learn: 'memberi pemahaman praktis', relax: 'menenangkan', reflect: 'mengajak merenung', solve: 'memberi jalan keluar', connect: 'memantik percakapan bersama' }[input.goal] || 'menghibur';
+  return Array.from({ length: 10 }, (_, index) => {
+    const subject = profile.subjects[index % profile.subjects.length];
+    const variant = Math.floor(index / profile.subjects.length) + 1;
+    const context = input.context ? ` dalam konteks ${input.context}` : '';
+    const title = `${subject.charAt(0).toUpperCase()}${subject.slice(1)}${variant > 1 ? ` — Sudut ${variant}` : ''}`;
+    const hook = index % 2 === 0 ? `Satu hal kecil hari itu mengubah cara mereka melihat ${subject}.` : `Tak seorang pun menyangka masalah ${subject} dimulai dari keputusan sederhana.`;
+    return { id: `universe-${index + 1}`, title, audience: profile.label, premise: `${title}${context}. Cerita dirancang untuk ${goal} dan meninggalkan rasa ${emotion}, dengan konflik yang relevan bagi ${profile.label} serta akhir yang benar-benar membayar janji pembuka.`, hook, arc: `Keseharian → gangguan spesifik → pilihan → konsekuensi → bukti/perubahan → payoff ${emotion}.`, voice: profile.voice, direction: `${profile.pacing}. Kamera bergerak karena perhatian tokoh dan makna adegan; ambience sesuai lokasi, foley hanya pada aksi penting.`, guard: profile.guard, language: input.language, country: input.country, genre: input.genre, format: input.format, complexity: input.complexity, children: profile.children };
+  });
+}
+
 // Groups terminal log lines into a small set of colors: error/warning (from backend level),
 // success (completion messages), profile (Chrome worker actions), or default system info.
 function logLineCategory(l) {
@@ -89,7 +239,19 @@ function relocateStoryTargetingControls() {
   const destination = document.getElementById('storyTargetingControls');
   if (!destination) return;
 
-  ['targetCountryInput', 'targetLanguageInput', 'dracinThemeSelect', 'aspectSelect'].forEach((controlId) => {
+  const affiliateGroup = document.getElementById('chkAffiliateMode')?.closest('.form-group');
+  const aspectGroup = document.getElementById('aspectSelect')?.closest('.form-group');
+  if (affiliateGroup && aspectGroup) {
+    const primaryRow = document.createElement('div');
+    primaryRow.className = 'affiliate-aspect-row';
+    primaryRow.append(affiliateGroup, aspectGroup);
+    destination.appendChild(primaryRow);
+  }
+
+  const targetRow = document.querySelector('.story-target-row');
+  if (targetRow) destination.appendChild(targetRow);
+
+  ['dracinThemeSelect'].forEach((controlId) => {
     const control = document.getElementById(controlId);
     const group = control?.closest('.form-group');
     if (group) destination.appendChild(group);
@@ -216,33 +378,9 @@ function initFinishingLookPicker() {
 
 function initAspectRatioDefault() {
   const select = document.getElementById('aspectSelect');
-  const checkbox = document.getElementById('aspectDefaultCheckbox');
-  if (!select || !checkbox) return;
-
-  const storageKey = 'sinematica_default_aspect_ratio';
-  const saved = localStorage.getItem(storageKey);
-  if (saved === 'portrait' || saved === 'landscape') {
-    select.value = saved;
-    checkbox.checked = true;
-  } else {
-    select.value = 'portrait';
-    checkbox.checked = true;
-    localStorage.setItem(storageKey, 'portrait');
-  }
-
-  checkbox.addEventListener('change', () => {
-    if (checkbox.checked) {
-      localStorage.setItem(storageKey, select.value);
-      showToast(`Default video diatur ke ${select.value === 'portrait' ? 'Short 9:16' : 'Landscape 16:9'}.`, 'success');
-    } else {
-      localStorage.removeItem(storageKey);
-      showToast('Default aspect ratio dinonaktifkan.', 'info');
-    }
-  });
-
-  select.addEventListener('change', () => {
-    if (checkbox.checked) localStorage.setItem(storageKey, select.value);
-  });
+  if (!select) return;
+  localStorage.removeItem('sinematica_default_aspect_ratio');
+  select.value = 'portrait';
 }
 
 // Toast Notifications Helper
@@ -672,10 +810,15 @@ function bindSeoCopyActions(body, kit) {
       showToast('Gagal menyalin ke clipboard. Izinkan akses clipboard lalu coba lagi.', 'error');
     }
   };
+  body.querySelector('#btnCopyAllSeo')?.addEventListener('click', () => {
+    const allText = kit.copy_all_text || `JUDUL UTAMA:\n${(kit.seo_titles || [])[0] || ''}\n\nDESKRIPSI LENGKAP:\n${kit.description || ''}\n\nKOMENTAR TERSEMAT:\n${kit.pinned_comment || ''}\n\nTAGS:\n${kit.tags_csv || ''}`;
+    copyWithToast(allText, 'Semua teks YouTube SEO (Judul, Deskripsi, Pinned, Tags) berhasil disalin!');
+  });
+  body.querySelector('#btnCopyPinnedComment')?.addEventListener('click', () =>
+    copyWithToast(kit.pinned_comment, 'Komentar tersemat (Pinned Comment) berhasil disalin!'));
   body.querySelector('#btnCopyDescription')?.addEventListener('click', () =>
     copyWithToast(kit.description, 'Deskripsi YouTube berhasil tercopy!'));
   body.querySelectorAll('.btn-copy-seo-title').forEach(btn => {
-    // Upgrade cached SEO HTML that still contains the old clipboard emoji.
     btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
     btn.addEventListener('click', () => {
       const title = (kit.seo_titles || [])[Number(btn.getAttribute('data-index'))] || '';
@@ -688,6 +831,44 @@ function bindSeoCopyActions(body, kit) {
     copyWithToast(kit.tags_csv, 'Tag kata kunci berhasil tercopy!'));
   body.querySelector('#btnCopyHashtags')?.addEventListener('click', () =>
     copyWithToast((kit.hashtags || []).join(' '), 'Hashtag relevan berhasil tercopy!'));
+
+  const genThumbBtn = body.querySelector('#btnGenerateThumbFlow');
+  if (genThumbBtn) {
+    genThumbBtn.addEventListener('click', async () => {
+      const resultContainer = body.querySelector('#seoThumbImageResult');
+      genThumbBtn.disabled = true;
+      genThumbBtn.textContent = '⏳ Mengirim ke Google Flow...';
+      if (resultContainer) resultContainer.innerHTML = '<p style="color:var(--neon-cyan);font-size:12px;margin-top:8px;">🚀 Mengirim prompt cover ke Google Flow...</p>';
+      try {
+        const res = await fetch('/api/storyboard/generate_thumbnail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: kit.thumbnail_prompt,
+            aspect_ratio: kit.thumbnail_aspect_ratio || '16:9',
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Gagal generate thumbnail di Flow');
+        if (resultContainer) {
+          resultContainer.innerHTML = `
+            <div style="margin-top:12px; padding:12px; background:rgba(0,0,0,0.6); border:1px solid #34d399; border-radius:10px; text-align:center;">
+              <p style="color:#34d399; font-weight:800; font-size:13px; margin:0 0 8px 0;">✅ Cover Thumbnail Berhasil Dibuat di Google Flow!</p>
+              ${data.image_url ? `<img src="${data.image_url}" style="max-width:100%; max-height:260px; border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,0.5); margin-bottom:8px;" />` : ''}
+              <div>
+                ${data.image_url ? `<a href="${data.image_url}" download="youtube_thumbnail.png" class="btn-primary" style="display:inline-block; text-decoration:none; padding:6px 14px; font-size:12px; font-weight:800;">💾 Download Cover Image</a>` : ''}
+              </div>
+            </div>
+          `;
+        }
+        genThumbBtn.textContent = '✅ Sukses Dibuat!';
+      } catch (err) {
+        if (resultContainer) resultContainer.innerHTML = `<p style="color:#f43f5e;font-size:12px;margin-top:8px;">❌ ${escapeHtml(err.message)}</p>`;
+        genThumbBtn.disabled = false;
+        genThumbBtn.textContent = '⚡ Coba Buat Lagi';
+      }
+    });
+  }
 }
 
 function initSeoKitModal() {
@@ -777,6 +958,14 @@ function initSeoKitModal() {
 
         body.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 16px;">
+            <div style="background: linear-gradient(135deg, rgba(56,189,248,0.15), rgba(168,85,247,0.15)); border: 1px solid var(--neon-cyan); padding: 12px 16px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+              <div>
+                <span style="font-size: 13px; font-weight: 800; color: #fff;">⚡ YouTube Studio Instant Deployment</span>
+                <p style="font-size: 11px; color: var(--text-secondary); margin: 2px 0 0 0;">Salin seluruh naskah SEO & metadata sekali klik untuk langsung ditempel ke YouTube Studio.</p>
+              </div>
+              <button type="button" class="btn-primary" id="btnCopyAllSeo" style="padding: 8px 16px; font-size: 12px; font-weight: 800; white-space: nowrap; box-shadow: 0 0 15px rgba(56,189,248,0.4);">📋 Salin Paket Lengkap</button>
+            </div>
+
             <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
               <h4 style="color: var(--neon-cyan); font-size: 14px; margin-bottom: 8px;">🎯 3 Pilihan Judul YouTube SEO Natural:</h4>
               <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: var(--text-primary); line-height: 1.6;">
@@ -801,10 +990,22 @@ function initSeoKitModal() {
 
             <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <h4 style="color: var(--neon-cyan); font-size: 14px; margin: 0;">📌 Komentar Tersemat (Pinned Comment Engagement):</h4>
+                <button type="button" class="btn-secondary" id="btnCopyPinnedComment" style="padding: 3px 8px; font-size: 11px;">📋 Copy Pinned Comment</button>
+              </div>
+              <p style="font-size: 12px; color: #fde047; background: rgba(0,0,0,0.5); padding: 8px; border-radius: 6px; margin: 0; line-height: 1.5;">${escapeHtml(kit.pinned_comment || 'Tulis pertanyaan pemantik diskusi di sini...')}</p>
+            </div>
+
+            <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                 <h4 style="color: var(--neon-cyan); font-size: 14px; margin: 0;">🖼️ Prompt Cover YouTube ${escapeHtml(kit.thumbnail_aspect_ratio)}:</h4>
-                <button type="button" class="btn-secondary" id="btnCopyThumbPrompt" style="padding: 3px 8px; font-size: 11px;">📋 Copy Prompt</button>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" class="btn-secondary" id="btnCopyThumbPrompt" style="padding: 3px 8px; font-size: 11px;">📋 Copy Prompt</button>
+                  <button type="button" class="btn-primary" id="btnGenerateThumbFlow" style="padding: 3px 10px; font-size: 11px; font-weight: 800; background: linear-gradient(135deg, #059669, #10b981);">⚡ Buat Gambar di Flow</button>
+                </div>
               </div>
               <p style="font-size: 12px; color: var(--text-primary); background: rgba(0,0,0,0.5); padding: 8px; border-radius: 6px; margin: 0;" id="seoThumbText">${kit.thumbnail_prompt || '-'}</p>
+              <div id="seoThumbImageResult"></div>
             </div>
 
             <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
@@ -1168,6 +1369,14 @@ function initNavigation() {
       title: 'UGC Affiliate Asset Lab',
       sub: 'Validasi aset dan bangun Character/Product Master sebelum membuat storyboard'
     },
+    'tab-youtube-blueprint': {
+      title: 'YouTube Blueprint Studio',
+      sub: 'Rancang channel, konten, packaging, soundscape, QC, dan eksperimen analytics berbasis bukti'
+    },
+    'tab-content-universe': {
+      title: 'Audience & Content Universe',
+      sub: 'Mesin ide lintas usia berdasarkan fase hidup, kebutuhan emosional, dan tujuan menonton'
+    },
     'tab-settings': {
       title: 'Sinematica Studio Settings',
       sub: 'Kelola Gemini API Key, model AI engine, Google Flow Project ID, dan template seed'
@@ -1256,7 +1465,7 @@ async function fetchFleetStatus() {
         <div class="empty-state">
           <div class="empty-icon">🔌</div>
           <h4>Belum Ada Profil Chrome Terhubung</h4>
-          <p>Muat unpacked extension <code>engine/chrome-extension</code> di Chrome (chrome://extensions) dan login di labs.google/fx/tools/flow</p>
+          <p>Muat unpacked extension <code>engine/chrome-extension</code> di Chrome (chrome://extensions) dan login di flow.google.com</p>
         </div>
       `;
       return;
@@ -1399,6 +1608,93 @@ function initStoryboardForm() {
   const chkScript = document.getElementById('chkScriptMode');
   const chkAffiliate = document.getElementById('chkAffiliateMode');
   const modeBoxes = [chkMicro, chkUgc, chkChildren].filter(Boolean);
+  const storyAgeTarget = document.getElementById('storyAgeTarget');
+  document.getElementById('briefAudienceInput')?.addEventListener('input', event => { event.target.dataset.ageAutofill = 'false'; });
+  const ageAudienceLabels = {
+    general: '', toddler: 'Balita usia 2–4 tahun', early_child: 'Anak awal usia 5–7 tahun',
+    older_child: 'Anak besar usia 8–10 tahun', preteen: 'Praremaja usia 11–13 tahun',
+    teen: 'Remaja usia 14–17 tahun', genz_young: 'Gen Z muda usia 18–24 tahun',
+    genz_adult: 'Gen Z dewasa usia 25–29 tahun', millennial: 'Milenial usia 30–44 tahun',
+    genx: 'Gen X usia 45–59 tahun', senior: 'Senior usia 60 tahun ke atas',
+    family: 'Keluarga lintas generasi'
+  };
+  const applyStoryAgeTarget = () => {
+    if (!storyAgeTarget) return;
+    const audienceInput = document.getElementById('briefAudienceInput');
+    if (audienceInput && (!audienceInput.value.trim() || audienceInput.dataset.ageAutofill === 'true')) {
+      audienceInput.value = ageAudienceLabels[storyAgeTarget.value] || '';
+      audienceInput.dataset.ageAutofill = 'true';
+    }
+    const childSafe = ['toddler', 'early_child', 'older_child', 'preteen'].includes(storyAgeTarget.value);
+    if (chkChildren && chkChildren.checked !== childSafe && storyAgeTarget.value !== 'general') {
+      chkChildren.checked = childSafe;
+      chkChildren.dispatchEvent(new Event('change'));
+    }
+  };
+  const storyUniverseSelect = document.getElementById('storyUniverseSelect');
+  const storyConflictSelect = document.getElementById('storyConflictSelect');
+  let aiStoryUniverseMap = new Map();
+  const refreshStoryConflicts = () => {
+    if (!storyConflictSelect) return;
+    const conflicts = aiStoryUniverseMap.get(storyUniverseSelect?.value) || STORY_CONFLICTS[storyAgeTarget?.value || 'general'] || STORY_CONFLICTS.general;
+    storyConflictSelect.innerHTML = '<option value="">-- Pilih konflik --</option>' + conflicts.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('');
+  };
+  const refreshStoryUniverses = () => {
+    if (!storyUniverseSelect) return;
+    const profile = CONTENT_UNIVERSE_PROFILES[storyAgeTarget?.value];
+    const universes = profile?.subjects || ['drama kehidupan', 'hubungan dan keluarga', 'perjuangan dan perubahan', 'misteri', 'komedi situasi'];
+    storyUniverseSelect.innerHTML = '<option value="">-- Pilih universe --</option>' + universes.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('');
+    refreshStoryConflicts();
+  };
+  storyAgeTarget?.addEventListener('change', () => { aiStoryUniverseMap = new Map(); refreshStoryUniverses(); applyStoryAgeTarget(); });
+  storyUniverseSelect?.addEventListener('change', refreshStoryConflicts);
+  refreshStoryUniverses();
+  document.getElementById('generateAudienceUniverseAi')?.addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const status = document.getElementById('audienceUniverseAiStatus');
+    const selectedPreset = document.getElementById('genreCatalogSelect')?.selectedOptions?.[0]?.textContent || '';
+    const payload = {
+      audience: ageAudienceLabels[storyAgeTarget?.value] || 'Audiens umum',
+      country: document.getElementById('targetCountryInput')?.value || '',
+      language: document.getElementById('targetLanguageInput')?.value || '',
+      genre: selectedPreset,
+      preset: document.getElementById('dracinThemeSelect')?.value || '',
+      premise: (document.getElementById('premiseInput')?.value || '').slice(0, 1200)
+    };
+    button.disabled = true;
+    button.textContent = '⏳ AI sedang meracik...';
+    if (status) { status.textContent = 'Mencari sudut kehidupan dan konflik yang tidak generik...'; status.className = ''; }
+    try {
+      const response = await fetch('/api/storyboard/audience_universe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.detail || 'Provider AI tidak merespons');
+      const packageData = data.package || {};
+      aiStoryUniverseMap = new Map((packageData.universes || []).map(item => [item.name, item.conflicts || []]));
+      storyUniverseSelect.innerHTML = '<option value="">-- Pilih universe racikan AI --</option>' + [...aiStoryUniverseMap.keys()].map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+      const emotionSelect = document.getElementById('storyEmotionSelect');
+      if (emotionSelect) emotionSelect.innerHTML = (packageData.emotions || []).map(emotion => `<option value="${escapeHtml(emotion)}">${escapeHtml(emotion)}</option>`).join('');
+      refreshStoryConflicts();
+      if (status) { status.textContent = `Siap dari ${packageData.provider || 'AI'} · pilih universe untuk melihat konflik khususnya.`; status.className = 'ready'; }
+      showToast('Universe, konflik, dan perjalanan emosi baru berhasil diracik AI.', 'success');
+    } catch (error) {
+      if (status) { status.textContent = `AI gagal: ${error.message}. Opsi lokal tetap dapat dipakai.`; status.className = 'warn'; }
+      showToast('Racikan AI gagal; opsi lokal tidak dihapus.', 'warning');
+    } finally {
+      button.disabled = false;
+      button.textContent = '✨ Racik Universe dengan AI';
+    }
+  });
+  document.getElementById('genreCatalogSelect')?.addEventListener('change', event => {
+    const option = event.target.selectedOptions?.[0];
+    if (!option || !storyAgeTarget) return;
+    const presetAge = option.dataset.ageGroup;
+    if (presetAge === 'toddler') storyAgeTarget.value = 'toddler';
+    else if (presetAge === 'preschool') storyAgeTarget.value = 'early_child';
+    else if (presetAge === 'early-reader') storyAgeTarget.value = 'older_child';
+    else if (option.dataset.children === 'true') storyAgeTarget.value = 'early_child';
+    else return;
+    applyStoryAgeTarget();
+  });
   modeBoxes.forEach(box => {
     box.addEventListener('change', () => {
       // The three story modes carry conflicting rule sets, so only one may be active.
@@ -1509,6 +1805,18 @@ function initStoryboardForm() {
 
   if (sceneInput) sceneInput.addEventListener('input', updateTotalDuration);
   if (durationSelect) durationSelect.addEventListener('change', updateTotalDuration);
+
+  const multiAngleChk = document.getElementById('chkMultiAngleShotFlow');
+  if (multiAngleChk) {
+    multiAngleChk.addEventListener('change', () => {
+      if (multiAngleChk.checked) {
+        showToast('🎬 Multi-Angle Shot Flow aktif: 4–6 variasi sudut kamera dinamis per adegan', 'info', 'Sinematografi Pro');
+      } else {
+        showToast('Multi-Angle dinonaktifkan (kamera standar)', 'info');
+      }
+    });
+  }
+
   updateTotalDuration();
 
   const countryLanguageMap = {
@@ -1527,6 +1835,17 @@ function initStoryboardForm() {
   const btnRandomGenre = document.getElementById('btnRandomGenrePreset');
   const targetCountryInput = document.getElementById('targetCountryInput');
   const targetLanguageInput = document.getElementById('targetLanguageInput');
+  const dracinThemeSelect = document.getElementById('dracinThemeSelect');
+  const randomizeDracinThemes = (selectFirst = true) => {
+    const group = document.getElementById('dracinRandomOptions');
+    if (!group) return;
+    const themes = generateDracinThemeOptions(8);
+    group.innerHTML = themes.map((theme, index) => `<option value="${escapeHtml(theme)}">${index + 1}. ${escapeHtml(theme)}</option>`).join('');
+    if (selectFirst && dracinThemeSelect && themes.length) dracinThemeSelect.value = themes[0];
+    if (selectFirst) showToast('8 tema Dracin baru berhasil diracik. Klik lagi untuk kombinasi berbeda.', 'success');
+  };
+  document.getElementById('randomizeDracinThemes')?.addEventListener('click', () => randomizeDracinThemes(true));
+  randomizeDracinThemes(false);
 
   if (targetCountryInput && targetLanguageInput) {
     targetCountryInput.addEventListener('change', () => {
@@ -1652,7 +1971,9 @@ function initStoryboardForm() {
   if (autoSuggestBtn) {
     autoSuggestBtn.addEventListener('click', async () => {
       const premiseInput = document.getElementById('premiseInput') || document.getElementById('themeInput');
-      const currentText = premiseInput ? premiseInput.value.trim() : '';
+      let currentText = premiseInput ? premiseInput.value.trim() : '';
+      const audienceContext = [ageAudienceLabels[storyAgeTarget?.value] || '', storyUniverseSelect?.value ? `universe ${storyUniverseSelect.value}` : '', storyConflictSelect?.value ? `konflik ${storyConflictSelect.value}` : '', document.getElementById('storyEmotionSelect')?.value ? `emosi utama ${document.getElementById('storyEmotionSelect').value}` : ''].filter(Boolean).join('; ');
+      if (audienceContext) currentText = `${currentText || 'Buat konsep cerita baru'} untuk ${audienceContext}.`;
 
       autoSuggestBtn.disabled = true;
       autoSuggestBtn.textContent = '🪄 Memuat Ide AI...';
@@ -1728,12 +2049,17 @@ function initStoryboardForm() {
 
     const charEl = document.getElementById('characterInfoInput') || document.getElementById('consistentCharacterInput') || document.getElementById('characterInfo');
     const consistentChar = charEl ? charEl.value.trim() : '';
+    const selectedAgeAudience = ageAudienceLabels[storyAgeTarget?.value] || '';
+    const selectedUniverse = storyUniverseSelect?.value || '';
+    const selectedConflict = storyConflictSelect?.value || '';
+    const selectedEmotion = document.getElementById('storyEmotionSelect')?.value || '';
+    const universeDirection = [selectedUniverse && `Universe: ${selectedUniverse}`, selectedConflict && `konflik: ${selectedConflict}`, selectedEmotion && `emosi utama: ${selectedEmotion}`].filter(Boolean).join('; ');
     const creativeBrief = {
       background: document.getElementById('briefBackgroundInput')?.value.trim() || '',
       result: document.getElementById('briefResultInput')?.value.trim() || '',
-      audience: document.getElementById('briefAudienceInput')?.value.trim() || '',
+      audience: document.getElementById('briefAudienceInput')?.value.trim() || selectedAgeAudience,
       product_value: document.getElementById('briefProductValueInput')?.value.trim() || '',
-      execution: document.getElementById('briefExecutionInput')?.value.trim() || '',
+      execution: [document.getElementById('briefExecutionInput')?.value.trim() || '', universeDirection].filter(Boolean).join('\n'),
       constraints: document.getElementById('briefConstraintsInput')?.value.trim() || ''
     };
 
@@ -1790,6 +2116,8 @@ function initStoryboardForm() {
     formData.append('target_country', targetCountry);
     formData.append('target_lang', targetLanguage);
     formData.append('dracin_theme', dracinTheme);
+    const multiAngle = document.getElementById('chkMultiAngleShotFlow')?.checked !== false;
+    formData.append('multi_angle_shot_flow', multiAngle ? 'true' : 'false');
     formData.append('microdrama_mode', isMicro);
     formData.append('ugc_mode', isUgc);
     formData.append('ugc_variant', document.getElementById('ugcProductionMode')?.value || 'realism');
@@ -1802,6 +2130,7 @@ function initStoryboardForm() {
     const lightingChoice = document.getElementById('ugcLighting')?.value || 'auto';
     const ugcLighting = lightingChoice === 'custom' ? (document.getElementById('ugcCustomLighting')?.value.trim() || 'auto') : lightingChoice;
     formData.append('ugc_lighting', ugcLighting);
+    formData.append('ugc_conversion_brief', JSON.stringify(getUgcConversionBrief()));
     formData.append('children_mode', isChildren);
     formData.append('visual_style', visualStyle);
     formData.append('visual_vibe', visualVibe);
@@ -2211,6 +2540,18 @@ function renderStoryboardResult(storyboard) {
           <div style="${SB_LABEL_CELL}">💬 TEXT OVERLAY</div>
           <div style="${SB_VALUE_CELL}">
             <input type="text" class="edit-sc-overlay" data-idx="${idx}" value="${escapeHtml(sc.text_overlay || '')}" placeholder="Teks pendek di layar (maks 6 kata)..." style="${SB_INPUT} color: #fbbf24; font-weight: 700;" />
+          </div>
+
+          <div style="${SB_LABEL_CELL}">🎞️ SHOT FLOW (4-6)</div>
+          <div style="${SB_VALUE_CELL}">
+            <div style="font-size: 11px; color: #a5f3fc; line-height: 1.6; padding: 4px 0;">
+              ${Array.isArray(sc.shot_flow) && sc.shot_flow.length ? sc.shot_flow.map((sf, sfIdx) => `
+                <div style="margin-bottom: 3px;">
+                  <span style="color: var(--neon-cyan); font-weight: 800; font-family: monospace;">[${escapeHtml(sf.time || `S${sfIdx+1}`)}]</span>
+                  <b style="color: #fde68a;">${escapeHtml(sf.angle || '')}:</b> ${escapeHtml(sf.description || '')}
+                </div>
+              `).join('') : '<span style="color:var(--text-muted); font-style:italic;">Otomatis disusun sebagai 4–6 transisi sudut kamera bertimestamp saat eksekusi</span>'}
+            </div>
           </div>
 
           <div style="${SB_LABEL_CELL} border-bottom: none;">⚡ FLOW PROMPT</div>
@@ -2795,8 +3136,17 @@ async function refreshGallery() {
           ${item.total_duration != null ? `<span class="gallery-meta-chip">🎞️ ${Number(item.total_duration)}s</span>` : ''}
           ${item.output_size_display ? `<span class="gallery-meta-chip">💾 ${escapeHtml(item.output_size_display)}</span>` : ''}
           ${item.processing_duration ? `<span class="gallery-meta-chip">⏱️ ${escapeHtml(item.processing_duration)}</span>` : ''}
+          ${item.postproduction_qc ? `<span class="gallery-meta-chip" style="color:${item.postproduction_qc.status === 'automatic_checks_passed' ? '#6ee7b7' : '#fbbf24'}">${item.postproduction_qc.status === 'automatic_checks_passed' ? '✅ QC otomatis lolos' : `⚠️ QC: ${(item.postproduction_qc.findings || []).length} temuan`}</span>` : ''}
           <span style="font-size: 11px; color: var(--text-muted); margin-left: auto;">📅 ${item.created_at_formatted || 'Tersimpan'}</span>
         </div>
+
+        ${item.postproduction_qc ? `<details class="gallery-qc-panel">
+          <summary>🔬 Color, lighting & artifact QC</summary>
+          <p>${escapeHtml(item.postproduction_qc.reference_policy || '')}</p>
+          ${(item.postproduction_qc.findings || []).length ? `<ul>${item.postproduction_qc.findings.map(f => `<li>Adegan ${f.scene}: ${escapeHtml(String(f.issue || '').replaceAll('_', ' '))}${f.delta != null ? ` (delta ${f.delta})` : ''}</li>`).join('')}</ul>` : '<p class="qc-pass">Tidak ditemukan outlier exposure/white balance/flicker oleh pemeriksaan otomatis.</p>'}
+          <p><b>Tetap wajib manual:</b> putar 0.5×; cek tangan, mulut, wajah, rambut, tepi produk, ghosting, dan lipsync. Dengarkan dengan headphone.</p>
+          ${item.postproduction_qc_url ? `<a href="${item.postproduction_qc_url}" download class="btn-secondary">⬇️ Unduh laporan QC JSON</a>` : ''}
+        </details>` : ''}
 
         <div class="gallery-idea-box">
           <div class="gallery-idea-heading">
@@ -3453,7 +3803,103 @@ document.addEventListener('DOMContentLoaded', () => {
       });
   }
   
+  // Audience & Content Universe
+  document.getElementById('generateContentUniverse')?.addEventListener('click', () => {
+      const value = id => document.getElementById(id)?.value?.trim?.() || '';
+      const ideas = buildContentUniverse({ audience: value('universeAudience'), emotion: value('universeEmotion'), goal: value('universeGoal'), genre: value('universeGenre'), format: value('universeFormat'), complexity: value('universeComplexity'), context: value('universeContext'), country: value('universeCountry'), language: value('universeLanguage') });
+      selectedUniverseIdea = null;
+      const send = document.getElementById('sendUniverseToStoryboard'); if (send) send.disabled = true;
+      const results = document.getElementById('universeResults');
+      if (results) results.innerHTML = ideas.map((idea, index) => `<button type="button" class="universe-card" data-idea-index="${index}"><span>${String(index + 1).padStart(2, '0')}</span><h4>${escapeHtml(idea.title)}</h4><p>${escapeHtml(idea.premise)}</p><small><b>Hook:</b> ${escapeHtml(idea.hook)}</small><small><b>Arc:</b> ${escapeHtml(idea.arc)}</small><em>${escapeHtml(idea.audience)} · ${escapeHtml(idea.genre)} · ${escapeHtml(idea.format)}</em></button>`).join('');
+      results?.querySelectorAll('.universe-card').forEach(card => card.addEventListener('click', () => {
+          results.querySelectorAll('.universe-card').forEach(node => node.classList.remove('selected'));
+          card.classList.add('selected'); selectedUniverseIdea = ideas[Number(card.dataset.ideaIndex)];
+          if (send) send.disabled = false;
+          const status = document.getElementById('universeStatus'); if (status) status.textContent = `Terpilih: ${selectedUniverseIdea.title}`;
+      }));
+      const status = document.getElementById('universeStatus'); if (status) status.textContent = '10 ide siap · pilih satu untuk diteruskan.';
+  });
+
+  document.getElementById('sendUniverseToStoryboard')?.addEventListener('click', () => {
+      if (!selectedUniverseIdea) return showToast('Pilih satu ide terlebih dahulu.', 'warning');
+      document.querySelector('.nav-item[data-tab="tab-storyboard"]')?.click();
+      const idea = selectedUniverseIdea;
+      const premise = document.getElementById('premiseInput'); if (premise) premise.value = `${idea.hook}\n\n${idea.premise}\n\nALUR: ${idea.arc}`;
+      const audience = document.getElementById('briefAudienceInput'); if (audience) audience.value = idea.audience;
+      const ageTarget = document.getElementById('storyAgeTarget'); if (ageTarget && CONTENT_UNIVERSE_PROFILES[document.getElementById('universeAudience')?.value]) { ageTarget.value = document.getElementById('universeAudience').value; ageTarget.dispatchEvent(new Event('change')); }
+      const country = document.getElementById('targetCountryInput'); if (country) country.value = idea.country;
+      const language = document.getElementById('targetLanguageInput'); if (language) language.value = idea.language;
+      const execution = document.getElementById('briefExecutionInput'); if (execution) execution.value = `CONTENT UNIVERSE DIRECTION\nAudience: ${idea.audience}. Genre: ${idea.genre}. Format: ${idea.format}. Complexity: ${idea.complexity}.\nVoice/dialogue: ${idea.voice}.\nCamera/audio: ${idea.direction}.\nSafety & dignity: ${idea.guard}.\nKeep the hook, conflict, actions, and payoff causally coherent. Do not stereotype the age group.`;
+      const children = document.getElementById('chkChildrenMode'); if (children) { children.checked = idea.children; children.dispatchEvent(new Event('change')); }
+      document.getElementById('creativeBriefPanel')?.setAttribute('open', '');
+      showToast('Ide dan arahan audiens dikirim ke AI Storyboard.', 'success');
+  });
+
   // UGC Affiliate Asset Lab
+  const buildYoutubeBlueprint = () => {
+      const data = getYoutubeBlueprintInput();
+      const required = [['microNiche', 'micro-niche'], ['audience', 'core audience'], ['promise', 'janji channel'], ['demand', 'demand evidence'], ['angle', 'angle original'], ['hook', 'hook'], ['sources', 'sumber/lisensi']];
+      const missing = required.filter(([key]) => !data[key]).map(([, label]) => label);
+      const status = document.getElementById('ytBlueprintStatus');
+      if (missing.length) {
+          if (status) { status.textContent = `Belum siap: ${missing.join(', ')}.`; status.className = 'warn'; }
+          showToast(`Lengkapi ${missing.join(', ')}.`, 'warning');
+          return '';
+      }
+      const formatPlans = {
+          cinematic_storytelling: 'Cold open → mystery → evidence-led micro-chapters → nested open loops → verified payoff → next-view bridge. Vary pacing by meaning; use AI visuals, licensed real B-roll, and attributable evidence only when available—not a forced ratio.',
+          ambience: 'Design one coherent thematic room for a stated use case. Continuous room tone, seamless ambience crossfades, restrained licensed music, sparse contextual micro-SFX, slow non-repetitive environmental movement; no medical promises.',
+          shorts: 'Immediate first-frame event and promise, one idea, readable progression, proof/payoff, seamless ending or relevant long-form bridge. No unrelated Shorts used to pollute another audience.',
+      };
+      const blueprint = [
+        'YOUTUBE EVIDENCE-FIRST PRODUCTION BLUEPRINT',
+        `POSITIONING: ${data.microNiche} for ${data.audience} in ${data.market}, delivered in ${data.language}. Channel promise: ${data.promise}.`,
+        `VALIDATION TRIANGLE: Demand evidence — ${data.demand}. Competitor information gap — ${data.gap || 'not supplied; research before production'}. Original angle/value — ${data.angle}.`,
+        `FORMAT SYSTEM: ${formatPlans[data.format] || formatPlans.cinematic_storytelling}`,
+        `RETENTION CONTRACT: Cold open — ${data.hook}. Macro loop — ${data.openLoop || 'must be defined before scripting'}. Payoff/next view — ${data.payoff || 'resolve every promise before a relevant next-view bridge'}. No deceptive clickbait or artificial dead-air removal that makes speech unnatural.`,
+        `BRAND DNA: ${data.brand}; primary colours ${data.colors || 'define two accessible colours'}; signature font ${data.font || 'define a licensed readable font'}. Keep identity stable; thumbnail and title complement rather than repeat each other.`,
+        `SEMANTIC DISCOVERY: Main keyword “${data.mainKeyword || 'research required'}”; related context “${data.relevantKeywords || '-'}”; long-tail intent “${data.longTail || '-'}”. Use naturally in title/lead/script only when factually relevant; no keyword stuffing.`,
+        `PRODUCTION QC: original script and commentary; source ledger; asset licences; character/object continuity; color/exposure match; natural VO; ambience + selective foley + ducked music; artifact review at 0.5×; first 30 seconds reviewed against title/thumbnail promise.`,
+        `SOURCES & RIGHTS: ${data.sources}. Never fabricate citations, claims, testimonials, footage ownership, fair-use certainty, or monetization outcomes. Flag altered/synthetic media when platform rules require it.`,
+        `EDITORIAL ORIGINALITY: Thesis — ${data.editorialThesis || 'define before scripting'}. Human contribution — ${data.humanContribution || 'document research, analysis, commentary, and editorial decisions'}. Content moat — ${data.contentMoat || 'define a defensible repeatable advantage'}.`,
+        `FLEET GOVERNANCE: ${data.fleetGovernance || 'assign owner, editor, fact-checker, rights reviewer, and publisher; enable 2FA and backups'}. Estimated production cost/video: ${data.productionCost || 'not supplied'}. Scale capacity and quality, never identity/account evasion.`,
+        `MARKET & AUDIO QA: Localization — ${data.localizationQa || 'native idiom, pronunciation, units, currency, and cultural review required'}. Soundscape — ${data.audioQa || 'verify audio licence, ambience, selective foley, ducking, loudness, true peak, and seamless loops'}.`,
+        `CONTINUITY & LOOP LEDGERS: ${data.continuityLedger || 'record character, time, location, props, wardrobe, and lighting'} | ${data.loopLedger || 'record every question opened and its evidence-backed payoff'}. Use semantic pacing—not a forced cut interval.`,
+        `IRON SHIELD: ${data.riskRegister || 'classify copyright, privacy/likeness, claims, invalid traffic, and policy risks before publish'}. Preserve notices and evidence; choose edit, dispute, appeal, or takedown by issue type—never promise recovery odds.`,
+        `AI DISCLOSURE REVIEW: ${data.aiDisclosure || 'review_required'}. Disclosure does not replace consent or likeness rights.`,
+        `QUALITY GATES: ${data.gates.length}/5 passed — ${data.gates.join(', ') || 'none confirmed'}. A checked gate is a human attestation, not automatic proof.`,
+        'EXPERIMENT: Prepare title/thumbnail hypotheses before publish. Change one variable per test, log time window and traffic source, then diagnose from actual CTR and retention—not universal thresholds.',
+      ].join('\n\n');
+      document.getElementById('ytBlueprintOutput').value = blueprint;
+      if (status) { status.textContent = data.gates.length === 5 ? 'Siap · semua 5 quality gates dikonfirmasi.' : `Blueprint dibuat · ${data.gates.length}/5 gate dikonfirmasi.`; status.className = data.gates.length === 5 ? 'ready' : 'warn'; }
+      return blueprint;
+  };
+
+  document.getElementById('buildYoutubeBlueprint')?.addEventListener('click', () => {
+      if (buildYoutubeBlueprint()) showToast('YouTube Production Blueprint berhasil dibangun.', 'success');
+  });
+
+  document.getElementById('sendYoutubeToStoryboard')?.addEventListener('click', () => {
+      const blueprint = document.getElementById('ytBlueprintOutput')?.value.trim() || buildYoutubeBlueprint();
+      if (!blueprint) return;
+      const data = getYoutubeBlueprintInput();
+      document.querySelector('.nav-item[data-tab="tab-storyboard"]')?.click();
+      const premise = document.getElementById('premiseInput');
+      if (premise) premise.value = `${data.hook}\n\n${data.angle}\n\n${data.openLoop}\n\n${data.payoff}`.trim();
+      const targetCountry = document.getElementById('targetCountryInput'); if (targetCountry) targetCountry.value = data.market;
+      const targetLanguage = document.getElementById('targetLanguageInput'); if (targetLanguage) targetLanguage.value = data.language;
+      const execution = document.getElementById('briefExecutionInput'); if (execution) execution.value = blueprint;
+      document.getElementById('creativeBriefPanel')?.setAttribute('open', '');
+      showToast('Blueprint dikirim ke Storyboard. Atur jumlah scene dan durasi sebelum generate.', 'success');
+  });
+
+  document.getElementById('diagnoseYoutubeData')?.addEventListener('click', () => {
+      const optionalNumber = id => { const raw = document.getElementById(id)?.value; return raw === '' ? null : Math.max(0, Math.min(100, Number(raw))); };
+      const nonNegative = id => { const raw = document.getElementById(id)?.value; return raw === '' ? null : Math.max(0, Number(raw)); };
+      const notes = diagnoseYoutubeMetrics({ ctr: optionalNumber('ytCtr'), hookRetention: optionalNumber('ytHookRetention'), avd: optionalNumber('ytAvd'), endRetention: optionalNumber('ytEndRetention'), shape: document.getElementById('ytRetentionShape')?.value || 'unknown', trafficSource: document.getElementById('ytTrafficSource')?.value || 'unknown', newViewers: nonNegative('ytNewViewers'), returningViewers: nonNegative('ytReturningViewers'), revenue: nonNegative('ytRevenue'), hours: nonNegative('ytHours'), cost: nonNegative('ytProductionCost') });
+      document.getElementById('ytAnalyticsResult').innerHTML = `<ol>${notes.map(note => `<li>${escapeHtml(note)}</li>`).join('')}</ol>`;
+  });
+
   const assetPrompt = document.getElementById('assetMasterPrompt');
   const characterAssetInput = document.getElementById('ugcCharacterAsset');
   const productAssetInput = document.getElementById('ugcProductAsset');
@@ -3466,6 +3912,73 @@ document.addEventListener('DOMContentLoaded', () => {
   ugcLightingSelect?.addEventListener('change', () => {
       const custom = document.getElementById('ugcCustomLighting');
       if (custom) custom.disabled = ugcLightingSelect.value !== 'custom';
+  });
+  const ugcProductionMode = document.getElementById('ugcProductionMode');
+  ugcProductionMode?.addEventListener('change', () => {
+      if (ugcProductionMode.value !== 'raw_amateur') return;
+      const tone = document.getElementById('ugcTone');
+      if (tone) tone.value = 'Raw, candid, socially alive, imperfect amateur smartphone footage';
+      const lighting = document.getElementById('ugcLighting');
+      if (lighting && lighting.value === 'auto') lighting.value = 'natural_window';
+  });
+
+  document.getElementById('buildUgcFormula')?.addEventListener('click', () => {
+      const who = document.getElementById('ugcFormulaWho')?.value.trim();
+      const action = document.getElementById('ugcFormulaAction')?.value.trim();
+      const where = document.getElementById('ugcFormulaWhere')?.value.trim();
+      const need = document.getElementById('ugcFormulaNeed')?.value.trim();
+      const hook = document.getElementById('ugcFormulaHook')?.value.trim();
+      const emotionSelect = document.getElementById('ugcFormulaEmotion');
+      const emotion = emotionSelect?.selectedOptions?.[0]?.textContent || 'Relate';
+      if (!who || !action || !where) return showToast('Isi SIAPA, NGAPAIN, dan DI MANA terlebih dahulu.', 'warning');
+      const idea = `${who} ${action} di ${where}${need ? `; produk dibutuhkan ketika ${need}` : ''}.`;
+      const completeHook = hook || `Masalah kecil ini pasti pernah kamu alami.`;
+      const formulaPrompt = `Read and follow all attached references carefully before generating.\n${idea}\nBuka dalam 3 detik dengan hook: "${completeHook}" Fokus pada satu emosi utama: ${emotion}. Buat satu pesan yang mudah dicerna, tunjukkan masalah melalui aksi nyata, hadirkan produk tepat saat dibutuhkan, buktikan hanya manfaat yang terlihat atau diizinkan, lalu akhiri dengan CTA natural. Jangan memakai pembuka formal, klaim berlebihan, atau iklan tempelan.`;
+      const output = document.getElementById('ugcFormulaPrompt');
+      if (output) output.value = formulaPrompt;
+      const logline = document.getElementById('ugcLogline');
+      if (logline) logline.value = `${idea} Hook: ${completeHook} Emosi: ${emotion}.`;
+      showToast('Konsep SIAPA + NGAPAIN + DI MANA sudah disusun.', 'success');
+  });
+
+  document.getElementById('buildConversionBrief')?.addEventListener('click', () => {
+      const brief = getUgcConversionBrief();
+      const audit = auditUgcConversionBrief(brief);
+      const status = document.getElementById('ugcConversionStatus');
+      if (!audit.ready) {
+          if (status) { status.textContent = `Belum siap: isi ${audit.missing.join(', ')}.`; status.className = 'warn'; }
+          return showToast(`Brief belum lengkap: ${audit.missing.join(', ')}.`, 'warning');
+      }
+      const awarenessLabels = { unaware: 'edukasi/cerita', problem_aware: 'solusi & harapan', solution_aware: 'diferensiasi terbukti', product_aware: 'proof, offer & CTA' };
+      const output = [
+        `OBJECTIVE: Gerakkan ${brief.audience} untuk ${brief.objective}.${brief.why_now ? ` Alasan sekarang: ${brief.why_now}.` : ' Tanpa urgensi buatan.'}`,
+        `AWARENESS: ${brief.awareness_level} — ${awarenessLabels[brief.awareness_level] || ''}.`,
+        `HOOK 0–3s (${brief.hook_type}): “${brief.hook}”`,
+        `PAS: Problem — ${brief.problem} | Agitate — ${brief.agitate || 'tunjukkan dampak nyata secara wajar'} | Solution — ${brief.solution}`,
+        `PROOF: ${brief.proof}. CTA: ${brief.cta}.`,
+        `RETENTION: tanpa intro; perubahan visual bermakna tiap 2–3 detik; open loop wajib dituntaskan sebelum CTA.`,
+        `TEST PLAN: buat ${brief.variant_count} versi dan ubah hanya ${brief.test_variable}; produk, isi utama, offer, durasi, dan variabel lain tetap.`,
+        `GUARDRAIL: jangan mengarang hasil, testimoni, harga, diskon, stok, bonus, klaim kesehatan, before-after, atau urgensi.`,
+      ].join('\n');
+      document.getElementById('ugcConversionOutput').value = output;
+      if (status) { status.textContent = 'Siap dipakai · struktur dan proof lengkap.'; status.className = 'ready'; }
+      const formulaHook = document.getElementById('ugcFormulaHook');
+      if (formulaHook && !formulaHook.value.trim()) formulaHook.value = brief.hook;
+      showToast('Brief konversi siap. Sistem akan mengunci satu variabel per variasi.', 'success');
+  });
+
+  document.getElementById('calculateUgcMetrics')?.addEventListener('click', () => {
+      const number = id => Math.max(0, Number(document.getElementById(id)?.value || 0));
+      const metrics = calculateUgcFunnelMetrics({
+          impressions: number('metricImpressions'), threeSecond: number('metric3s'),
+          completed: number('metricCompleted'), clicks: number('metricClicks'),
+          purchases: number('metricPurchases'), spend: number('metricSpend'), revenue: number('metricRevenue'),
+      });
+      const show = (value, suffix = '%') => value == null ? '—' : `${value}${suffix}`;
+      document.getElementById('ugcMetricResults').innerHTML = [
+          ['Hook Rate', show(metrics.hookRate)], ['Hold Rate', show(metrics.holdRate)],
+          ['CTR', show(metrics.ctr)], ['CVR', show(metrics.cvr)], ['ROAS', show(metrics.roas, '×')],
+      ].map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join('');
   });
 
   async function auditAsset(file, output, type) {
@@ -3552,8 +4065,12 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('briefProductValueInput').value = document.getElementById('ugcProductIdentity')?.value.trim() || '';
       const logline = document.getElementById('ugcLogline')?.value.trim() || '';
       if (logline) document.getElementById('premiseInput').value = logline;
-      document.getElementById('briefResultInput').value = `Video ${document.getElementById('ugcProductionMode')?.value === 'commercial' ? 'commercial premium' : 'UGC natural'} untuk ${document.getElementById('ugcPlatform')?.value || 'TikTok'}, format mengikuti rasio produksi.`;
-      document.getElementById('briefExecutionInput').value = `Tone: ${document.getElementById('ugcTone')?.value || 'natural'}. Emotional arc: ${document.getElementById('ugcEmotionArc')?.value || ''}. Environment: ${document.getElementById('ugcBackground')?.selectedOptions?.[0]?.textContent || 'AI recommendation'}. Lighting: ${document.getElementById('ugcLighting')?.selectedOptions?.[0]?.textContent || 'AI recommendation'}. Setiap scene wajib memiliki purpose, aktivitas, ekspresi, komposisi, camera direction, dan transition bridge.`;
+      const productionMode = document.getElementById('ugcProductionMode')?.value || 'realism';
+      const productionLabel = productionMode === 'commercial' ? 'commercial premium' : productionMode === 'raw_amateur' ? 'raw amateur smartphone anti-AI' : 'UGC natural';
+      document.getElementById('briefResultInput').value = `Video ${productionLabel} untuk ${document.getElementById('ugcPlatform')?.value || 'TikTok'}, format mengikuti rasio produksi.`;
+      const viralFormula = document.getElementById('ugcFormulaPrompt')?.value.trim() || '';
+      const conversionBrief = document.getElementById('ugcConversionOutput')?.value.trim() || '';
+      document.getElementById('briefExecutionInput').value = `Tone: ${document.getElementById('ugcTone')?.value || 'natural'}. Emotional arc: ${document.getElementById('ugcEmotionArc')?.value || ''}. Environment: ${document.getElementById('ugcBackground')?.selectedOptions?.[0]?.textContent || 'AI recommendation'}. Lighting: ${document.getElementById('ugcLighting')?.selectedOptions?.[0]?.textContent || 'AI recommendation'}. Setiap scene wajib memiliki purpose, aktivitas, ekspresi, komposisi, camera direction, dan transition bridge.${viralFormula ? ` Viral formula: ${viralFormula}` : ''}${conversionBrief ? ` Conversion brief: ${conversionBrief}` : ''}`;
       document.getElementById('creativeBriefPanel')?.setAttribute('open', '');
       showToast('Product Master sudah dipasang ke Storyboard dan Creative Brief.', 'success');
   });

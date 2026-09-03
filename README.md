@@ -48,7 +48,7 @@ Untuk menggunakan banyak profil Chrome (Multi-Flow):
 2. Di setiap profil Chrome, buka URL: `chrome://extensions`
 3. Aktifkan **Developer mode** di pojok kanan atas.
 4. Klik **Load unpacked**, pilih folder: `E:\AUTO KLIK\Sinematica\engine\chrome-extension`
-5. Buka tab [labs.google/fx/tools/flow](https://labs.google/fx/tools/flow) di masing-masing profil Chrome dan pastikan posisi akun Google sudah **Login**.
+5. Buka tab [flow.google.com](https://flow.google.com/) di masing-masing profil Chrome dan pastikan akun Google sudah **Login**. Alamat lama `labs.google/fx/flow` dan `labs.google/fx/tools/flow` juga tetap dikenali oleh extension.
 6. Extension di setiap profil akan otomatis terhubung ke dashboard Sinematica! (Cek tab **Chrome Profile Fleet** di dashboard untuk memastikan status menjadi *Siap / Online*).
 
 ---

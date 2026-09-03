@@ -94,7 +94,7 @@ class ExtensionBridge:
 
     def register_instance(
         self, instance_id: str, ws, instance_name: str = None, project_id: str = None,
-        ready: bool = True, readiness_error: str = None,
+        ready: bool = True, readiness_error: str = None, version: str = None,
     ):
         instance_id = str(instance_id or "").strip()
         if not instance_id:
@@ -108,6 +108,7 @@ class ExtensionBridge:
             "project_id": project_id or previous.get("project_id"),
             "ready": bool(ready),
             "readiness_error": readiness_error,
+            "version": version or previous.get("version"),
             "last_active": time.time(),
             "busy": False
         }
@@ -198,6 +199,7 @@ class ExtensionBridge:
                 "project_id": entry.get("project_id"),
                 "ready": bool(entry.get("ready", True)),
                 "readiness_error": entry.get("readiness_error"),
+                "version": entry.get("version", "1.3.8"),
                 "is_active": iid == self.active_instance_id,
                 "is_preferred": iid == self._preferred_instance_id,
             })

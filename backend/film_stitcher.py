@@ -9,6 +9,18 @@ from typing import List, Dict, Any
 
 log = logging.getLogger("sinematica.film_stitcher")
 
+MASTERING_FILTER = "loudnorm=I=-16:TP=-1.5:LRA=11"
+
+
+def build_music_mix_filter(music_volume: float = 0.16) -> str:
+    """Keep production audio primary while ducking a looping music bed under speech."""
+    volume = max(0.0, min(float(music_volume), 1.0))
+    return (
+        f"[1:a]volume={volume:.2f}[music];"
+        "[music][0:a]sidechaincompress=threshold=0.025:ratio=10:attack=20:release=500[ducked];"
+        f"[0:a][ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,{MASTERING_FILTER}[aout]"
+    )
+
 
 def extract_continuity_frame(
     video_path: Path,
@@ -136,11 +148,13 @@ def stitch_scenes_with_transition(job_dir: Path, ordered_video_paths: List[str],
         last_v, last_a = vout, aout
         cumulative += durations[i] - d
 
+    filter_parts.append(f"[{last_a}]{MASTERING_FILTER}[mastered_audio]")
+
     output_path = job_dir / output_filename
     cmd = [ffmpeg_bin, "-y"] + inputs + [
         "-filter_complex", ";".join(filter_parts),
-        "-map", f"[{last_v}]", "-map", f"[{last_a}]",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-c:a", "aac",
+        "-map", f"[{last_v}]", "-map", "[mastered_audio]",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-c:a", "aac", "-b:a", "192k",
         str(output_path)
     ]
 
@@ -187,14 +201,18 @@ def stitch_scenes(job_dir: Path, ordered_video_paths: List[str], output_filename
         except Exception as ex:
             raise RuntimeError(f"Gagal menggabungkan video dengan MoviePy: {ex}")
 
-    # Use FFmpeg fast concat
+    # Stream-copy video while mastering the concatenated production audio. Re-encoding
+    # audio prevents abrupt scene-to-scene loudness jumps without degrading the picture.
     cmd = [
         ffmpeg_bin,
         "-y",
         "-f", "concat",
         "-safe", "0",
         "-i", str(concat_file_path),
-        "-c", "copy",
+        "-c:v", "copy",
+        "-af", MASTERING_FILTER,
+        "-c:a", "aac",
+        "-b:a", "192k",
         str(output_path)
     ]
 
@@ -211,7 +229,9 @@ def stitch_scenes(job_dir: Path, ordered_video_paths: List[str], output_filename
             "-c:v", "libx264",
             "-preset", "fast",
             "-crf", "22",
+            "-af", MASTERING_FILTER,
             "-c:a", "aac",
+            "-b:a", "192k",
             str(output_path)
         ]
         log.info("Retrying FFmpeg re-encode concat: %s", " ".join(cmd_reencode))
@@ -224,10 +244,7 @@ def stitch_scenes(job_dir: Path, ordered_video_paths: List[str], output_filename
 
 
 def mux_audio_to_video(job_dir: Path, video_path: str, audio_path: str, output_filename: str = "cinematic_film_with_audio.mp4") -> str:
-    """Mux background audio track onto the video using FFmpeg.
-    
-    Replaces the original video's audio with the new audio track and trims to the shortest stream.
-    """
+    """Mix a ducked music bed beneath dialogue/ambience, then master final loudness."""
     if not os.path.exists(video_path) or not os.path.exists(audio_path):
         log.warning("File tidak ditemukan untuk proses mux_audio_to_video.")
         return video_path
@@ -242,11 +259,14 @@ def mux_audio_to_video(job_dir: Path, video_path: str, audio_path: str, output_f
     cmd = [
         ffmpeg_bin, "-y",
         "-i", str(video_path),
+        "-stream_loop", "-1",
         "-i", str(audio_path),
+        "-filter_complex", build_music_mix_filter(),
         "-c:v", "copy",
         "-c:a", "aac",
+        "-b:a", "192k",
         "-map", "0:v:0?",
-        "-map", "1:a:0?",
+        "-map", "[aout]",
         "-shortest",
         str(output_path)
     ]

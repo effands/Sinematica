@@ -1,6 +1,6 @@
 /**
  * Sinematica Flow Agent — Injected Script (Isolated inside IIFE scope)
- * Has access to window.grecaptcha.enterprise
+ * Has access to window.grecaptcha.enterprise & sniffs Flow traffic
  */
 (function () {
   if (window.__SINEMATICA_INJECTED__) return;
@@ -18,7 +18,7 @@
   XMLHttpRequest.prototype.send = function (body) {
     try {
       const url = this.__sniffUrl || '';
-      if (url.includes('googleapis.com') || url.includes('labs.google')) {
+      if (url.includes('googleapis.com') || url.includes('labs.google') || url.includes('flow.google.com')) {
         window.postMessage({
           type: '__FLOWKIT_SNIFF__',
           url,
@@ -26,7 +26,18 @@
           method: this.__sniffMethod || 'POST',
         }, '*');
       }
-    } catch {}
+      this.addEventListener('load', function () {
+        try {
+          if (url.includes('aisandbox-pa.googleapis.com') && this.responseText) {
+            const data = JSON.parse(this.responseText);
+            const rem = data.remainingCredits ?? data.credits;
+            if (rem !== undefined && rem !== null && Number.isFinite(Number(rem))) {
+              window.postMessage({ type: '__FLOWKIT_CREDITS__', credits: Number(rem) }, '*');
+            }
+          }
+        } catch (_) {}
+      });
+    } catch (_) {}
     return _xhrSend.call(this, body);
   };
 
@@ -37,7 +48,6 @@
       let bodyText = '';
       if (args[1]?.body) {
         const b = args[1].body;
-        // Keep aisandbox bodies intact: they are what we learn the request schema from.
         const keepFull = url.includes('aisandbox-pa.googleapis.com');
         const limit = keepFull ? 400000 : 5000;
         if (typeof b === 'string') bodyText = b.length > limit ? b.slice(0, 200) + '...' : b;
@@ -47,8 +57,26 @@
         type: '__FLOWKIT_SNIFF__',
         url, body: bodyText, method: args[1]?.method || 'GET',
       }, '*');
-    } catch {}
-    return await _originalFetch.apply(this, args);
+    } catch (_) {}
+
+    const res = await _originalFetch.apply(this, args);
+
+    try {
+      const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+      if (url.includes('aisandbox-pa.googleapis.com')) {
+        const clone = res.clone();
+        clone.json().then(data => {
+          if (data && typeof data === 'object') {
+            const rem = data.remainingCredits ?? data.credits;
+            if (rem !== undefined && rem !== null && Number.isFinite(Number(rem))) {
+              window.postMessage({ type: '__FLOWKIT_CREDITS__', credits: Number(rem) }, '*');
+            }
+          }
+        }).catch(() => {});
+      }
+    } catch (_) {}
+
+    return res;
   };
 
   window.addEventListener('GET_CAPTCHA', async ({ detail }) => {

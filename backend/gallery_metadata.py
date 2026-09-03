@@ -53,4 +53,6 @@ def gallery_metadata(job):
         "seo_storyboard": job.get("seo_storyboard") or None,
         "target_lang": target_lang,
         "target_country": target_country,
+        "postproduction_qc": job.get("postproduction_qc") or None,
+        "postproduction_qc_url": job.get("postproduction_qc_url") or None,
     }

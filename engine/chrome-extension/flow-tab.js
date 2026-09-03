@@ -3,7 +3,8 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.FlowTab = api;
 })(typeof self !== 'undefined' ? self : globalThis, function () {
-  const FLOW_URL = 'https://labs.google/fx/tools/flow';
+  const FLOW_URL = 'https://flow.google.com/';
+  const FLOW_TAB_PATTERNS = ['https://labs.google/*', 'https://flow.google.com/*'];
   const defaultWait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   async function waitForTabComplete(chromeApi, tab, wait = defaultWait) {
@@ -17,10 +18,35 @@
     throw new Error('FLOW_TAB_LOAD_TIMEOUT');
   }
 
+  function isFlowUrl(url) {
+    try {
+      const parsed = new URL(String(url || ''));
+      if (parsed.protocol !== 'https:') return false;
+      if (parsed.hostname === 'flow.google.com') return true;
+      return parsed.hostname === 'labs.google'
+        && /^\/fx\/(?:[a-z0-9_-]+\/)*(?:tools\/)?flow(?:\/|$)/i.test(parsed.pathname);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isTrustedFlowRequestUrl(url) {
+    try {
+      const parsed = new URL(String(url || ''));
+      return parsed.protocol === 'https:'
+        && (parsed.hostname === 'labs.google' || parsed.hostname === 'flow.google.com');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function queryFlowTabs(chromeApi) {
+    const tabs = await chromeApi.tabs.query({ url: FLOW_TAB_PATTERNS });
+    return (tabs || []).filter(item => isFlowUrl(item.url || item.pendingUrl));
+  }
+
   async function findExistingFlowTab(chromeApi) {
-    const tabs = await chromeApi.tabs.query({ url: '*://labs.google/*' });
-    const flowTabs = (tabs || []).filter(item => /\/fx\/tools\/flow(?:\/|$)/i.test(item.url || ''));
-    const candidates = flowTabs.length ? flowTabs : (tabs || []);
+    const candidates = await queryFlowTabs(chromeApi);
     return candidates.find(item => item.active && item.currentWindow)
       || candidates.find(item => item.active)
       || [...candidates].sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0]
@@ -51,5 +77,15 @@
     return { ready: true, error: null };
   }
 
-  return { ensureFlowTab, findExistingFlowTab, readinessState, waitForTabComplete };
+  return {
+    FLOW_URL,
+    FLOW_TAB_PATTERNS,
+    ensureFlowTab,
+    findExistingFlowTab,
+    isFlowUrl,
+    isTrustedFlowRequestUrl,
+    queryFlowTabs,
+    readinessState,
+    waitForTabComplete,
+  };
 });

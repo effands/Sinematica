@@ -73,6 +73,12 @@ class RegenerateSceneRequest(BaseModel):
     target_lang: Optional[str] = "Indonesia"
 
 
+class GenerateThumbnailRequest(BaseModel):
+    prompt: str
+    aspect_ratio: Optional[str] = "landscape"
+    film_title: Optional[str] = "Thumbnail"
+
+
 from ..gemini_storyboard import generate_storyboard, auto_suggest_details, generate_youtube_metadata, regenerate_single_scene, generate_music_video_storyboard
 
 
@@ -89,6 +95,7 @@ def generate_seo_metadata_kit(req: SEOKitRequest):
             target_lang=req.target_lang or "Indonesia",
             target_country=req.target_country or "",
             aspect_ratio=req.aspect_ratio or (req.storyboard or {}).get("aspect_ratio") or "landscape",
+            storyboard=req.storyboard,
         )
         # Keep both key shapes so cached/older frontends remain compatible.
         data["seo_titles"] = data.get("seo_titles") or data.get("titles") or []
@@ -97,6 +104,45 @@ def generate_seo_metadata_kit(req: SEOKitRequest):
     except Exception as ex:
         log.error("Error generating SEO kit: %s", ex)
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+@router.post("/generate_thumbnail")
+async def generate_thumbnail_endpoint(req: GenerateThumbnailRequest):
+    """Generate YouTube thumbnail image directly in Google Flow."""
+    from ..bridge_manager import get_bridge
+    bridge = get_bridge()
+    snap = bridge.instance_snapshot()
+    ready = sorted(
+        [i for i in snap if i.get("connected") and i.get("ready", True)],
+        key=lambda x: (str(x.get("version") or "") >= "1.3.9", bool(x.get("project_id"))),
+        reverse=True
+    )
+    if not ready:
+        raise HTTPException(status_code=400, detail="Tidak ada profil Chrome Extension yang terhubung!")
+
+    cfg = settings.get_settings()
+    proj_id = cfg.get("flow_project_id") or ready[0].get("project_id") or "0fe1acd1-8e99-48a4-aade-cd3b764086d1"
+    inst_id = ready[0].get("instance_id")
+    aspect = "portrait" if str(req.aspect_ratio).lower() in {"portrait", "9:16", "vertical"} else "landscape"
+
+    try:
+        from omniflash.generators import generate_character_image
+        res = await generate_character_image(
+            bridge=bridge,
+            prompt=req.prompt,
+            aspect=aspect,
+            project_id=proj_id,
+            instance_id=inst_id,
+        )
+        return {
+            "success": True,
+            "image_url": res.get("image_url"),
+            "media_id": res.get("media_id"),
+            "message": "Thumbnail berhasil dibuat di Google Flow!",
+        }
+    except Exception as ex:
+        log.exception("Gagal generate thumbnail: %s", ex)
+        raise HTTPException(status_code=500, detail=f"Gagal generate thumbnail: {ex}")
 
 
 @router.post("/regenerate_scene")

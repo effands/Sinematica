@@ -210,8 +210,8 @@ def _extract_tags_csv(raw: Dict[str, Any], film_title: str, premise: str) -> str
     return ", ".join(extracted_tags[:12])
 
 
-def normalize_youtube_seo_kit(data: Optional[Dict[str, Any]], film_title: str = "", premise: str = "", aspect_ratio: str = "landscape") -> Dict[str, Any]:
-    """Ensure YouTube SEO Kit is 100% complete with normalized titles, description, thumbnail prompt, and tags."""
+def normalize_youtube_seo_kit(data: Optional[Dict[str, Any]], film_title: str = "", premise: str = "", aspect_ratio: str = "landscape", storyboard: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Ensure YouTube SEO Kit is 100% complete with normalized titles, description, chapters, pinned comment, thumbnail prompt, and tags."""
     raw = data or {}
     title_clean = (film_title or raw.get("film_title") or "Film AI Sinematik").strip()
     premise_clean = (premise or raw.get("premise") or title_clean).strip()
@@ -222,6 +222,23 @@ def normalize_youtube_seo_kit(data: Optional[Dict[str, Any]], film_title: str = 
 
     normalized_titles = normalize_seo_titles(raw_titles, title_clean)
     hashtags = normalize_hashtags(raw, title_clean)
+
+    # 1. Build automatic Video Chapters (Timestamps) from storyboard scenes if available
+    chapters_list = []
+    chapters_str = ""
+    sb = storyboard or raw.get("storyboard")
+    if isinstance(sb, dict) and sb.get("scenes"):
+        curr_time = 0
+        for s_idx, scene in enumerate(sb.get("scenes") or []):
+            mins = curr_time // 60
+            secs = curr_time % 60
+            time_tag = f"{mins:02d}:{secs:02d}"
+            s_name = (scene.get("title") or f"Adegan {s_idx + 1}").strip()
+            chapters_list.append(f"{time_tag} - {s_name}")
+            dur = int(scene.get("duration") or 10)
+            curr_time += dur
+        if chapters_list:
+            chapters_str = "\n".join(chapters_list)
 
     desc = str(raw.get("description") or raw.get("video_description") or raw.get("desc") or "").strip()
     if not desc:
@@ -234,15 +251,40 @@ def normalize_youtube_seo_kit(data: Optional[Dict[str, Any]], film_title: str = 
     elif not re.findall(r"(?<!\w)#[\w]+", desc):
         desc = f"{desc.rstrip()}\n\n{' '.join(hashtags)}"
 
+    # Append Chapters into description if not already present
+    if chapters_str and "00:00" not in desc:
+        desc = f"{desc.rstrip()}\n\n⏱️ DAFTAR BABAK (CHAPTERS):\n{chapters_str}"
+
+    pinned_comment = str(raw.get("pinned_comment") or "").strip()
+    if not pinned_comment:
+        pinned_comment = f"💬 Menurut kamu, apa momen atau keputusan paling berkesan di film '{title_clean}'? Tulis pendapatmu di kolom komentar ya! 👇"
+
     thumbnail_ratio = "9:16" if str(aspect_ratio).lower() in {"portrait", "9:16", "vertical"} else "16:9"
     thumbnail_prompt = _extract_thumbnail_prompt(raw, title_clean, premise_clean, aspect_ratio)
     tags_csv = _extract_tags_csv(raw, title_clean, premise_clean)
+
+    copy_all_text = f"""=== JUDUL YOUTUBE ===
+{normalized_titles[0] if normalized_titles else title_clean}
+
+=== DESKRIPSI LENGKAP ===
+{desc}
+
+=== KOMENTAR TERSEMAT (PINNED COMMENT) ===
+{pinned_comment}
+
+=== TAGS BACKEND (PASTE KE YOUTUBE STUDIO) ===
+{tags_csv}
+"""
 
     result = {
         "titles": normalized_titles,
         "seo_titles": normalized_titles,
         "description": desc,
         "hashtags": hashtags,
+        "pinned_comment": pinned_comment,
+        "chapters": chapters_list,
+        "chapters_text": chapters_str,
+        "copy_all_text": copy_all_text.strip(),
         "thumbnail_prompt": thumbnail_prompt,
         "thumbnailPrompt": thumbnail_prompt,
         "thumbnail_aspect_ratio": thumbnail_ratio,

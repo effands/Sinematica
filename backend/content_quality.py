@@ -38,12 +38,13 @@ mulai dari konteks/pain point manusia, demonstrasikan hanya 1-2 manfaat paling r
 def build_five_realism_prompt(visual_style: str = "live_action") -> str:
     visual = ("kulit bertekstur alami (pori, detail halus, sedikit asimetri), rambut dan kain fisikal, warna kulit wajar, pencahayaan konsisten, tanpa wajah lilin/beauty-filter atau artefak AI" if visual_style == "live_action" else "anatomi, material, garis, shading, dan proporsi harus autentik serta konsisten dengan medium terpilih; tanpa artefak atau pergantian gaya")
     return f"""
-LIMA PARAMETER REALISM — AUDIT SETIAP SCENE SEBELUM JSON:
+ENAM PARAMETER REALISM — AUDIT SETIAP SCENE SEBELUM JSON:
 1. Visual Realism: {visual}.
 2. Character Consistency: wajah/model, usia, tubuh, rambut, outfit, aksesori, produk, dan lingkungan terkunci; perubahan hanya melalui aksi yang terlihat.
 3. Story Realism: setiap scene punya konteks, tujuan, sebab-akibat, dan reaksi; dialog singkat seperti manusia berbicara, bukan membaca iklan atau menjelaskan hal yang sudah terlihat.
-4. Motion Realism: berat tubuh, momentum, kontak tangan-properti, kedipan, napas, tatapan, ekspresi, dan inersia kamera wajar; tanpa gerak melayang, patah, morphing, atau glitch.
-5. Humanization: sisipkan micro-pause/napas/keraguan alami bila relevan, room tone dan ambient sound lokasi, intonasi sesuai emosi, serta editing/camera movement yang tertahan.
+4. Motion Realism: berat tubuh, momentum, kontak tangan-properti, kedipan, napas, tatapan, ekspresi, dan inersia kamera wajar; tanpa gerak melayang, patah, morphing, atau glitch. Untuk interaksi ruang, kunci sisi kiri/kanan, arah hadap, tangan yang dipakai, engsel/handle, jalur masuk-keluar, dan urutan kontak agar pintu, mobil, kursi, serta properti tidak terbalik atau berpindah secara ambigu.
+5. Humanization: sisipkan micro-pause/napas/keraguan alami bila relevan, room tone dan ambient sound lokasi, intonasi sesuai emosi, serta editing/camera movement yang tertahan. Gerak kamera harus termotivasi oleh aksi atau emosi dengan akselerasi/deselerasi dan parallax alami—bukan zoom digital acak atau kamera kaku.
+6. Emotional Detail: pilih detail anatomi yang relevan dengan momen—mata dan kedipan, bibir/rahang saat bicara, helai rambut, telinga/leher saat menoleh, atau jari/tangan saat menyentuh properti—lalu rekam melalui close-up, extreme close-up, insert, atau macro yang stabil. Jangan memotong anggota tubuh secara serampangan atau menjejalkan semua macro dalam satu scene.
 Prompt scene harus menyebut bukti visual/audio konkret, bukan sekadar kata 'realistic'.
 """.strip()
 
@@ -60,10 +61,26 @@ def build_scene_blueprint_guard(scene: Dict[str, Any]) -> str:
     fields = [
         ("purpose", scene.get("scene_purpose")), ("activity", scene.get("activity") or scene.get("action_summary")),
         ("expression", scene.get("expression")), ("composition", scene.get("visual_composition")),
+        ("spatial continuity", scene.get("spatial_continuity")),
+        ("emotional detail", scene.get("emotional_detail")),
         ("transition", scene.get("transition_bridge")),
     ]
     values = [f"{label}: {str(value).strip()}" for label, value in fields if str(value or "").strip()]
-    return "\n\nSTORYBOARD BLUEPRINT LOCK: " + "; ".join(values) + ". Execute these directions visibly; do not replace them with random coverage." if values else ""
+    if not values:
+        return ""
+    return (
+        "\n\nSTORYBOARD BLUEPRINT LOCK: " + "; ".join(values)
+        + ". Execute these directions visibly; do not replace them with random coverage. "
+          "SPATIAL LOGIC: preserve left/right positions, facing direction, eyelines, the active hand, object "
+          "orientation, hinges and handles across every cut. For entering a car or doorway, visibly stage "
+          "approach, reach, handle contact, door swing, body pivot, entry, and door closure on the same correct "
+          "side; never mirror, teleport, swap doors, or reverse screen direction. CAMERA MOTIVATION: use a "
+          "physically plausible dolly/push-in, pull-back, pan, tilt, lateral track, orbit, handheld follow, or "
+          "rack focus only when it follows action, reveals information, or intensifies emotion; use natural "
+          "inertia, parallax, and easing, with no random digital zoom or rigid mechanical motion. DETAIL COVERAGE: "
+          "when emotionally relevant, use one or two stable close-up/extreme-close-up/macro inserts of eyes, "
+          "lips, jaw, hair, ear, neck, fingers, or hands, preserving anatomy, identity, lighting, and screen direction."
+    )
 
 
 def audit_reference_asset(path: str, asset_type: str = "character") -> Dict[str, Any]:

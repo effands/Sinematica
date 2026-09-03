@@ -77,5 +77,5 @@ async def ensure_ready(timeout: float = 30, poll_interval: float = 0.5) -> None:
         await asyncio.sleep(max(0, poll_interval))
     raise RuntimeError(
         "Belum ada Chrome extension Flow Agent yang terhubung atau ter-login. "
-        "Pastikan extension dimuat di Chrome (chrome://extensions) dan profil ter-login di labs.google/fx/tools/flow."
+        "Pastikan extension dimuat di Chrome (chrome://extensions) dan profil ter-login di flow.google.com."
     )

@@ -359,7 +359,7 @@ def build_visual_style_guard(visual_style: str = "live_action", children_mode: b
     """Lock one rendering medium across character sheets, boards, and final video."""
     style = visual_style or ("3d_cartoon" if children_mode else "live_action")
     contracts = {
-        "live_action": "LIVE-ACTION CINEMATIC PHOTOGRAPHY ONLY: real human actors, natural skin pores, realistic hair and fabric, optical cinematic camera capture. NO cartoon, anime, illustration, painting, comic art, stylized 3D, doll-like face, or cel shading.",
+        "live_action": "LIVE-ACTION PHOTOGRAPHY ONLY: real human actors, natural skin pores, realistic hair and fabric, optical cinematic camera capture. NO cartoon, anime, illustration, painting, comic art, stylized 3D, doll-like face, or cel shading.",
         "3d_cartoon": "STYLIZED 3D ANIMATION ONLY: sculpted 3D characters, modeled volume, rounded forms, physically based 3D materials, feature-animation lighting, identical model-sheet proportions. NO live-action people, photography, realistic skin pores, 2D drawing, anime, or flat cel animation.",
         "2d_animation": "HAND-DRAWN 2D ANIMATION ONLY: clean consistent line art, flat graphic shapes, controlled cel shading, painted 2D backgrounds, identical model-sheet proportions. NO live-action photography, photoreal skin, 3D render, clay, CGI volume, or anime-style redesign.",
         "anime_2d": "2D ANIME PRODUCTION STYLE ONLY: clean ink lines, consistent anime model sheets, controlled cel shading, expressive anime faces, painted 2D backgrounds. NO live-action photography, photoreal skin, western 3D cartoon, clay, or realistic CGI.",
@@ -413,9 +413,12 @@ def build_finishing_look_guard(storyboard: Dict[str, Any]) -> str:
     auto_direction = str(storyboard.get("auto_art_direction") or "").strip()
     if auto_direction:
         selected.append(auto_direction)
+    ugc_extra = ""
+    if str(storyboard.get("ugc_variant") or "").lower() == "raw_amateur":
+        ugc_extra = "\n\nRAW AMATEUR SMARTPHONE LOCK: authentic creator UGC handheld camera, front-facing mobile lens, natural room ambience. NO cinematic dolly/crane/drone."
     if not selected:
-        return ""
-    return "\n\nFINISHING LOOK LOCK (DO NOT CHANGE BASE MEDIUM): " + "; ".join(selected) + "."
+        return ugc_extra
+    return "\n\nFINISHING LOOK LOCK (DO NOT CHANGE BASE MEDIUM): " + "; ".join(selected) + "." + ugc_extra
 
 
 def adapt_template_for_visual_style(template: str, visual_style: str, children_mode: bool) -> str:
@@ -507,6 +510,10 @@ def choose_instance_for_project(instances: List[Dict[str, Any]], project_id: Opt
     connected = [item for item in instances if item.get("connected")]
     if not connected:
         return None
+    connected.sort(
+        key=lambda x: (str(x.get("version") or "") >= "1.3.9", x.get("ready", True)),
+        reverse=True,
+    )
     if project_id:
         exact = next((item for item in connected if item.get("project_id") == project_id), None)
         if exact:
@@ -535,7 +542,7 @@ def build_sheet_manifest(sheet_chars: List[Dict[str, Any]]) -> str:
 
 
 def build_composition_addendum(scene: Dict[str, Any]) -> str:
-    """Fold the storyboard's beat breakdown into the video prompt as text.
+    """Fold the storyboard's 4-6 multi-angle shot flow into the video prompt as text.
 
     Flow's video endpoint accepts real reference images, but its image endpoint gives us no
     way to pin a storyboard panel to the character sheets. So the composition guidance the
@@ -544,18 +551,33 @@ def build_composition_addendum(scene: Dict[str, Any]) -> str:
     """
     shot = (scene.get("shot_type") or "").strip()
     camera = (scene.get("camera_movement") or "").strip()
+    shot_flow = scene.get("shot_flow") or []
 
     bits = []
     if shot:
         bits.append(f"Framing: {shot}.")
     if camera:
         bits.append(f"Camera: {camera}.")
-    bits.append(
-        "Stage it as a clear three-beat progression inside the clip: an opening frame that "
-        "establishes where each character stands, a mid-action beat at the peak of the action, "
-        "and an end frame that resolves the shot. Keep every character exactly as shown in the "
-        "attached character sheets — same faces, colours, proportions and outfits throughout."
-    )
+
+    if shot_flow and isinstance(shot_flow, list):
+        flow_lines = []
+        for sf in shot_flow:
+            if isinstance(sf, dict):
+                t = sf.get("time") or sf.get("timecode") or ""
+                ang = sf.get("angle") or sf.get("camera_angle") or sf.get("shot") or ""
+                desc = sf.get("description") or sf.get("action") or ""
+                flow_lines.append(f"[{t}] {ang} - {desc}".strip())
+            elif isinstance(sf, str) and sf.strip():
+                flow_lines.append(sf.strip())
+        if flow_lines:
+            bits.append("Cinematic 4-6 multi-angle camera cut progression across the clip: " + " -> ".join(flow_lines) + ".")
+    else:
+        bits.append(
+            "Stage it as a dynamic 4 to 6 multi-angle camera cut progression: opening low-angle close-up "
+            "establishing physical action, cutting to medium-wide environment interaction, over-the-shoulder focus, "
+            "and resolving into a wide framing. Keep every character exactly as shown in the attached character sheets — "
+            "same faces, colours, proportions and outfits throughout."
+        )
     return " ".join(bits)
 
 
@@ -699,10 +721,13 @@ async def execute_storyboard_job(
     project_id = flow_project_id or settings.get_flow_project_id()
     if not project_id:
         snap = bridge.instance_snapshot()
-        for inst in snap:
-            if inst.get("project_id"):
-                project_id = inst["project_id"]
-                break
+        candidates = sorted(
+            [i for i in snap if i.get("project_id")],
+            key=lambda x: (str(x.get("version") or "") >= "1.3.9", x.get("ready", True)),
+            reverse=True,
+        )
+        if candidates:
+            project_id = candidates[0]["project_id"]
 
     if not project_id:
         log_event(job_id, "⚠️ Flow Project ID belum diisi di Settings. Menggunakan default session project...", level="warning")
@@ -784,10 +809,18 @@ async def execute_storyboard_job(
             owned_reference_paths = resolve_character_reference_paths(char, storyboard)
             if owned_reference_paths:
                 char_prompt += (
-                    "\n\nATTACHED CHARACTER REFERENCES ARE THE SINGLE SOURCE OF TRUTH for this character's "
-                    "face, hairstyle, body shape, costume silhouette, colour palette, accessories, and "
-                    "distinctive marks. Combine the views into one consistent identity; do not redesign, "
-                    "recolour, substitute, or borrow traits from any other character."
+                    f"\n\nATTACHED CHARACTER REFERENCES ARE THE SINGLE SOURCE OF TRUTH (STRICT IDENTITY LOCK):\n"
+                    f"Use the attached uploaded reference image as the strict identity reference for {char_name}. "
+                    f"Preserve the exact identity of the person across all 9 panels:\n"
+                    f"• Identical face structure and bone structure\n"
+                    f"• Identical facial proportions\n"
+                    f"• Identical skin tone and natural realistic skin texture\n"
+                    f"• Preserve natural asymmetry and distinctive facial features\n"
+                    f"• Do not beautify, reshape, smooth unnaturally, or alter the face\n"
+                    f"• No age change; no hairstyle change unless explicitly requested\n"
+                    f"• The same person must be immediately recognizable in every panel.\n"
+                    f"Combine the views into one consistent identity; do not redesign, "
+                    f"recolour, substitute, or borrow traits from any other character."
                 )
 
             suppress_references = False
@@ -1101,31 +1134,35 @@ async def execute_storyboard_job(
 
             # Fallback: compose the sheet inside Flow itself when the Gemini route was
             # unavailable (no API key, download failed, or every image model refused).
-            try:
-                if storyboard_media_id:
-                    raise _SheetAlreadyBuilt
-                log_event(job_id, f"🖼️ [Adegan {idx}/{total_scenes}] Membuat gambar storyboard adegan — "
-                                  f"melampirkan sheet: {who}...")
-                from omniflash.generators import generate_character_image
-                sb_img_res = await generate_character_image(
-                    bridge, prompt=storyboard_prompt, aspect=aspect_ratio, project_id=project_id,
-                    instance_id=sb_target_id, reference_media_ids=sb_ref_ids,
-                    seed=storyboard.get("character_seed"),
-                )
-                sb_media = sb_img_res.get("media_id")
-                if sb_media:
-                    storyboard_media_id = sb_media
-                    if sb_img_res.get("image_url"):
-                        scene_record["storyboard_sheet_url"] = sb_img_res["image_url"]
-                    if sb_img_res.get("reference_applied"):
-                        log_event(job_id, f"✅ [Adegan {idx}/{total_scenes}] Gambar storyboard dibuat MENGIKUTI "
-                                          f"{sb_img_res.get('reference_count')} character sheet! Media ID: {storyboard_media_id[:16]}...")
-                    else:
-                        log_event(job_id, f"✅ [Adegan {idx}/{total_scenes}] Gambar storyboard berhasil dibuat di Google Flow (Media ID: {storyboard_media_id[:16]}...).")
-            except _SheetAlreadyBuilt:
-                pass
-            except Exception as ex:
-                log_event(job_id, f"⚠️ [Adegan {idx}/{total_scenes}] Gagal membuat gambar storyboard key-frame: {ex}. Melanjutkan hanya dengan seed karakter...", level="warning")
+            if enable_scene_storyboard_image and not storyboard_media_id:
+                for sb_try in range(1, 4):
+                    try:
+                        log_event(job_id, f"🖼️ [Adegan {idx}/{total_scenes}] Membuat gambar storyboard adegan di Google Flow [Percobaan {sb_try}/3] — melampirkan sheet: {who}...")
+                        from omniflash.generators import generate_character_image
+                        sb_img_res = await generate_character_image(
+                            bridge, prompt=storyboard_prompt, aspect=aspect_ratio, project_id=project_id,
+                            instance_id=sb_target_id, reference_media_ids=sb_ref_ids,
+                            seed=storyboard.get("character_seed"),
+                        )
+                        sb_media = sb_img_res.get("media_id")
+                        if sb_media:
+                            storyboard_media_id = sb_media
+                            if sb_img_res.get("image_url"):
+                                scene_record["storyboard_sheet_url"] = sb_img_res["image_url"]
+                            if sb_img_res.get("reference_applied"):
+                                log_event(job_id, f"✅ [Adegan {idx}/{total_scenes}] Gambar storyboard berhasil dibuat MENGIKUTI "
+                                                  f"{sb_img_res.get('reference_count')} character sheet! Media ID: {storyboard_media_id[:16]}...")
+                            else:
+                                log_event(job_id, f"✅ [Adegan {idx}/{total_scenes}] Gambar storyboard berhasil dibuat di Google Flow (Media ID: {storyboard_media_id[:16]}...).")
+                            break
+                        else:
+                            raise RuntimeError("Google Flow tidak mengembalikan media_id gambar storyboard.")
+                    except Exception as ex:
+                        log_event(job_id, f"⚠️ [Adegan {idx}/{total_scenes}] Percobaan {sb_try}/3 membuat gambar storyboard: {ex}", level="warning")
+                        if sb_try < 3:
+                            await asyncio.sleep(2.5)
+                        else:
+                            log_event(job_id, f"⚠️ [Adegan {idx}/{total_scenes}] Storyboard tidak dapat dibuat setelah 3x percobaan. Melanjutkan hanya dengan referensi karakter...", level="warning")
 
         # Google Flow can reject either wording or a reference image on content policy.
         # Rewrite first, then progressively reduce references so one false-positive image
@@ -1188,9 +1225,16 @@ async def execute_storyboard_job(
                     if owns_continuity:
                         log_event(
                             job_id,
-                            f"🔗 [Adegan {idx}/{total_scenes}] Ingredients continuity aktif: frame akhir "
-                            f"adegan {idx - 1} dipakai setelah {len(character_ref_ids)} Character Master; "
-                            "identity/style master tetap diprioritaskan, storyboard ditempatkan terakhir.",
+                            f"🔗 [Adegan {idx}/{total_scenes}] Prioritas referensi (Maks 7): "
+                            f"[1] Frame akhir adegan {idx - 1} -> [2] Storyboard adegan -> "
+                            f"[3+] {len(character_ref_ids)} Sheet Karakter.",
+                            profile=target_name,
+                        )
+                    elif storyboard_media_id:
+                        log_event(
+                            job_id,
+                            f"🎨 [Adegan {idx}/{total_scenes}] Prioritas referensi (Maks 7): "
+                            f"[1] Storyboard adegan -> [2+] {len(character_ref_ids)} Sheet Karakter.",
                             profile=target_name,
                         )
 

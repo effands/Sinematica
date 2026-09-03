@@ -157,11 +157,11 @@ ADULT_ACTION_RULES = """ATURAN KEPADATAN AKSI (WAJIB — INI YANG MEMBUAT CERITA
    menjadi latar sambil tokoh melakukan aksi dramatis yang sesungguhnya.
 3. **Mulai dari tengah aksi (start late, end early).** Buang basa-basi pembuka. Adegan dimulai tepat saat
    konflik sudah berjalan, dan dipotong tepat setelah titik baliknya — jangan menunggu tokoh datang lalu duduk.
-3a. **Khusus adegan 10 detik, gunakan 3–5 shot bertimestamp:** 3 untuk dialog/emosi, 4 untuk drama normal,
-   5 untuk aksi/perang/kejaran. Setiap shot memuat minimal dua aksi terkait dan shot terakhir berisi reveal,
-   keputusan, benturan, atau reaksi tajam yang mengubah situasi. Tidak boleh ada slow motion, tatapan diam,
-   pose beku, jalan kosong, atau jeda tanpa aksi. Jika ada dialog, wajib minimal DUA giliran bicara pendek
-   yang dipisahkan reaksi fisik/counter-action—bukan satu kalimat yang dipanjangkan selama sepuluh detik.
+3a. **Khusus adegan 10 detik, gunakan 4–6 variasi sudut kamera bertimestamp (Multi-Angle Shot Progression):**
+   Rancang 4 hingga 6 perubahan angle sinematik bertahap (seperti Low Angle Close Up -> Medium Wide -> Over-The-Shoulder / Macro Detail -> Medium Close -> Wide Ending Shot).
+   Setiap sub-shot memuat framing dan aksi fisik berbeda agar visual video tidak monoton di satu angle saja.
+   Isi rincian ini di field `shot_flow` dan rangkai instruksi transisi kameranya ke dalam `prompt_for_flow`.
+   Jika ada dialog, wajib minimal DUA giliran bicara pendek yang dipisahkan reaksi fisik/counter-action.
 4. **Adegan pertama WAJIB langsung menyodorkan konflik atau pertanyaan besar** dalam 2 detik pertama.
    DILARANG membuka film dengan establishing shot kota, gedung, atau tokoh berjalan tanpa masalah.
 5. **Maksimal SATU establishing shot** di seluruh film, itu pun wajib memuat aksi dramatis di dalamnya.
@@ -170,9 +170,6 @@ ADULT_ACTION_RULES = """ATURAN KEPADATAN AKSI (WAJIB — INI YANG MEMBUAT CERITA
    "menikmati", "berjalan menuju", atau "memandangi"."""
 
 CHILDREN_ACTION_RULES = """ATURAN CERITA ANAK (WAJIB — MENGGANTIKAN ATURAN KONFLIK DEWASA):
-1. **Konflik harus RINGAN dan ramah anak.** Yang boleh: kehilangan barang kesayangan, tersesat sebentar,
-   salah paham kecil antar sahabat, takut mencoba hal baru, belajar berbagi/antre/minta maaf, atau
-   kesulitan lucu (terpeleset, kehujanan, tidak sampai meraih sesuatu).
 2. **DILARANG KERAS**: kekerasan sekecil apa pun (memukul, menampar, mendorong), pengkhianatan, fitnah,
    balas dendam, bentakan, tangisan sedih berkepanjangan, tokoh jahat menakutkan, kematian, luka, darah,
    perebutan harta, atau adegan yang bisa membuat anak takut/cemas.
@@ -654,6 +651,7 @@ def generate_youtube_metadata(
     target_lang: str = "Indonesia",
     target_country: str = "",
     aspect_ratio: str = "landscape",
+    storyboard: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Generate accurate YouTube packaging based on official metadata guidance."""
     thumbnail_ratio = "9:16" if str(aspect_ratio).lower() in {"portrait", "9:16", "vertical"} else "16:9"
@@ -699,6 +697,8 @@ BAHASA DAN PASAR TARGET (WAJIB):
 5. **Tag Kata Kunci Backend YouTube**:
    - 8-12 tag dipisahkan koma. Prioritaskan topik utama, variasi pencarian natural, nama karakter penting, dan variasi ejaan yang mungkin salah.
    - Jangan memakai #, jangan mengulang frasa, dan jangan memasukkan viral/trending tanpa alasan. Tags hanya pendukung discovery.
+6. **Komentar Tersemat (Pinned Comment)**:
+   - 1 pertanyaan diskusi menarik yang relevan dengan dilema atau pesan film untuk disematkan di kolom komentar guna memicu engagement dan diskusi penonton.
 
 OUTPUT WAJIB FORMAT JSON VALID:
 {{
@@ -708,6 +708,7 @@ OUTPUT WAJIB FORMAT JSON VALID:
     "Judul story/emotion-driven yang akurat"
   ],
   "description": "Dua baris pembuka yang kuat...\\n\\nRingkasan unik...\\n\\nCTA singkat...\\n\\n#Hashtag1 #Hashtag2 #Hashtag3",
+  "pinned_comment": "Pertanyaan pancingan diskusi yang relevan...",
   "thumbnail_prompt": "High-impact {thumbnail_ratio} YouTube cover prompt in English...",
   "hashtags": ["#Hashtag1", "#Hashtag2", "#Hashtag3"],
   "tags": "topik utama, variasi pencarian, nama karakter, variasi ejaan"
@@ -728,7 +729,7 @@ OUTPUT WAJIB FORMAT JSON VALID:
         parsed["generated_via"] = result.provider
         parsed["target_lang"] = target_lang
         parsed["target_country"] = target_country
-        return normalize_youtube_seo_kit(parsed, film_title, premise, aspect_ratio=aspect_ratio)
+        return normalize_youtube_seo_kit(parsed, film_title, premise, aspect_ratio=aspect_ratio, storyboard=storyboard)
     except Exception as ex:
         log.warning("Gagal generate metadata YouTube dari provider AI: %s", ex)
         web_txt = _call_web2api(prompt)
@@ -804,6 +805,7 @@ def generate_storyboard(
     ugc_emotional_arc: str = "",
     ugc_environment: str = "auto",
     ugc_lighting: str = "auto",
+    ugc_conversion_brief: Optional[Dict[str, Any]] = None,
     target_country: str = "",
     dracin_theme: str = "",
     target_total_duration: Optional[int] = None,
@@ -826,6 +828,9 @@ def generate_storyboard(
     seed = character_seed or random.randint(100000, 999999)
     estimated_duration = target_total_duration or ((fixed_scene_duration or 10) * scene_count)
     creative_brief = dict(creative_brief or {})
+    from .ugc_conversion import build_conversion_prompt, normalize_conversion_brief
+    ugc_conversion_brief = normalize_conversion_brief(ugc_conversion_brief)
+    conversion_rules = build_conversion_prompt(ugc_conversion_brief) if ugc_mode and affiliate_config.get("enabled") else ""
     if affiliate_config.get("enabled") and not str(creative_brief.get("product_value") or "").strip():
         creative_brief["product_value"] = (
             f"Produk: {affiliate_config.get('name') or 'produk referensi'}. "
@@ -927,12 +932,14 @@ ATURAN SPECIAL MICRODRAMA PRODUCTION AI (MASTER SYSTEM PROMPT PDF):
 5. **Tema Dracin**: {dracin_theme.strip() or f"Pilih salah satu tema dracin populer paling relate berikut: {', '.join(DRACIN_THEME_POOL)}"}
 """ if microdrama_mode else ""
 
-    ugc_variant = "commercial" if str(ugc_variant).lower() == "commercial" else "realism"
-    ugc_style_contract = (
-        "premium commercial advertising: deliberate art direction, controlled studio/location lighting, elegant product hero composition, precise dolly or locked camera, refined but believable materials"
-        if ugc_variant == "commercial" else
-        "creator-made UGC realism: plausible smartphone capture, available natural light, minor handheld inertia, candid framing, lived-in location, natural pauses and imperfect-but-intentional human delivery"
-    )
+    requested_ugc_variant = str(ugc_variant or "realism").lower()
+    ugc_variant = requested_ugc_variant if requested_ugc_variant in {"realism", "commercial", "raw_amateur"} else "realism"
+    ugc_style_contracts = {
+        "commercial": "premium commercial advertising: deliberate art direction, controlled studio/location lighting, elegant product hero composition, precise dolly or locked camera, refined but believable materials",
+        "realism": "creator-made UGC realism: plausible smartphone capture, available natural light, minor handheld inertia, candid framing, lived-in location, natural pauses and imperfect-but-intentional human delivery",
+        "raw_amateur": "raw amateur smartphone footage captured by an untrained person inside the real activity: accidental reactive framing, short unstable walking motion, footsteps and hand tremor, hesitant starts/stops, wrist rotation, late reframing, autofocus hunting, focus breathing, motion blur, partial occlusion, exposure pumping and uneven shot energy; socially alive ambient chatter and human presence; never polished, cinematic, centered, stabilized, symmetrical, glossy or commercially staged",
+    }
+    ugc_style_contract = ugc_style_contracts[ugc_variant]
     environment_presets = {
         "home_window": "a believable lived-in home beside a daylight window",
         "bathroom_vanity": "a clean but naturally used bathroom vanity",
@@ -971,6 +978,7 @@ ATURAN SPECIAL MICRODRAMA PRODUCTION AI (MASTER SYSTEM PROMPT PDF):
         )
     ugc_rules = f"""
 UGC / AFFILIATE PRODUCTION BOARD — {ugc_variant.upper()}:
+- JUMLAH OUTPUT WAJIB TEPAT {scene_count} Scene; jangan menambah, mengurangi, atau menggabungkan scene.
 - Platform: {ugc_platform}; tone: {ugc_tone}; emotional arc: {ugc_emotional_arc or 'problem → curiosity → try → visible proof → relief → natural CTA'}.
 - Environment direction: {environment_direction}. Establish a master environment ledger (layout, time of day,
   light direction, key materials and 2-4 recurring objects). Keep it stable across connected scenes; location
@@ -990,6 +998,15 @@ UGC / AFFILIATE PRODUCTION BOARD — {ugc_variant.upper()}:
   redesign product text/logo from imagination.
 - Dialogue/VO must sound spoken, fit the duration, and follow the emotional state. Add breaths or micro-pauses
   only where natural. Product close-ups must follow a hand action or gaze cue, not appear as an unrelated insert.
+- Viral mechanics are a repeatable test structure, not a guarantee: make the first 3 seconds an immediate visual
+  or spoken hook, focus on one clear message and one primary emotion (surprise, relatability, curiosity, humour,
+  or frustration), and remove greetings or slow introductions. Build the idea from WHO + DOING WHAT + WHERE,
+  then connect the product to the exact moment it is naturally needed. Show evidence before the CTA.
+- For `raw_amateur`, use pure environmental/participant smartphone POV. No visible presenter performing to camera,
+  no narrator, voice-over, subtitles, captions, labels, logos or generated on-screen text unless explicitly requested.
+  Preserve raw ambient sound: background conversation, murmurs, brief reactions, laughter, breathing, footsteps,
+  cloth/handling noise and location activity. Every cut should retain at least one believable amateur flaw, but the
+  subject and product action must remain understandable. Never imitate a trailer, documentary crew or travel ad.
 - Fill top-level `logline`, `platform`, `video_type`, `tone`, `visual_notes`, `emotional_arc`, and
   `reference_plan`. Text overlay remains an editing instruction and is never rendered by the video model.
 """ if ugc_mode else ""
@@ -1158,6 +1175,7 @@ rendering technique, bentuk anatomi, material, atau jenis karakter di tengah fil
 {five_realism_rules}
 {script_mode_rules}
 {affiliate_rules}
+{conversion_rules}
 
 ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
 1. **Multi-Character Seed Matrix (Wajib)**: Dukung sampai 10 karakter berbeda dengan menyebutkan Seed ID unik masing-masing (misal: Main Hero Seed `{seed}`, Companion Seed `{seed+101}`, Rival Seed `{seed+202}`). Pertahankan ciri visual wajah dan baju di setiap adegan!
@@ -1216,20 +1234,61 @@ ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
    Informasi penting harus diperkenalkan sebelum dipakai; pengungkapan membutuhkan sebab/bukti/reaksi; hindari
    pengulangan dialog, permintaan maaf, atau rekonsiliasi yang tidak mengembangkan cerita. Jangan menulis pikiran
    abstrak yang tidak dapat difilmkan melalui aksi, ekspresi, dialog, atau properti.
+4f-1. **DIALOG MERAKYAT & SAPAAN RELASIONAL (Wajib untuk drama)**: Dialog harus terdengar seperti orang nyata
+   dari negara, daerah, kelas sosial, usia, dan hubungan yang ditetapkan—bukan bahasa buku, pidato, atau terjemahan
+   literal. Gunakan sapaan relasional secara luwes dan secukupnya. Untuk konteks Indonesia, pilih sesuai hubungan:
+   `Mas`, `Mbak`, `Kak`, `Dek`, `Bang`, `Bu`, `Pak`, `Nak`, `Sayang`, nama kecil, atau panggilan keluarga; jangan
+   memakai semuanya sekaligus dan jangan memakai panggilan intim pada relasi yang tidak pantas. Negara lain wajib
+   memakai padanan lokal yang natural. Variasikan kalimat pendek, elipsis, respons setengah kalimat, penegasan,
+   dan subteks emosional tanpa membuat maksud cerita kabur. Setiap panggilan harus konsisten dengan umur, status,
+   kedekatan, konflik, dan perkembangan relasi antaradegan.
 4g. **DIALOG, AUDIO & LIP-SYNC LOCK (Wajib)**: Total dialog scene harus realistis untuk durasinya (10 detik
    maksimal sekitar 18–22 kata; skala proporsional untuk durasi lain). Dialog dalam `prompt_for_flow` harus sama
    persis dengan `dialogue.line`, tetap dalam bahasa {target_lang}, dan tidak boleh menambah ucapan baru. Hanya
    speaker aktif yang menggerakkan bibir; karakter lain menutup mulut dan bereaksi secara fisik. Jangan tumpuk
    dialog dengan narasi bila waktunya tidak cukup. Minta natural {target_lang} pronunciation, accurate lip-sync,
-   clean dialogue, subtle room tone/SFX, dan musik tidak menutupi suara bila audio memang dipakai.
+   clean dialogue, subtle room tone/SFX, dan musik tidak menutupi suara bila audio memang dipakai. Tulis dialog
+   seperti percakapan manusia sehari-hari yang ringkas, kontekstual, dan emosional—bukan narasi penjelas, slogan,
+   bahasa iklan, atau kalimat formal kaku. Arahkan native conversational delivery dengan variasi tempo, tekanan,
+   jeda mikro, napas halus, reaksi lawan bicara, serta intonasi sesuai usia dan relasi karakter; larang suara datar,
+   ritme robotik, announcer voice, synthetic smoothness, dan over-enunciation bergaya AI.
+4g-1. **TULIS UNTUK DIDENGAR (Wajib)**: Pecah dialog menjadi kalimat pendek yang dapat diucapkan dalam satu napas.
+   Gunakan koma, titik, elipsis, atau tanda tanya secara wajar untuk mengarahkan jeda dan intonasi; jangan menaruh
+   tanda baca berlebihan. Kata penting mendapat tekanan melalui susunan kalimat dan konteks emosi, bukan huruf kapital.
+   Baca secara mental: bila kalimat sulit diucapkan keras tanpa tersandung atau kehabisan napas, tulis ulang.
+4g-2. **FIVE-LAYER AUDIO BLUEPRINT (Wajib setiap scene)**: Isi `audio_blueprint` dengan: (1) voice performance—
+   emosi, tempo, intonasi, jeda, napas, aksen dan jarak mic; (2) ambience lokasi yang kontinu; (3) foley/SFX yang
+   menyebut aksi dan frame kontak pemicunya; (4) musik/mood yang pelan serta ducking saat bicara; (5) prioritas mix
+   dan kontinuitas loudness. SFX harus sinkron dengan aksi terlihat. Akustik/reverb mengikuti ukuran ruang, posisi
+   karakter, dan jarak kamera. Jangan membuat ruang hampa, suara generik, napas palsu berlebihan, atau musik menutup dialog.
 4h. **CAMERA FEASIBILITY & SCREEN DIRECTION (Wajib)**: Maksimal satu gerakan kamera utama per scene,
    halus dan masuk akal dalam durasi. Pertahankan posisi kiri/kanan, eyeline match, serta arah gerak antarscene.
    Gunakan wide untuk ruang/relasi, medium untuk interaksi/konflik, close-up untuk emosi, dan insert untuk bukti.
-   Hindari Dutch angle, sudden zoom, random cuts, dan gerakan kamera bertentangan tanpa alasan dramatik.
+   Hindari Dutch angle, sudden zoom, random cuts, dan gerakan kamera bertentangan tanpa alasan dramatik. Variasikan
+   gerak antarscene secara termotivasi: slow push-in untuk tekanan emosi, pull-back untuk isolasi/reveal, pan/tilt
+   mengikuti perpindahan, lateral tracking/handheld follow untuk aksi, orbit pendek untuk perubahan relasi, dan rack
+   focus untuk memindahkan perhatian. Semua gerak memiliki inertia, parallax, easing, titik mulai/akhir, dan alasan
+   dramatik; bukan digital zoom acak atau gerakan mekanis kaku.
+4h-1. **SPATIAL BLOCKING & ORIENTASI BENDA (Wajib)**: Untuk pintu, mobil, kursi, meja, tangga, dan properti,
+   nyatakan sisi kiri/kanan frame dan sisi fisik objek, arah hadap, tangan aktif, posisi handle/engsel, arah bukaan,
+   jalur tubuh, serta urutan kontak. Contoh masuk mobil: mendekati sisi pintu yang benar → tangan tertentu meraih
+   handle → pintu berayun ke arah benar → tubuh pivot dan masuk → kaki terakhir masuk → pintu menutup. Pertahankan
+   screen direction dan jangan mirror, teleport, berpindah pintu, menembus benda, atau membalik posisi antar-shot.
+4h-2. **EMOTIONAL MACRO COVERAGE (Wajib namun selektif)**: Setiap scene drama memilih 1–2 detail yang paling
+   bermakna—mata/kedipan/air mata, bibir dan rahang saat bicara, helai rambut, telinga/leher saat menoleh, atau
+   jari/tangan saat menggenggam/melepas properti. Gunakan close-up, extreme close-up, insert, atau macro dengan
+   fokus, anatomi, skin texture, lighting, dan arah layar stabil. Jangan memasukkan semua bagian tubuh sekaligus;
+   detail harus menambah emosi, informasi, atau sebab-akibat, bukan sekadar dekorasi.
 4i. **NO GENERATED TEXT (Wajib)**: `text_overlay` adalah panduan editing terpisah (2–5 kata), bukan teks yang
    dirender Flow. Jangan meminta tulisan overlay dalam `prompt_for_flow`; selalu larang subtitles, captions,
    watermark, logo, serta automatically generated on-screen text. Jika cerita memerlukan kartu/surat/ponsel,
    prioritaskan simbol atau bentuk visual sederhana dan hindari teks AI yang mudah rusak.
+4j. **POST-PRODUCTION MATCH & ARTIFACT PREVENTION (Wajib)**: Tetapkan satu scene sebagai color reference lalu
+   pertahankan white balance, exposure, contrast, skin tone, arah/softness cahaya, dan grade yang sama untuk blok
+   lokasi/waktu yang sama. Jangan menutup mismatch dengan filter ekstrem. Di setiap prompt, sederhanakan gerak
+   tangan dekat kamera, pertahankan lima jari dan kontak benda yang terbaca, stabilkan wajah/bibir/rambut/tepi
+   produk, tekstur kain/kulit, shadow direction, serta geometri latar. Larang flicker, warping, texture melting,
+   ghosting, lipsync drift, object morphing, dan inconsistent light. Tiga detik pertama mendapat prioritas QC tertinggi.
 5. **Time Range Timestamp Wajib**: Sertakan field "time_range".
 6. **ATURAN MUTLAK BAHASA OUTPUT**: SELURUH ACTION SUMMARY, NARRATION, TEXT OVERLAY, DAN NAMA KARAKTER HARUS 100% DALAM BAHASA {target_lang} DAN BERGAYA NEGARA {target_country or target_lang}. JANGAN GUNAKAN NAMA INDONESIA ATAU TEKS INDONESIA SAMA SEKALI, MESKIPUN PREMISNYA INDONESIA! TRANSLATE EVERYTHING TO {target_lang}!
 {elegant_rules}
@@ -1268,13 +1327,16 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
   "film_title": "Judul Film / Cerita",
   "logline": "Satu kalimat: karakter + konteks + masalah + peran produk/tujuan cerita",
   "platform": "{ugc_platform if ugc_mode else 'Platform sesuai brief'}",
-  "video_type": "{'Commercial Premium' if ugc_mode and ugc_variant == 'commercial' else 'UGC Review' if ugc_mode else 'Story Content'}",
+  "video_type": "{'Commercial Premium' if ugc_mode and ugc_variant == 'commercial' else 'Raw Amateur Smartphone' if ugc_mode and ugc_variant == 'raw_amateur' else 'UGC Review' if ugc_mode else 'Story Content'}",
   "tone": "{ugc_tone if ugc_mode else 'Tone sesuai brief'}",
   "visual_notes": "Cahaya, lokasi, warna dominan, tekstur, dan aturan pacing yang spesifik",
   "environment_direction": "Lokasi terpilih + alasan relevansinya, layout, waktu, arah cahaya, material, dan recurring objects",
   "lighting_direction": "Sumber, arah, softness, colour temperature, exposure, skin tone, dan product reflections",
   "emotional_arc": "{ugc_emotional_arc or 'Perubahan emosi dari hook sampai payoff'}",
+  "conversion_brief": {json.dumps(ugc_conversion_brief, ensure_ascii=False)},
+  "conversion_hypotheses": [{{"variant": "A", "changed_variable": "Hanya satu variabel", "hypothesis": "Alasan terukur", "hook": "Kalimat hook", "angle": "Angle", "cta": "CTA"}}],
   "reference_plan": {{"character_master": "identity only", "product_master": "packaging and scale only", "environment_reference": "location and light only"}},
+  "postproduction_plan": {{"color_reference_scene": 1, "match_order": "white balance then exposure then restrained grade", "artifact_priority": "first 3 seconds; hands, mouth, face, hair and product edges", "audio_review": "ambience continuity, selective foley, lipsync onset and headphone check"}},
   "genre_style": "Gaya Visual & Mood Sinematik",
   "art_direction": "Mood board produksi premium",
   "visual_style": "{visual_style}",
@@ -1297,7 +1359,9 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "source_actor_id": "ID aktor persis dari daftar aktor spesifik, atau kosong jika bukan aktor tersimpan",
       "seed": {seed},
       "description": "Deskripsi visual lengkap",
-      "visual_signature": "Kombinasi pakaian, aksesori, rambut/usia/ciri wajah yang permanen dan unik"
+      "visual_signature": "Kombinasi pakaian, aksesori, rambut/usia/ciri wajah yang permanen dan unik",
+      "vocal_signature": "Warna suara, timbre, pitch, usia vokal, aksen, dan ritme bicara yang dikunci mati",
+      "relationship_to_others": "Hubungan, tingkat keakraban, status sosial, dan sapaan natural kepada karakter lain"
     }}
   ],
   "scenes": [
@@ -1307,9 +1371,26 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "time_range": "0:00–0:02",
       "title": "Judul Adegan 1 (misal Opening Activity)",
       "scene_purpose": "Hook / context / problem / product reveal / demonstration / proof / payoff / CTA",
+      "conversion_beat": "hook / problem / solution / proof / cta",
       "activity": "Aktivitas fisik tunggal yang benar-benar dilakukan model",
       "expression": "Ekspresi awal, pemicu, lalu perubahan ekspresi yang terlihat",
       "visual_composition": "Posisi model, produk, foreground/background, eyeline, dan ruang negatif",
+      "spatial_continuity": "Kiri/kanan frame, arah hadap/gerak, tangan aktif, orientasi dan urutan kontak pintu/kendaraan/properti",
+      "shot_flow": [
+        {{"time": "0-2s", "angle": "Low Angle Close Up", "description": "Aksi pembuka karakter dan ekspresi natural"}},
+        {{"time": "2-4s", "angle": "Medium Wide Shot", "description": "Interaksi dengan ruang dan lingkungan sekitar"}},
+        {{"time": "4-6s", "angle": "Over-The-Shoulder / Macro Detail", "description": "Fokus objek atau detail aksi tangan/mata"}},
+        {{"time": "6-8s", "angle": "Medium Close / Dynamic Reaction", "description": "Puncak reaksi emosi atau titik balik situasi"}},
+        {{"time": "8-10s", "angle": "Wide Shot / Final Look", "description": "Resolusi akhir adegan sebelum berganti scene"}}
+      ],
+      "emotional_detail": "Satu atau dua detail close-up/macro yang bermakna beserta pemicu dan fungsi emosionalnya",
+      "audio_blueprint": {{
+        "voice_performance": "Emosi, intonasi, tempo, jeda, napas, aksen lokal, jarak dan arah suara",
+        "ambience": "Room tone/lingkungan spesifik yang kontinu dan berubah hanya jika lokasi berubah",
+        "foley_sfx": "Cue suara benda/tubuh yang sinkron tepat dengan kontak atau gerakan terlihat",
+        "music": "Mood musik rendah dan titik ducking saat dialog, atau none untuk raw amateur",
+        "mix": "Voice depan; ambience 15–25%; musik 10–20% dan ducked; foley jelas hanya saat aksi"
+      }},
       "transition_bridge": "Aksi, arah pandang, properti, atau match cut yang mengantar scene berikutnya",
       "action_summary": "Ringkasan aksi adegan (WAJIB DITULIS DALAM BAHASA {target_lang} SECARA KESELURUHAN)",
       "shot_type": "Framing baku, pilih SATU: Extreme Wide Shot / Wide Shot / Medium Shot / Medium Close Up / Close Up / Extreme Close Up / Over-The-Shoulder / Point of View",
@@ -1317,7 +1398,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "dialogue": [{{"speaker_id": 1, "line": "Kalimat persis", "screen_position": "left/center/right"}}],
       "start_state": "Posisi tubuh, tangan, properti, arah pandang, dan lokasi pada frame awal",
       "end_state": "Posisi tubuh, tangan, properti, arah pandang, dan lokasi pada frame akhir",
-      "prompt_for_flow": "One 130-220 word English production paragraph: continuity opening; full visible character identity and wardrobe; ordered physical actions; exact final frame and object status; selected visual medium, lighting, palette, aspect composition and camera movement; scene-specific negative constraints",
+      "prompt_for_flow": "One 130-220 word English production paragraph with cinematic 4-6 multi-angle camera cut progression: opening angle; full visible character identity and wardrobe; ordered physical sub-shot actions; exact final frame status; lighting and camera movement; voice identity locked without drift",
       "text_overlay": "Panduan teks editing 2-5 kata dalam bahasa {target_lang}; jangan minta Flow merender teks ini di dalam prompt_for_flow",
       "camera_movement": "Pergerakan kamera saja, terpisah dari shot_type (misal: Slow push-in, Handheld tracking, Static locked-off)",
       "lighting_mood": "Mood pencahayaan (misal: Soft natural lighting, cinematic bokeh lights)",
@@ -1372,8 +1453,9 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
         storyboard["ugc_tone"] = ugc_tone
         storyboard["ugc_environment"] = ugc_environment
         storyboard["ugc_lighting"] = ugc_lighting
+        storyboard["ugc_conversion_brief"] = ugc_conversion_brief
         storyboard["creative_brief"] = creative_brief
-        storyboard["realism_framework"] = "visual, character consistency, story, motion, humanization"
+        storyboard["realism_framework"] = "visual, character consistency, story, motion, audio, humanization"
         if script_mode:
             storyboard["source_script"] = premise
         if affiliate_config.get("enabled"):
@@ -1412,8 +1494,9 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
             storyboard["ugc_tone"] = ugc_tone
             storyboard["ugc_environment"] = ugc_environment
             storyboard["ugc_lighting"] = ugc_lighting
+            storyboard["ugc_conversion_brief"] = ugc_conversion_brief
             storyboard["creative_brief"] = creative_brief
-            storyboard["realism_framework"] = "visual, character consistency, story, motion, humanization"
+            storyboard["realism_framework"] = "visual, character consistency, story, motion, audio, humanization"
             if script_mode:
                 storyboard["source_script"] = premise
             if affiliate_config.get("enabled"):

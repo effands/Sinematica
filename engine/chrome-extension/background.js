@@ -16,16 +16,18 @@ let flowKey = null;
 let instanceId = null;
 let instanceName = "Chrome Profile";
 let currentProjectId = null;
+let lastKnownCredits = null;
 
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let offlineLogged = false;
+let registrationRefreshTimer = null;
 
 // Requests Sinematica itself fires also pass through webRequest. Without this guard the
 // schema learner would "learn" from our own rejected guesses instead of from the Flow UI.
 let selfRequestsInFlight = 0;
 
-chrome.storage.local.get(['instanceId', 'instanceName', 'flowKey', 'currentProjectId'], (data) => {
+chrome.storage.local.get(['instanceId', 'instanceName', 'flowKey', 'currentProjectId', 'lastKnownCredits'], (data) => {
   if (data.instanceId) {
     instanceId = data.instanceId;
   } else {
@@ -35,6 +37,9 @@ chrome.storage.local.get(['instanceId', 'instanceName', 'flowKey', 'currentProje
   if (data.instanceName) instanceName = data.instanceName;
   if (data.flowKey) flowKey = data.flowKey;
   if (data.currentProjectId) currentProjectId = data.currentProjectId;
+  if (data.lastKnownCredits !== undefined && data.lastKnownCredits !== null) {
+    lastKnownCredits = Number(data.lastKnownCredits);
+  }
 
   init();
 });
@@ -94,7 +99,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
       notifyTokenCaptured();
     }
   },
-  { urls: ['https://aisandbox-pa.googleapis.com/*', 'https://labs.google/*'] },
+  { urls: ['https://aisandbox-pa.googleapis.com/*', 'https://labs.google/*', 'https://flow.google.com/*'] },
   ['requestHeaders'],
 );
 
@@ -150,7 +155,7 @@ function flushPendingFlowSample() {
 
 async function _detectProjectIdFromTabs(preferredTabId = null) {
   try {
-    const tabs = await chrome.tabs.query({ url: '*://labs.google/*' });
+    const tabs = await FlowTab.queryFlowTabs(chrome);
     if (tabs && tabs.length) {
       // chrome.tabs.query does not guarantee useful ordering. Always bind the
       // project to the tab selected for this request; otherwise an old Flow tab
@@ -196,6 +201,25 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     _detectProjectIdFromTabs().then(() => notifyRegistration());
   }
 });
+
+function scheduleRegistrationRefresh() {
+  clearTimeout(registrationRefreshTimer);
+  registrationRefreshTimer = setTimeout(() => {
+    registrationRefreshTimer = null;
+    _detectProjectIdFromTabs().then(() => notifyRegistration());
+  }, 250);
+}
+
+// Report readiness immediately when Flow is opened, redirected, activated, or closed.
+// The alarm remains as a recovery path if Chrome suspends the service worker.
+chrome.tabs.onCreated.addListener((tab) => {
+  if (FlowTab.isFlowUrl(tab.url || tab.pendingUrl)) scheduleRegistrationRefresh();
+});
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+  if (FlowTab.isFlowUrl(changeInfo.url || tab.url || tab.pendingUrl)) scheduleRegistrationRefresh();
+});
+chrome.tabs.onActivated.addListener(() => scheduleRegistrationRefresh());
+chrome.tabs.onRemoved.addListener(() => scheduleRegistrationRefresh());
 
 function scheduleReconnect() {
   if (reconnectTimer) return; // never let more than one retry be queued
@@ -266,7 +290,7 @@ function connectWebSocket() {
 async function handleTrpcRequest(msg) {
   const { id, params = {} } = msg;
   const { url, method = 'POST', headers = {}, body } = params;
-  if (!url || !url.startsWith('https://labs.google/')) {
+  if (!FlowTab.isTrustedFlowRequestUrl(url)) {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'trpc_response', id, error: 'INVALID_TRPC_URL' }));
     }
@@ -457,6 +481,9 @@ async function notifyRegistration() {
   let readinessError = null;
   try {
     flowTab = await FlowTab.findExistingFlowTab(chrome);
+    if (flowTab && flowTab.status !== 'complete') {
+      flowTab = await FlowTab.waitForTabComplete(chrome, flowTab);
+    }
     await _detectProjectIdFromTabs(flowTab?.id ?? null);
   } catch (error) {
     readinessError = error?.message || String(error);
@@ -473,6 +500,7 @@ async function notifyRegistration() {
     project_id: currentProjectId,
     ready: readiness.ready,
     readiness_error: readiness.error,
+    version: chrome.runtime.getManifest().version,
   }));
 }
 
@@ -511,49 +539,76 @@ async function handleApiRequest(msg) {
 
   // Special Async DOM Scraping for Google Flow Credits (Extracts exact number e.g. '894 Credits')
   if (endpoint === '/v1/credits' || endpoint === '/internal/get_credits_from_dom') {
+    if (lastKnownCredits !== null && lastKnownCredits !== undefined && Number.isFinite(lastKnownCredits)) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'api_response',
+          id,
+          status: 200,
+          data: {
+            credits: `${lastKnownCredits} Kredit`,
+            details: { exact: true, value: lastKnownCredits }
+          }
+        }));
+      }
+      return;
+    }
+
     try {
       const domResults = await chrome.scripting.executeScript({
-        target: { tabId: targetTab.id },
+        target: { tabId: targetTab.id, allFrames: true },
         func: async () => {
           try {
             const parseCreditStr = (str) => {
               if (!str) return null;
-              const m = str.match(/([\d,.]+)\s*(?:Google Flow credits|credits)/i);
-              if (m && m[1]) {
-                return m[1].replace(/,/g, '') + " Credits";
+              const m1 = str.match(/([\d,.]+)\s*(?:Google Flow credits?|credits?|kredit(?: google flow)?|poin|points?)/i);
+              if (m1 && m1[1] && /\d/.test(m1[1])) {
+                return m1[1].trim() + " Kredit";
+              }
+              const m2 = str.match(/(?:kredit|credits?|poin|points?)\s*[:：]?\s*([\d,.]+)/i);
+              if (m2 && m2[1] && /\d/.test(m2[1])) {
+                return m2[1].trim() + " Kredit";
               }
               return null;
             };
 
-            // 1. Check existing text first
-            let bodyText = document.body ? document.body.innerText : "";
+            // 1. Check existing visible text first (DO NOT click if already visible or open)
+            let bodyText = document.body ? (document.body.innerText || document.body.textContent || "") : "";
             let found = parseCreditStr(bodyText);
-            if (found) return { credits: found };
+            if (found) return { credits: found, source: 'direct_visible' };
 
-            // 2. Click avatar button & wait for popup rendering
-            const avatarBtn = document.querySelector('button[aria-label*="Google Account"], button[aria-label*="Account"], img[src*="googleusercontent"], [data-identifier]');
-            if (avatarBtn) {
-              const targetClick = avatarBtn.closest('button') || avatarBtn;
-              targetClick.click();
-              await new Promise(r => setTimeout(r, 450));
+            // Check if account panel is already open on screen
+            const hasCloseBtn = document.querySelector('[aria-label*="Close account panel"], [aria-label*="Tutup panel akun"], [aria-label*="Close account"]');
+            
+            // 2. Click avatar button & wait for popup rendering ONLY if panel is not open
+            if (!hasCloseBtn) {
+              const avatarBtn = document.querySelector('[aria-label*="Google Account:"], [aria-label*="Akun Google:"], [aria-label*="Google Account"], [aria-label*="Akun Google"], a[href*="accounts.google.com"], button[aria-label*="Account"], button[aria-label*="Akun"], [role="button"][aria-label*="Account"], [role="button"][aria-label*="Akun"], [data-ogsr-up], a:has(img[src*="googleusercontent"]), button:has(img[src*="googleusercontent"]), img[src*="googleusercontent"]');
+              if (avatarBtn) {
+                const targetClick = avatarBtn.closest('button') || avatarBtn.closest('a') || avatarBtn;
+                targetClick.click();
+                await new Promise(r => setTimeout(r, 800));
 
-              bodyText = document.body ? document.body.innerText : "";
-              found = parseCreditStr(bodyText);
+                bodyText = document.body ? (document.body.innerText || document.body.textContent || "") : "";
+                found = parseCreditStr(bodyText);
 
-              if (!found) {
-                const allEls = document.querySelectorAll('*');
-                for (const el of allEls) {
-                  if (el.shadowRoot) {
-                    const sTxt = el.shadowRoot.innerText || el.shadowRoot.textContent || "";
-                    found = parseCreditStr(sTxt);
-                    if (found) break;
+                if (!found) {
+                  const allEls = document.querySelectorAll('*');
+                  for (const el of allEls) {
+                    if (el.shadowRoot) {
+                      const sTxt = el.shadowRoot.innerText || el.shadowRoot.textContent || "";
+                      found = parseCreditStr(sTxt);
+                      if (found) break;
+                    }
                   }
                 }
-              }
 
-              // Toggle popup closed
-              targetClick.click();
-              if (found) return { credits: found };
+                // If opened by us, toggle close
+                const closeBtn = document.querySelector('[aria-label*="Close account panel"], [aria-label*="Tutup panel akun"], [aria-label*="Close account"]');
+                if (closeBtn) closeBtn.click();
+                else targetClick.click();
+
+                if (found) return { credits: found, source: 'avatar_click' };
+              }
             }
 
             // 3. TreeWalker fallback
@@ -561,10 +616,10 @@ async function handleApiRequest(msg) {
             let node;
             while (node = walk.nextNode()) {
               const val = node.nodeValue || "";
-              if (val.toLowerCase().includes('credits')) {
+              if (val.toLowerCase().includes('credit') || val.toLowerCase().includes('kredit') || val.toLowerCase().includes('poin')) {
                 const parentText = node.parentElement ? node.parentElement.innerText : val;
                 found = parseCreditStr(parentText);
-                if (found) return { credits: found };
+                if (found) return { credits: found, source: 'treewalker' };
               }
             }
 
@@ -575,16 +630,28 @@ async function handleApiRequest(msg) {
         }
       });
 
-      const resObj = (domResults && domResults[0] && domResults[0].result) ? domResults[0].result : {};
-      const creditsFound = resObj.credits || "Unlimited (Kuota Melimpah)";
+      const matchedFrame = (domResults || []).map(r => r.result).find(r => r && r.credits);
+      const resObj = matchedFrame || (domResults && domResults[0] && domResults[0].result) || {};
+      const creditsFound = (matchedFrame && matchedFrame.credits) || (lastKnownCredits !== null ? `${lastKnownCredits} Kredit` : null);
+
+      if (creditsFound) {
+        const numMatch = creditsFound.match(/\d[\d,.]*/);
+        if (numMatch) {
+          const rawNum = Number(numMatch[0].replace(/,/g, ''));
+          if (Number.isFinite(rawNum)) {
+            lastKnownCredits = rawNum;
+            chrome.storage.local.set({ lastKnownCredits });
+          }
+        }
+      }
 
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'api_response',
           id,
-          status: 200,
+          status: creditsFound ? 200 : 404,
           data: {
-            credits: creditsFound,
+            credits: creditsFound || "Belum Terbaca (Buka Profil di Flow)",
             details: resObj
           }
         }));
@@ -592,6 +659,18 @@ async function handleApiRequest(msg) {
       return;
     } catch (domErr) {
       console.warn('[Sinematica Agent] Error scraping DOM credits:', domErr);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'api_response',
+          id,
+          status: 404,
+          data: {
+            credits: "Belum Terbaca (Buka Profil di Flow)",
+            error: domErr.toString()
+          }
+        }));
+      }
+      return;
     }
   }
 
@@ -625,7 +704,7 @@ async function handleApiRequest(msg) {
       try {
         const tabCheck = await chrome.tabs.get(targetTab.id).catch(() => null);
         if (!tabCheck) {
-          const freshTabs = await chrome.tabs.query({ url: '*://labs.google/*' });
+          const freshTabs = await FlowTab.queryFlowTabs(chrome);
             if (freshTabs && freshTabs.length) {
               targetTab = freshTabs[0];
             } else {
@@ -638,7 +717,7 @@ async function handleApiRequest(msg) {
         const results = await chrome.scripting.executeScript({
           target: { tabId: targetTab.id },
           world: 'MAIN',
-          func: async (fetchUrl, requestBody, actionName, projId, bearerKey) => {
+          func: async (fetchUrl, requestBody, actionName, projId, bearerKey, deferFetchToWorker) => {
             try {
               let captchaToken = null;
               if (window.grecaptcha && window.grecaptcha.enterprise && window.grecaptcha.enterprise.execute) {
@@ -714,6 +793,13 @@ async function handleApiRequest(msg) {
                 reqHeaders['Authorization'] = activeToken.startsWith('Bearer ') ? activeToken : `Bearer ${activeToken}`;
               }
 
+              // flow.google.com is a new UI origin, while this API key is still restricted
+              // to labs.google. Let the extension worker perform the network call so the
+              // successful response is not hidden from JavaScript by page-origin CORS.
+              if (deferFetchToWorker) {
+                return { deferred: true, finalBody, reqHeaders };
+              }
+
               const res = await fetch(fetchUrl, {
                 method: 'POST',
                 headers: reqHeaders,
@@ -729,13 +815,53 @@ async function handleApiRequest(msg) {
               return { status: 500, error: err.toString() };
             }
           },
-          args: [url, body, captchaAction, currentProjectId, activeBearerKey]
+          args: [
+            url,
+            body,
+            captchaAction,
+            currentProjectId,
+            activeBearerKey,
+            String(tabCheck?.url || targetTab.url || '').startsWith('https://flow.google.com/'),
+          ]
         });
 
         if (isOwnImageRequest) selfRequestsInFlight = Math.max(0, selfRequestsInFlight - 1);
 
         if (results && results[0] && results[0].result) {
-          const { status, data } = results[0].result;
+          let executionResult = results[0].result;
+          if (executionResult.deferred) {
+            try {
+              const workerResponse = await fetch(url, {
+                method: 'POST',
+                headers: executionResult.reqHeaders || { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(executionResult.finalBody),
+              });
+              const responseText = await workerResponse.text();
+              let responseData = {};
+              try {
+                responseData = responseText ? JSON.parse(responseText) : {};
+              } catch (_) {
+                responseData = { error: responseText.slice(0, 1000) };
+              }
+              executionResult = { status: workerResponse.status, data: responseData };
+            } catch (workerError) {
+              executionResult = {
+                status: 500,
+                error: `Extension worker fetch gagal: ${workerError?.message || String(workerError)}`,
+              };
+            }
+          }
+
+          const { status, data, error } = executionResult;
+          const responseData = data ?? (error ? { error } : {});
+          if (responseData && typeof responseData === 'object') {
+            const rem = responseData.remainingCredits ?? responseData.credits;
+            if (rem !== undefined && rem !== null && Number.isFinite(Number(rem))) {
+              lastKnownCredits = Number(rem);
+              chrome.storage.local.set({ lastKnownCredits });
+            }
+          }
           const isPolling = endpoint.includes('batchCheck') || endpoint.includes('checkStatus');
           if (!isPolling) {
             const reqType = (endpoint.includes('batchGenerateImages') || endpoint.includes('flowMedia')) ? 'IMAGE' : 'VIDEO';
@@ -748,7 +874,8 @@ async function handleApiRequest(msg) {
               type: 'api_response',
               id,
               status,
-              data
+              data: responseData,
+              error: error || undefined,
             }));
           }
           return;
@@ -788,6 +915,15 @@ async function handleApiRequest(msg) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'SNIFFED_FLOW_CREDITS' && msg.credits !== undefined) {
+    const val = Number(msg.credits);
+    if (Number.isFinite(val)) {
+      lastKnownCredits = val;
+      chrome.storage.local.set({ lastKnownCredits });
+      console.log('[Sinematica Agent] Sniffed exact Flow credits:', lastKnownCredits);
+    }
+  }
+
   if (msg.type === 'SNIFFED_AISANDBOX_REQUEST' && msg.url) {
     const match = msg.url.match(/projects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
     if (match && match[1] && match[1] !== currentProjectId) {

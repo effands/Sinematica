@@ -99,6 +99,23 @@ class YouTubeSeoFormattingTests(unittest.TestCase):
         self.assertNotIn("16:9", kit["thumbnail_prompt"])
         self.assertEqual(kit["thumbnail_aspect_ratio"], "9:16")
 
+    def test_normalize_includes_chapters_and_pinned_comment(self):
+        sb = {
+            "scenes": [
+                {"title": "Pengenalan Tokoh", "duration": 10},
+                {"title": "Konflik Dimulai", "duration": 10},
+                {"title": "Penyelesaian Akhir", "duration": 10},
+            ]
+        }
+        kit = normalize_youtube_seo_kit({}, film_title="Petualangan Rimba", premise="Penyelamatan hutan", storyboard=sb)
+        self.assertIn("00:00 - Pengenalan Tokoh", kit["description"])
+        self.assertIn("00:10 - Konflik Dimulai", kit["description"])
+        self.assertIn("00:20 - Penyelesaian Akhir", kit["description"])
+        self.assertTrue(bool(kit["pinned_comment"]))
+        self.assertIn("=== JUDUL YOUTUBE ===", kit["copy_all_text"])
+        self.assertIn("=== DESKRIPSI LENGKAP ===", kit["copy_all_text"])
+        self.assertIn("=== KOMENTAR TERSEMAT", kit["copy_all_text"])
+
 
 if __name__ == "__main__":
     unittest.main()
