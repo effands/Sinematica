@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional
 import uuid
 import logging
 
-from ..jobs_executor import execute_storyboard_job, get_job_status, get_job_logs, list_jobs, cancel_job
+from ..jobs_executor import execute_storyboard_job, get_job_status, get_job_logs, list_jobs, cancel_job, resume_job
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
 log = logging.getLogger("sinematica.routers.jobs")
@@ -58,6 +58,14 @@ def cancel_running_job(job_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="Job tidak ditemukan atau sudah selesai.")
     return {"success": True, "message": f"Job {job_id} berhasil dibatalkan."}
+
+
+@router.post("/{job_id}/resume")
+async def resume_existing_job(job_id: str):
+    success = resume_job(job_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Job tidak dapat dilanjutkan. Pastikan data storyboard tersimpan dan job valid.")
+    return {"success": True, "message": f"Job {job_id} berhasil dilanjutkan dari adegan yang belum selesai."}
 
 
 @router.get("/{job_id}")

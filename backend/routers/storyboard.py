@@ -79,7 +79,30 @@ class GenerateThumbnailRequest(BaseModel):
     film_title: Optional[str] = "Thumbnail"
 
 
+class SuggestYoutubeBlueprintRequest(BaseModel):
+    topic: Optional[str] = ""
+    format: Optional[str] = "cinematic_storytelling"
+    market: Optional[str] = "United States"
+    language: Optional[str] = "Native US English"
+
+
 from ..gemini_storyboard import generate_storyboard, auto_suggest_details, generate_youtube_metadata, regenerate_single_scene, generate_music_video_storyboard
+from ..youtube_blueprint_ai import suggest_youtube_blueprint
+
+
+@router.post("/suggest_youtube_blueprint")
+def suggest_youtube_blueprint_endpoint(req: SuggestYoutubeBlueprintRequest):
+    try:
+        data = suggest_youtube_blueprint(
+            topic=req.topic or "",
+            format_type=req.format or "cinematic_storytelling",
+            market=req.market or "United States",
+            language=req.language or "Native US English",
+        )
+        return {"success": True, "blueprint": data}
+    except Exception as ex:
+        log.exception("Error suggesting YouTube blueprint: %s", ex)
+        raise HTTPException(status_code=500, detail=str(ex))
 
 
 @router.post("/seo_kit")

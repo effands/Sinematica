@@ -143,8 +143,8 @@ def get_settings() -> dict:
         # Last-resort text generator used only after every Gemini API key is exhausted.
         # Points at a local gemini-web2api bridge (OpenAI-compatible, no API key, no quota).
         # It cannot accept images, so reference pictures are dropped on this path.
-        # How many times Gemini may rewrite a prompt that Flow rejected on content policy.
-        "max_policy_rewrites": 2,
+        # How many times AI may rewrite a prompt that Flow rejected on content policy.
+        "max_policy_rewrites": 5,
         "enable_web2api_fallback": False,
         "web2api_base_url": os.getenv("WEB2API_BASE_URL", "http://127.0.0.1:8081/v1"),
         "web2api_model": os.getenv("WEB2API_MODEL", "gemini-2.5-flash"),

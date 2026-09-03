@@ -707,6 +707,11 @@ async def execute_storyboard_job(
         "started_at": started_at,
         "created_at_formatted": time.strftime("%d %b %Y, %H:%M"),
         "initial_prompt": storyboard.get("premise") or storyboard.get("theme") or "",
+        "storyboard": storyboard,
+        "theme_image_path": theme_image_path,
+        "duration": duration,
+        "force_uniform_duration": force_uniform_duration,
+        "flow_project_id": flow_project_id,
         "seo_story_context": seo_story_context,
         "seo_storyboard": seo_storyboard,
         "target_lang": storyboard.get("target_lang") or "",
@@ -821,6 +826,25 @@ async def execute_storyboard_job(
             char_name = char.get("name", f"Karakter {char_id}")
             char_seed = char.get("seed", storyboard.get("character_seed", 123456))
             char_desc = char.get('description', '')
+
+            safe_name = "".join(c for c in char_name if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')
+            local_sheet_file = job_dir / f"character_sheet_{char_id}_{safe_name}.png"
+            if local_sheet_file.exists() and local_sheet_file.stat().st_size > 500:
+                log_event(job_id, f"💾 [Tahap 1/2] Character sheet '{char_name}' ditemukan di lokal ({local_sheet_file.name}). Mengunggah ke Flow...")
+                try:
+                    reused_media_id = await upload_image(bridge, str(local_sheet_file), project_id=project_id, instance_id=first_target_id)
+                    character_media_ids[char_id] = reused_media_id
+                    character_media_ids[str(char_id)] = reused_media_id
+                    character_media_ids[char_name] = reused_media_id
+                    character_media_ids[char_name.lower()] = reused_media_id
+                    character_image_paths[char_id] = str(local_sheet_file)
+                    character_image_paths[str(char_id)] = str(local_sheet_file)
+                    character_image_paths[char_name] = str(local_sheet_file)
+                    character_image_paths[char_name.lower()] = str(local_sheet_file)
+                    log_event(job_id, f"✅ Character sheet '{char_name}' siap dipakai kembali! Media ID: {reused_media_id[:16]}...")
+                    continue
+                except Exception as ex:
+                    log_event(job_id, f"⚠️ Gagal upload ulang character sheet lokal '{char_name}': {ex}. Membuat baru...", level="warning")
 
             char_prompt = custom_template.replace("{char_name}", char_name).replace("{char_seed}", str(char_seed)).replace("{char_desc}", char_desc)
             owned_reference_paths = resolve_character_reference_paths(char, storyboard)
@@ -1029,6 +1053,9 @@ async def execute_storyboard_job(
         prompt += build_scene_blueprint_guard(sc)
         prompt += build_render_realism_guard(storyboard)
 
+        out_filename = f"scene_{idx:02d}.mp4"
+        out_path = job_dir / out_filename
+
         scene_record = {
             "scene_number": idx,
             "title": scene_title,
@@ -1039,6 +1066,33 @@ async def execute_storyboard_job(
             "profile_used": None,
         }
         job_state["scenes"].append(scene_record)
+
+        if out_path.exists() and out_path.stat().st_size > 1024:
+            log_event(job_id, f"⏩ [Adegan {idx}/{total_scenes}] Video adegan sudah selesai sebelumnya ({out_filename}). Melanjutkan adegan berikutnya...")
+            scene_record["status"] = "completed"
+            scene_record["video_path"] = str(out_path)
+            scene_record["video_url"] = f"/storage/jobs/{job_id}/{out_filename}"
+            completed_scene_paths.append(str(out_path))
+
+            last_frame_path = job_dir / f"scene_{idx:02d}_last_frame.jpg"
+            if not last_frame_path.exists():
+                try:
+                    await asyncio.to_thread(extract_last_frame, str(out_path), str(last_frame_path))
+                except Exception:
+                    pass
+            if last_frame_path.exists() and enable_continuity_frames:
+                try:
+                    continuity_instance_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
+                    continuity_media_id = await upload_image(
+                        bridge, str(last_frame_path), project_id=project_id, instance_id=continuity_instance_id
+                    )
+                    continuity_scene_number = idx
+                    log_event(job_id, f"🔗 [Adegan {idx}/{total_scenes}] Frame akhir siap menjadi pembuka adegan {idx + 1}.")
+                except Exception:
+                    pass
+
+            job_state["current_scene"] = idx
+            continue
 
         snap_instances = [
             i for i in bridge.instance_snapshot()
@@ -1184,7 +1238,7 @@ async def execute_storyboard_job(
         # Google Flow can reject either wording or a reference image on content policy.
         # Rewrite first, then progressively reduce references so one false-positive image
         # cannot leave the whole film waiting at 95%.
-        max_policy_rewrites = int(cfg.get("max_policy_rewrites", 2) or 0)
+        max_policy_rewrites = int(cfg.get("max_policy_rewrites", 5) or 5)
         policy_attempt = 0
         drop_all_scene_references = False
         scene_characters_for_retry = resolve_scene_characters(
@@ -1431,13 +1485,24 @@ async def execute_storyboard_job(
             policy_attempt += 1
             drop_all_scene_references = should_drop_character_references(
                 policy_rejection, policy_attempt, max_policy_rewrites
-            )
-            log_event(job_id, f"🧠 [Adegan {idx}/{total_scenes}] Prompt/gambar ditolak filter. Meminta provider AI utama meracik prompt alternatif (percobaan {policy_attempt}/{max_policy_rewrites})...")
+            ) or (policy_attempt >= 3 and is_unsafe_generation_error(policy_rejection))
+            log_event(job_id, f"🧠 [Adegan {idx}/{total_scenes}] Prompt/gambar ditolak filter. Meminta provider AI meracik sinonim prompt yang aman & dramatis (percobaan {policy_attempt}/{max_policy_rewrites})...")
 
             from .gemini_storyboard import sanitize_prompt_for_policy
-            revised = await asyncio.to_thread(sanitize_prompt_for_policy, prompt, policy_rejection, scene_title)
+            try:
+                revised = await asyncio.to_thread(
+                    sanitize_prompt_for_policy, prompt, policy_rejection, scene_title
+                )
+            except TypeError:
+                revised = await asyncio.to_thread(
+                    sanitize_prompt_for_policy, prompt, policy_rejection
+                )
+            except Exception as sanitize_err:
+                log_event(job_id, f"⚠️ [Adegan {idx}/{total_scenes}] Sanitasi prompt error ({sanitize_err}).", level="warning")
+                revised = None
+
             if not revised:
-                log_event(job_id, f"⚠️ [Adegan {idx}/{total_scenes}] Gemini tidak berhasil meracik prompt alternatif. Adegan dilewati.", level="warning")
+                log_event(job_id, f"⚠️ [Adegan {idx}/{total_scenes}] Provider AI tidak berhasil meracik prompt alternatif. Adegan dilewati.", level="warning")
                 break
 
             prompt = apply_scene_audio_direction(
@@ -1448,7 +1513,8 @@ async def execute_storyboard_job(
             prompt = adapt_template_for_visual_style(prompt, visual_style, is_children)
             prompt += build_visual_style_guard(visual_style, is_children)
             prompt += build_finishing_look_guard(storyboard)
-            prompt += build_scene_blueprint_guard(sc)
+            if policy_attempt < 2:
+                prompt += build_scene_blueprint_guard(sc)
             prompt += build_render_realism_guard(storyboard)
             if drop_all_scene_references:
                 prompt = fictionalize_character_names(
@@ -1458,7 +1524,7 @@ async def execute_storyboard_job(
             sc["prompt_for_flow"] = prompt
             scene_record["prompt"] = prompt
             scene_record["prompt_rewritten"] = policy_attempt
-            log_event(job_id, f"✍️ [Adegan {idx}/{total_scenes}] Prompt alternatif siap. Mengulang render adegan ini...")
+            log_event(job_id, f"✍️ [Adegan {idx}/{total_scenes}] Prompt alternatif dengan sinonim aman siap. Mengulang render adegan ini...")
 
         if job_state.get("cancelled"):
             log_event(job_id, "🛑 Eksekusi job dibatalkan oleh pengguna.", level="warning")
@@ -1516,3 +1582,34 @@ async def execute_storyboard_job(
         finish_job_timing(job_state)
 
     _save_history()
+
+
+def resume_job(job_id: str) -> bool:
+    """Resume execution of an existing job from where it left off, reusing finished scenes and character sheets."""
+    job = get_job_status(job_id)
+    if not job:
+        return False
+    storyboard = job.get("storyboard") or job.get("seo_storyboard")
+    if not storyboard or not storyboard.get("scenes"):
+        return False
+
+    job["status"] = "processing"
+    job["cancelled"] = False
+    _active_jobs[job_id] = job
+    _save_history()
+
+    log_event(job_id, f"🔄 [USER] Melanjutkan eksekusi job '{job.get('title')}' dari adegan yang belum selesai...")
+
+    asyncio.create_task(
+        execute_storyboard_job(
+            job_id=job_id,
+            storyboard=storyboard,
+            theme_image_path=job.get("theme_image_path"),
+            aspect_ratio=job.get("aspect_ratio", "landscape"),
+            duration=job.get("duration", 10),
+            flow_project_id=job.get("flow_project_id"),
+            force_uniform_duration=job.get("force_uniform_duration", False),
+        )
+    )
+    return True
+

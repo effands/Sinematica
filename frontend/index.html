@@ -832,7 +832,10 @@
               </h3>
               <p style="color: var(--text-muted); font-size: 14px; margin-top: 4px;">Tinjau, edit prompt adegan 10s & kirim eksekusi otomatis ke Google Flow.</p>
             </div>
-            <div style="display: flex; gap: 10px;">
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button type="button" class="btn-secondary" id="btnResumeLastJobFromMaster" style="cursor: pointer; font-size: 13px; font-weight: 700; padding: 12px 18px; border-radius: 12px; border: 1px solid var(--neon-cyan); color: var(--neon-cyan); display: flex; align-items: center; gap: 6px;">
+                <span>🔄</span> Lanjutkan Job Terakhir
+              </button>
               <button class="btn-success" id="btnSendToExecution" style="box-shadow: 0 0 20px rgba(16, 185, 129, 0.4); cursor: pointer; font-size: 14px; font-weight: 800; padding: 12px 24px; border-radius: 12px; background: linear-gradient(135deg, #10b981, #059669); border: none;">🚀 Kirim & Eksekusi ke Flow</button>
             </div>
           </div>
@@ -876,8 +879,11 @@
               <h3>🚀 Live Multi-Flow Video Render Terminal</h3>
               <p id="executionStatusText">Menunggu job eksekusi baru...</p>
             </div>
-            <div style="display: flex; gap: 10px; align-items: center;">
-              <button type="button" id="btnStopExecution" class="btn-danger" style="display: none; padding: 6px 14px; font-size: 12px; border-radius: 8px; background: rgba(244, 63, 94, 0.2); border: 1px solid #f43f5e; color: #f43f5e; font-weight: bold; cursor: pointer;">🛑 Stop Eksekusi</button>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <button type="button" id="btnResumeExecution" class="btn-success" style="display: inline-flex; padding: 8px 18px; font-size: 13px; font-weight: 800; border-radius: 10px; background: linear-gradient(135deg, #10b981, #059669); border: none; color: #ffffff; cursor: pointer; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4); align-items: center; gap: 6px;">
+                <span>▶️</span> Lanjutkan Job (Resume)
+              </button>
+              <button type="button" id="btnStopExecution" class="btn-danger" style="display: none; padding: 8px 16px; font-size: 13px; font-weight: 700; border-radius: 10px; background: rgba(244, 63, 94, 0.2); border: 1px solid #f43f5e; color: #f43f5e; cursor: pointer;">🛑 Stop Eksekusi</button>
               <div class="badge-status badge-ready" id="jobProgressBadge">0 / 0 Adegan</div>
             </div>
           </div>
@@ -1127,6 +1133,29 @@
         <div class="card youtube-blueprint-lab">
           <div class="asset-lab-header"><div><h3>📺 YouTube Blueprint Studio</h3><p>Dari positioning channel sampai brief produksi, packaging, QC, dan diagnosis analytics.</p></div><div class="asset-workflow"><span class="active">1 Strategy</span><b>→</b><span>2 Script</span><b>→</b><span>3 Production</span><b>→</b><span>4 Measure</span></div></div>
           <div class="yt-safety-note"><b>Evidence-first:</b> angka RPM/KPI dari materi bukan jaminan. Jangan meniru naskah kompetitor, mengarang sumber, membeli trafik, menyamarkan kepemilikan akun, atau memakai aset tanpa lisensi.</div>
+          <div class="yt-ai-assistant-card" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.9)); border: 1px solid rgba(99, 102, 241, 0.35); border-radius: 12px; padding: 16px 20px; margin: 16px 0 20px 0; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 1.3rem;">✨</span>
+                <strong style="color: #e2e8f0; font-size: 1rem;">AI Blueprint Assistant (Bantu Isi & Racik Ide Otomatis)</strong>
+                <span style="background: rgba(99, 102, 241, 0.2); color: #818cf8; font-size: 0.75rem; padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(99, 102, 241, 0.4);">Evidence-First AI</span>
+              </div>
+              <small style="color: #94a3b8;">Ketik topik bebas atau acak ide tren, AI akan mengisi seluruh strategi & 7 modul di bawah secara otomatis.</small>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <input id="ytAiTopicInput" type="text" placeholder="Masukkan ide/topik (contoh: Konspirasi Sejarah Romawi, Tips Belajar AI, Cozy Rainy Cabin)..." style="flex: 1; min-width: 280px; padding: 10px 14px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 8px; color: #f8fafc;">
+              <button type="button" class="btn-primary" id="btnGenerateYtAiBlueprint" style="display: flex; align-items: center; gap: 6px; white-space: nowrap; padding: 10px 18px;">
+                <span>✨ Racik Blueprint dengan AI</span>
+              </button>
+              <button type="button" class="btn-secondary" id="btnRandomizeYtAiTopic" style="display: flex; align-items: center; gap: 6px; white-space: nowrap; padding: 10px 14px;">
+                <span>🎲 Acak Ide Tren</span>
+              </button>
+            </div>
+            <div id="ytAiGeneratingStatus" style="display: none; margin-top: 10px; color: #38bdf8; font-size: 0.85rem; align-items: center; gap: 8px;">
+              <span class="spinner" style="display: inline-block; width: 14px; height: 14px; border: 2px solid #38bdf8; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite;"></span>
+              <span>Sedang meracik strategi YouTube Blueprint lengkap dengan AI...</span>
+            </div>
+          </div>
           <div class="yt-blueprint-grid">
             <div><label>Format</label><select id="ytFormat"><option value="cinematic_storytelling">Cinematic Storytelling</option><option value="ambience">Ambience / Soundscape</option><option value="shorts">YouTube Shorts</option></select></div>
             <div><label>Target market</label><input id="ytMarket" value="United States" placeholder="Negara/region target"></div>
@@ -1533,6 +1562,6 @@
   </div>
 
   <script src="history_selection.js?v=1.0.0"></script>
-  <script src="app.js?v=1.3.30"></script>
+  <script src="app.js?v=1.3.35"></script>
 </body>
 </html>

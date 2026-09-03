@@ -192,6 +192,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadLastStoryboard();
   initAspectRatioDefault();
   initFinishingLookPicker();
+  restoreLastJobExecution();
 });
 
 function initSidebarToggle() {
@@ -2313,6 +2314,50 @@ function initStoryboardForm() {
       );
     });
   }
+
+  const resumeJobWithFeedback = async (targetJobId) => {
+    let jid = targetJobId || currentJobId || localStorage.getItem('sinematica_last_job_id');
+    if (!jid) {
+      try {
+        const listRes = await fetch('/api/jobs/list');
+        if (listRes.ok) {
+          const listData = await listRes.json();
+          const jobs = listData.jobs || [];
+          if (jobs.length > 0) jid = jobs[jobs.length - 1].job_id;
+        }
+      } catch (_) {}
+    }
+    if (!jid) {
+      showToast('Belum ada job eksekusi yang tersimpan untuk dilanjutkan. Buat storyboard terlebih dahulu.', 'warning');
+      return;
+    }
+    currentJobId = jid;
+    try {
+      localStorage.setItem('sinematica_last_job_id', jid);
+    } catch (_) {}
+    try {
+      const res = await fetch(`/api/jobs/${jid}/resume`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Gagal melanjutkan job');
+      showToast(data.message || 'Job berhasil dilanjutkan!', 'success');
+      document.querySelector('.nav-item[data-tab="tab-execution"]')?.click();
+      const stopBtn = document.getElementById('btnStopExecution');
+      if (stopBtn) stopBtn.style.display = 'block';
+      startJobPolling(jid);
+    } catch (err) {
+      showToast('Gagal melanjutkan job: ' + err.message, 'error');
+    }
+  };
+
+  const resumeExecutionBtn = document.getElementById('btnResumeExecution');
+  if (resumeExecutionBtn) {
+    resumeExecutionBtn.addEventListener('click', () => resumeJobWithFeedback());
+  }
+
+  const resumeMasterBtn = document.getElementById('btnResumeLastJobFromMaster');
+  if (resumeMasterBtn) {
+    resumeMasterBtn.addEventListener('click', () => resumeJobWithFeedback());
+  }
 }
 
 function escapeHtml(str) {
@@ -2843,9 +2888,54 @@ function bindStoryboardLiveEditing() {
 
 // Execution Terminal Polling
 function startJobPolling(jobId) {
+  if (!jobId) return;
+  currentJobId = jobId;
+  try {
+    localStorage.setItem('sinematica_last_job_id', jobId);
+  } catch (_) {}
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => pollJobStatus(jobId), 3000);
   pollJobStatus(jobId);
+}
+
+async function restoreLastJobExecution() {
+  let lastJobId = null;
+  try {
+    lastJobId = localStorage.getItem('sinematica_last_job_id');
+  } catch (_) {}
+
+  if (!lastJobId) {
+    try {
+      const res = await fetch('/api/jobs/list');
+      if (res.ok) {
+        const data = await res.json();
+        const jobs = data.jobs || [];
+        if (jobs.length > 0) {
+          const latest = jobs[jobs.length - 1];
+          if (latest && latest.job_id) {
+            lastJobId = latest.job_id;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (lastJobId) {
+    currentJobId = lastJobId;
+    try {
+      localStorage.setItem('sinematica_last_job_id', lastJobId);
+    } catch (_) {}
+    pollJobStatus(lastJobId);
+    try {
+      const checkRes = await fetch(`/api/jobs/${lastJobId}`);
+      if (checkRes.ok) {
+        const checkData = await checkRes.json();
+        if (checkData.job && checkData.job.status === 'processing') {
+          startJobPolling(lastJobId);
+        }
+      }
+    } catch (_) {}
+  }
 }
 
 async function pollJobStatus(jobId) {
@@ -2877,12 +2967,12 @@ async function pollJobStatus(jobId) {
     document.getElementById('executionStatusText').textContent = `Job ${job.job_id} — Status: ${job.status.toUpperCase()}${timingText}${sizeText}`;
 
     const stopBtn = document.getElementById('btnStopExecution');
+    const resumeBtn = document.getElementById('btnResumeExecution');
     if (stopBtn) {
-      if (job.status === 'processing') {
-        stopBtn.style.display = 'block';
-      } else {
-        stopBtn.style.display = 'none';
-      }
+      stopBtn.style.display = job.status === 'processing' ? 'block' : 'none';
+    }
+    if (resumeBtn) {
+      resumeBtn.style.display = job.status !== 'completed' ? 'inline-flex' : 'none';
     }
 
     const total = job.total_scenes || 1;
@@ -3833,6 +3923,118 @@ document.addEventListener('DOMContentLoaded', () => {
       const children = document.getElementById('chkChildrenMode'); if (children) { children.checked = idea.children; children.dispatchEvent(new Event('change')); }
       document.getElementById('creativeBriefPanel')?.setAttribute('open', '');
       showToast('Ide dan arahan audiens dikirim ke AI Storyboard.', 'success');
+  });
+
+  // AI YouTube Blueprint Generator & Randomizer
+  const TRENDING_YT_TOPICS = [
+      'The Dark Psychology Behind Mega Corporations and Consumer Manipulation',
+      'The 1983 Soviet Submarine Mystery That Almost Triggered World War 3',
+      'Ancient Megastructures That Modern Engineering Still Cannot Explain',
+      'How Quantum Computing Will Break All Modern Encryption by 2028',
+      'Victorian Midnight Library Thunderstorm Ambience with Crackling Fireplace',
+      'Cyberpunk Rainy Ramen Shop in Neo Tokyo with Subtle Lo-Fi Jazz',
+      '3 FBI Interrogation Tactics to Detect Lies in 30 Seconds',
+      'The Million-Dollar Diamond Heist with Zero Alarms Triggered',
+      'How Medieval Doctors Survived the Black Plague Against All Odds',
+      'Deep Oceanic Trench Anomalies Caught on Deep-Sea Submersibles',
+      'The Philosophy of Solitude: Why High Achievers Walk Alone',
+      'How Neuralink Brain Interfaces Will Transform Human Memory'
+  ];
+
+  document.getElementById('btnRandomizeYtAiTopic')?.addEventListener('click', () => {
+      const topicInput = document.getElementById('ytAiTopicInput');
+      if (topicInput) {
+          const randomTopic = TRENDING_YT_TOPICS[Math.floor(Math.random() * TRENDING_YT_TOPICS.length)];
+          topicInput.value = randomTopic;
+          showToast('🎲 Topik tren dipilih: ' + randomTopic, 'info');
+      }
+  });
+
+  document.getElementById('btnGenerateYtAiBlueprint')?.addEventListener('click', async () => {
+      const topicInput = document.getElementById('ytAiTopicInput');
+      const topic = topicInput ? topicInput.value.trim() : '';
+      const format = document.getElementById('ytFormat')?.value || 'cinematic_storytelling';
+      const market = document.getElementById('ytMarket')?.value || 'United States';
+      const language = document.getElementById('ytLanguage')?.value || 'Native US English';
+
+      const btn = document.getElementById('btnGenerateYtAiBlueprint');
+      const statusEl = document.getElementById('ytAiGeneratingStatus');
+
+      if (btn) btn.disabled = true;
+      if (statusEl) statusEl.style.display = 'flex';
+      showCuteAiLoading('✨ AI Meracik YouTube Blueprint...', 'Sedang merancang positioning, niche, audience, hook 3s, dan 7 modul produksi...');
+
+      try {
+          const res = await fetch('/api/storyboard/suggest_youtube_blueprint', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ topic, format, market, language })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success || !data.blueprint) {
+              throw new Error(data.detail || 'Gagal meracik blueprint AI');
+          }
+          const bp = data.blueprint;
+
+          const setVal = (id, val) => {
+              const el = document.getElementById(id);
+              if (el && val !== undefined && val !== null) {
+                  el.value = val;
+                  el.dispatchEvent(new Event('input'));
+                  el.dispatchEvent(new Event('change'));
+              }
+          };
+
+          if (bp.format) setVal('ytFormat', bp.format);
+          if (bp.market) setVal('ytMarket', bp.market);
+          if (bp.language) setVal('ytLanguage', bp.language);
+          setVal('ytMicroNiche', bp.micro_niche);
+          setVal('ytAudience', bp.core_audience);
+          setVal('ytPromise', bp.channel_promise);
+          setVal('ytDemand', bp.demand_evidence);
+          setVal('ytGap', bp.competitor_gap);
+          setVal('ytAngle', bp.original_angle);
+          setVal('ytHook', bp.hook_cold_open);
+          setVal('ytOpenLoop', bp.macro_open_loop);
+          setVal('ytPayoff', bp.payoff_next_view);
+          if (bp.brand_architecture) setVal('ytBrand', bp.brand_architecture);
+          setVal('ytColors', bp.colors);
+          setVal('ytFont', bp.font);
+          setVal('ytMainKeyword', bp.main_keyword);
+          setVal('ytRelevantKeywords', bp.relevant_keywords);
+          setVal('ytLongTail', bp.long_tail_intent);
+          setVal('ytSources', bp.sources_and_licensing);
+
+          // 7 modules
+          setVal('ytEditorialThesis', bp.editorial_thesis);
+          setVal('ytContentMoat', bp.content_moat);
+          setVal('ytFleetGovernance', bp.fleet_governance);
+          setVal('ytProductionCost', bp.production_cost);
+          if (bp.ai_disclosure) setVal('ytAiDisclosure', bp.ai_disclosure);
+          setVal('ytHumanContribution', bp.human_contribution);
+          setVal('ytLocalizationQa', bp.localization_qa);
+          setVal('ytAudioQa', bp.audio_qa);
+          setVal('ytContinuityLedger', bp.continuity_ledger);
+          setVal('ytLoopLedger', bp.loop_ledger);
+          setVal('ytRiskRegister', bp.risk_register);
+
+          // Auto-check quality gates
+          ['ytGateEvidence', 'ytGateOriginality', 'ytGateRights', 'ytGatePromise', 'ytGateTechnical'].forEach(id => {
+              const el = document.getElementById(id);
+              if (el) el.checked = true;
+          });
+
+          // Build final blueprint text
+          buildYoutubeBlueprint();
+          showToast('✨ Blueprint YouTube berhasil diracik dan diisi otomatis oleh AI!', 'success');
+      } catch (err) {
+          console.error(err);
+          showToast('Gagal meracik blueprint AI: ' + err.message, 'error');
+      } finally {
+          hideCuteAiLoading();
+          if (btn) btn.disabled = false;
+          if (statusEl) statusEl.style.display = 'none';
+      }
   });
 
   // UGC Affiliate Asset Lab
