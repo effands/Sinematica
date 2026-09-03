@@ -70,20 +70,20 @@ class VideoReferenceSelectionTests(unittest.TestCase):
     def test_character_sheets_and_storyboard_fit_within_seven(self):
         self.assertEqual(
             build_video_reference_ids(["char-a", "char-b", "char-c"], "storyboard"),
-            ["char-a", "char-b", "char-c", "storyboard"],
+            ["storyboard", "char-a", "char-b", "char-c"],
         )
 
-    def test_character_master_precedes_continuity_and_storyboard_is_last(self):
+    def test_continuity_and_storyboard_precede_character_sheets(self):
         self.assertEqual(
             build_video_reference_ids(
                 ["char-a", "char-b"],
                 "storyboard",
                 continuity_media_id="last-frame",
             ),
-            ["char-a", "char-b", "last-frame", "storyboard"],
+            ["last-frame", "storyboard", "char-a", "char-b"],
         )
 
-    def test_affiliate_product_images_follow_characters_and_precede_storyboard(self):
+    def test_affiliate_product_images_follow_characters(self):
         self.assertEqual(
             build_video_reference_ids(
                 ["char-a"],
@@ -91,10 +91,10 @@ class VideoReferenceSelectionTests(unittest.TestCase):
                 continuity_media_id="last-frame",
                 product_media_ids=["product-front", "product-side"],
             ),
-            ["char-a", "last-frame", "product-front", "product-side", "storyboard"],
+            ["last-frame", "storyboard", "char-a", "product-front", "product-side"],
         )
 
-    def test_ingredient_limit_prioritizes_character_master_before_last_frame(self):
+    def test_ingredient_limit_prioritizes_continuity_and_storyboard_before_character_overflow(self):
         self.assertEqual(
             build_video_reference_ids(
                 ["char-a", "char-b", "char-c"],
@@ -102,7 +102,7 @@ class VideoReferenceSelectionTests(unittest.TestCase):
                 continuity_media_id="last-frame",
                 limit=3,
             ),
-            ["char-a", "char-b", "char-c"],
+            ["last-frame", "storyboard", "char-a"],
         )
 
     def test_stylized_character_template_contains_no_photoreal_conflict(self):
@@ -122,14 +122,17 @@ class VideoReferenceSelectionTests(unittest.TestCase):
         self.assertNotIn("real human actors", adapted)
         self.assertNotIn("natural skin pores", adapted)
 
-    def test_only_seven_character_sheets_take_priority_over_storyboard(self):
+    def test_storyboard_precedes_character_sheets_within_seven_limit(self):
         characters = [f"char-{index}" for index in range(10)]
-        self.assertEqual(build_video_reference_ids(characters, "storyboard"), characters[:7])
+        self.assertEqual(
+            build_video_reference_ids(characters, "storyboard"),
+            ["storyboard"] + characters[:6],
+        )
 
-    def test_storyboard_only_fills_an_unused_slot(self):
+    def test_storyboard_precedes_characters_on_normal_attempt(self):
         self.assertEqual(
             build_video_reference_ids(["char-a", "char-b"], "storyboard"),
-            ["char-a", "char-b", "storyboard"],
+            ["storyboard", "char-a", "char-b"],
         )
 
     def test_policy_retry_keeps_characters_and_removes_storyboard(self):

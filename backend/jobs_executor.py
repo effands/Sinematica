@@ -336,22 +336,39 @@ def build_video_reference_ids(character_ids: List[str], storyboard_media_id: Opt
                               drop_all_references: bool = False,
                               continuity_media_id: Optional[str] = None,
                               product_media_ids: Optional[List[str]] = None) -> List[str]:
-    """Order at most seven Flow Ingredients by identity, continuity, product, then composition."""
+    """Order at most seven Flow Ingredients by:
+    1. Continuity frame from previous scene (lighting, room, and environmental anchor)
+    2. Storyboard sheet of current scene (camera angle, shot blocking, and action progression)
+    3. Character identity sheets (facial structure and wardrobe lock)
+    4. Affiliate product images (if applicable)
+    Strictly follows Google Flow's maximum 7 reference image limit.
+    """
     if drop_all_references:
         return []
     refs = []
+
+    # Slot 1: Continuity frame (Frame terakhir scene sebelumnya)
+    if continuity_media_id and continuity_media_id not in refs and len(refs) < limit:
+        refs.append(continuity_media_id)
+
+    # Slot 2: Storyboard sheet (Pemandu komposisi shot & variasi angle adegan ini)
+    if policy_attempt == 0 and storyboard_media_id and storyboard_media_id not in refs and len(refs) < limit:
+        refs.append(storyboard_media_id)
+
+    # Slot 3+: Character sheets (Sheet identitas karakter pemeran)
     for media_id in character_ids:
         if media_id and media_id not in refs and len(refs) < limit:
             refs.append(media_id)
-    if continuity_media_id and continuity_media_id not in refs and len(refs) < limit:
-        refs.append(continuity_media_id)
+
+    # Slot 4+: Product / Affiliate media
     for media_id in product_media_ids or []:
         if media_id and media_id not in refs and len(refs) < limit:
             refs.append(media_id)
-    if not refs and storyboard_media_id:
-        return [storyboard_media_id]
-    if policy_attempt == 0 and storyboard_media_id and storyboard_media_id not in refs and len(refs) < limit:
+
+    # Fallback if no refs were gathered but storyboard is available
+    if not refs and storyboard_media_id and len(refs) < limit:
         refs.append(storyboard_media_id)
+
     return refs[:limit]
 
 
