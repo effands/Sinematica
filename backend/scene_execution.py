@@ -45,6 +45,18 @@ and state it as a deliberate reverse manoeuvre. Otherwise all travel is forward 
 """.strip()
 
 
+KEY_PROP_CONTINUITY_RULES = """KEY PROP / ACCESSORY OWNERSHIP LOCK:
+Track every important small object as a physical prop with one owner or exact location: letters, envelopes,
+books, certificates, folders, rings, bracelets, watches, necklaces, keys, phones, wallets, bags, glasses,
+umbrellas, documents, seals, photos and product packages. Preserve each prop's colour, material, size, wear,
+orientation, hand contact, finger placement, pocket/bag location, table position and open/closed/folded state
+across every cut. Never teleport a prop between characters, duplicate it, erase it, change its colour/material,
+turn a ring into a bracelet, move a watch to the wrong wrist, swap a document/certificate/book between actors,
+or create readable text on papers/certificates. If a prop changes hands, show the transfer visibly: giver hand
+holding it -> receiver hand contacts it -> weight transfers -> giver releases -> receiver keeps it in the next shot.
+""".strip()
+
+
 def scene_execution_context(scene):
     def readable(value):
         # Quoted JSON values are otherwise mistaken for invented dialogue by the
@@ -57,6 +69,7 @@ def scene_execution_context(scene):
     fields = (
         ('OPENING STATE', 'start_state'), ('FINAL CONTINUITY FRAME', 'end_state'),
         ('BLOCKING', 'spatial_continuity'), ('PROP / MECHANISM FACTS', 'interaction_plan'),
+        ('OBJECT / ACCESSORY LEDGER', 'object_ledger'), ('WARDROBE / ACCESSORY LEDGER', 'wardrobe_ledger'),
     )
     lines = []
     for label, field in fields:
@@ -75,8 +88,9 @@ def build_physical_execution_guard(scene, prompt=''):
     )) + ' ' + prompt
     door = bool(re.search(r'\b(?:door|doorway|pintu|gerbang)\b', text, re.I))
     vehicle = bool(re.search(r'\b(?:motor|motorcycle|scooter|sepeda motor|bike|bicycle|car|mobil|truck|bus|train|kereta|boat|kapal|drive|ride|riding|mengendarai|berkendara|melaju|mundur|maju)\b', text, re.I))
+    key_prop = bool(re.search(r'\b(?:surat|letter|amplop|envelope|buku|book|sertifikat|certificate|folder|map|dokumen|document|cincin|ring|gelang|bracelet|jam|watch|kalung|necklace|kunci|key|ponsel|phone|dompet|wallet|tas|bag|kacamata|glasses|payung|umbrella|foto|photo|segel|seal)\b', text, re.I))
     return '\n\n' + '\n'.join(part for part in (
-        context, NATURAL_ACTION_RULES, DOOR_INTERACTION_RULES if door else '', VEHICLE_MOTION_RULES if vehicle else '',
+        context, NATURAL_ACTION_RULES, DOOR_INTERACTION_RULES if door else '', VEHICLE_MOTION_RULES if vehicle else '', KEY_PROP_CONTINUITY_RULES if key_prop else '',
     ) if part)
 
 
@@ -99,7 +113,7 @@ def character_sheet_description(character):
         "antagonist or supporting role through posture, gaze and believable acting, not permanent scowling, "
         "exaggerated evil anatomy or a compulsory smile. Do not infer moral role from skin tone, scars or disability. "
         "Keep role and motivation as acting directions, not extra printed story paragraphs. "
-        "IDENTITY FEATURE OWNERSHIP: this character's facial hair, moustache, beard, goatee, sideburns, stubble density, eyebrows, hairline, scars, moles, glasses, clothing, shoes, jewellery, hairstyle, colour palette and accessories belong only to this character. Never swap these traits with another actor, never duplicate one man's moustache or beard onto other male actors, never erase facial hair from its owner, never dress a male actor in the female character's authored clothing, and never move this character's blouse/dress/skirt/hijab/jewellery to another person. "
+        "IDENTITY FEATURE OWNERSHIP: this character's facial hair, moustache, beard, goatee, sideburns, stubble density, eyebrows, hairline, scars, moles, glasses, clothing, shoes, jewellery, hairstyle, colour palette and accessories belong only to this character. Never swap these traits with another actor, never duplicate one man's moustache or beard onto other male actors, never erase facial hair from its owner, never dress a male actor in the female character's authored clothing, and never move this character's blouse/dress/skirt/hijab/jewellery to another person. Rings, bracelets, watches, necklaces, glasses, bags, books, letters, certificates, phones and other carried props must stay with their authored owner unless an on-screen handoff is explicitly shown. "
         "Existing reference images take priority over invented facial details; never borrow another character's traits."
     )
     return '\n'.join(filter(None, parts))

@@ -93,5 +93,19 @@ class SceneDirectionTests(unittest.TestCase):
         self.assertIn("Aris owns: clean-shaven face", lock)
 
 
+    def test_character_wardrobe_lock_binds_props_and_accessories_to_owner(self):
+        scene = {"characters_in_scene": ["maya", "aris"], "action_summary": "Maya menyerahkan surat kepada Aris"}
+        characters = [
+            {"id": "maya", "name": "Maya", "visual_signature": "silver ring on left ring finger, beige handbag, green blouse"},
+            {"id": "aris", "name": "Aris", "visual_signature": "silver watch on left wrist, navy suit, brown folder"},
+        ]
+        lock = build_character_wardrobe_lock(scene, characters)
+        self.assertIn("PROP AND ACCESSORY OWNERSHIP", lock)
+        self.assertIn("letters, envelopes, books, certificates", lock)
+        self.assertIn("A watch stays on the correct wrist", lock)
+        self.assertIn("a ring stays on the correct finger", lock)
+        self.assertIn("show any handoff with visible contact and release", lock)
+
+
 if __name__ == "__main__":
     unittest.main()

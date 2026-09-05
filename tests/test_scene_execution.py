@@ -113,3 +113,22 @@ def test_character_sheet_description_forbids_facial_hair_swaps_between_men():
     assert "Never swap these traits with another actor" in text
     assert "never duplicate one man's moustache or beard onto other male actors" in text
     assert 'never erase facial hair from its owner' in text
+
+
+def test_key_prop_guard_tracks_letters_certificates_rings_and_watches():
+    scene = {
+        'action_summary': 'Maya menyerahkan surat dan sertifikat, Aris melihat cincin dan jam tangannya',
+        'object_ledger': {
+            'surat': 'di tangan kanan Maya, terlipat dua',
+            'sertifikat': 'di atas map cokelat di meja',
+            'cincin': 'di jari manis kiri Maya',
+            'jam': 'di pergelangan kiri Aris',
+        },
+    }
+    guard = build_physical_execution_guard(scene)
+    assert 'OBJECT / ACCESSORY LEDGER' in guard
+    assert 'KEY PROP / ACCESSORY OWNERSHIP LOCK' in guard
+    assert 'Never teleport a prop between characters' in guard
+    assert 'move a watch to the wrong wrist' in guard
+    assert 'show the transfer visibly' in guard
+    assert 'or create readable text on papers/certificates' in guard
