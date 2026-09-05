@@ -99,7 +99,7 @@ def character_sheet_description(character):
         "antagonist or supporting role through posture, gaze and believable acting, not permanent scowling, "
         "exaggerated evil anatomy or a compulsory smile. Do not infer moral role from skin tone, scars or disability. "
         "Keep role and motivation as acting directions, not extra printed story paragraphs. "
-        "WARDROBE OWNERSHIP: this character's clothing, shoes, jewellery, hairstyle, colour palette and accessories belong only to this character. Never swap this outfit with another actor, never dress a male actor in the female character's authored clothing, and never move this character's blouse/dress/skirt/hijab/jewellery to another person. "
+        "IDENTITY FEATURE OWNERSHIP: this character's facial hair, moustache, beard, goatee, sideburns, stubble density, eyebrows, hairline, scars, moles, glasses, clothing, shoes, jewellery, hairstyle, colour palette and accessories belong only to this character. Never swap these traits with another actor, never duplicate one man's moustache or beard onto other male actors, never erase facial hair from its owner, never dress a male actor in the female character's authored clothing, and never move this character's blouse/dress/skirt/hijab/jewellery to another person. "
         "Existing reference images take priority over invented facial details; never borrow another character's traits."
     )
     return '\n'.join(filter(None, parts))

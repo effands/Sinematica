@@ -79,5 +79,19 @@ class SceneDirectionTests(unittest.TestCase):
         self.assertIn("never move a male character's suit", lock)
 
 
+    def test_character_wardrobe_lock_binds_facial_hair_to_owner(self):
+        scene = {"characters_in_scene": ["bagas", "aris"], "action_summary": "Bagas dan Aris berdebat"}
+        characters = [
+            {"id": "bagas", "name": "Bagas", "visual_signature": "thick moustache, charcoal batik, square glasses"},
+            {"id": "aris", "name": "Aris", "visual_signature": "clean-shaven face, navy suit, silver watch"},
+        ]
+        lock = build_character_wardrobe_lock(scene, characters)
+        self.assertIn("FACIAL HAIR OWNERSHIP", lock)
+        self.assertIn("Never transfer a moustache/beard/stubble pattern to another male actor", lock)
+        self.assertIn("never erase it from its owner", lock)
+        self.assertIn("Bagas owns: thick moustache", lock)
+        self.assertIn("Aris owns: clean-shaven face", lock)
+
+
 if __name__ == "__main__":
     unittest.main()

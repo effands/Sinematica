@@ -104,3 +104,12 @@ def test_character_sheet_description_forbids_cross_character_wardrobe_swaps():
     assert 'WARDROBE OWNERSHIP' in text
     assert "Never swap this outfit with another actor" in text
     assert "never dress a male actor in the female character's authored clothing" in text
+
+
+def test_character_sheet_description_forbids_facial_hair_swaps_between_men():
+    text = character_sheet_description({'description': 'Bagas, pria berkumis tebal, jas hitam'})
+    assert 'IDENTITY FEATURE OWNERSHIP' in text
+    assert 'moustache, beard, goatee' in text
+    assert "Never swap these traits with another actor" in text
+    assert "never duplicate one man's moustache or beard onto other male actors" in text
+    assert 'never erase facial hair from its owner' in text

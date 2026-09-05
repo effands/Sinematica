@@ -115,9 +115,10 @@ def build_character_wardrobe_lock(scene: Dict[str, Any], characters: List[Dict[s
     return (
         "CHARACTER WARDROBE OWNERSHIP LOCK — never swap clothing or identity between actors:\n"
         + "\n".join(lines)
-        + "\nEach listed character keeps their own face, body, hairstyle, outfit, shoes, jewellery, colour palette, and accessories in every shot. "
+        + "\nEach listed character keeps their own face, body, hairstyle, facial hair, outfit, shoes, jewellery, colour palette, and accessories in every shot. "
+          "FACIAL HAIR OWNERSHIP: moustache, beard, goatee, sideburns, stubble density, eyebrow shape, hairline, scars, moles, glasses and other face-specific identifiers belong only to the character that owns them. Never transfer a moustache/beard/stubble pattern to another male actor, never erase it from its owner, and never duplicate one man's facial hair onto every man in the scene. "
           "Never put a woman's blouse/dress/skirt/hijab/jewellery on a male actor unless the story explicitly says cross-dressing, and never move a male character's suit/shirt/accessories onto a female actor. "
-          "If two characters share a frame, separate them by their registered wardrobe and visual signature before motion begins."
+          "If two characters share a frame, separate them by their registered face identifiers, wardrobe, and visual signature before motion begins."
     )
 
 
