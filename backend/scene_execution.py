@@ -34,6 +34,17 @@ detach, or teleport the actor inside. End with the actual open/closed state; lat
 """.strip()
 
 
+VEHICLE_MOTION_RULES = """VEHICLE MOTION DIRECTION LOCK:
+Before any motorcycle, scooter, bicycle, car, truck, bus, boat or train moves, establish its front, rear,
+wheels, rider/driver facing direction, lane direction, and screen travel direction. Forward travel means the
+vehicle nose/front and rider/driver chest face the direction of motion; wheels rotate consistently with that
+motion and the background parallax moves opposite the travel direction. Never make a motorcycle or car slide
+backward, reverse unintentionally, moonwalk, drift sideways without a turn, or face one way while travelling the
+opposite way. If reversing is explicitly requested, show reverse lights or backward body checking where relevant
+and state it as a deliberate reverse manoeuvre. Otherwise all travel is forward and physically plausible.
+""".strip()
+
+
 def scene_execution_context(scene):
     def readable(value):
         # Quoted JSON values are otherwise mistaken for invented dialogue by the
@@ -63,8 +74,9 @@ def build_physical_execution_guard(scene, prompt=''):
         'spatial_continuity',
     )) + ' ' + prompt
     door = bool(re.search(r'\b(?:door|doorway|pintu|gerbang)\b', text, re.I))
+    vehicle = bool(re.search(r'\b(?:motor|motorcycle|scooter|sepeda motor|bike|bicycle|car|mobil|truck|bus|train|kereta|boat|kapal|drive|ride|riding|mengendarai|berkendara|melaju|mundur|maju)\b', text, re.I))
     return '\n\n' + '\n'.join(part for part in (
-        context, NATURAL_ACTION_RULES, DOOR_INTERACTION_RULES if door else '',
+        context, NATURAL_ACTION_RULES, DOOR_INTERACTION_RULES if door else '', VEHICLE_MOTION_RULES if vehicle else '',
     ) if part)
 
 
@@ -87,6 +99,7 @@ def character_sheet_description(character):
         "antagonist or supporting role through posture, gaze and believable acting, not permanent scowling, "
         "exaggerated evil anatomy or a compulsory smile. Do not infer moral role from skin tone, scars or disability. "
         "Keep role and motivation as acting directions, not extra printed story paragraphs. "
+        "WARDROBE OWNERSHIP: this character's clothing, shoes, jewellery, hairstyle, colour palette and accessories belong only to this character. Never swap this outfit with another actor, never dress a male actor in the female character's authored clothing, and never move this character's blouse/dress/skirt/hijab/jewellery to another person. "
         "Existing reference images take priority over invented facial details; never borrow another character's traits."
     )
     return '\n'.join(filter(None, parts))

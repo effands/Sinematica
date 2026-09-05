@@ -33,6 +33,7 @@ from .scene_audio_direction import apply_scene_audio_direction, resolve_master_m
 from .scene_direction import (
     apply_no_branding_direction,
     build_speaker_lock,
+    build_character_wardrobe_lock,
     enforce_spoken_language_lock,
     choose_shot_count,
     ensure_unique_character_signatures,
@@ -1204,8 +1205,11 @@ async def execute_storyboard_job(
 
         prompt = enforce_spoken_language_lock(prompt, sc, storyboard.get("target_lang") or "")
         speaker_lock = build_speaker_lock(sc, characters)
+        wardrobe_lock = build_character_wardrobe_lock(sc, characters)
         if speaker_lock:
             prompt = f"{prompt.rstrip()}\n\n{speaker_lock}"
+        if wardrobe_lock:
+            prompt = f"{prompt.rstrip()}\n\n{wardrobe_lock}"
 
         prompt = apply_scene_audio_direction(
             prompt, sc, storyboard, music_video=music_video_mode
@@ -1779,6 +1783,12 @@ async def execute_storyboard_job(
                 enforce_spoken_language_lock(revised, sc, storyboard.get("target_lang") or ""),
                 sc, storyboard, music_video=music_video_mode
             )
+            retry_speaker_lock = build_speaker_lock(sc, characters)
+            retry_wardrobe_lock = build_character_wardrobe_lock(sc, characters)
+            if retry_speaker_lock:
+                prompt = f"{prompt.rstrip()}\n\n{retry_speaker_lock}"
+            if retry_wardrobe_lock:
+                prompt = f"{prompt.rstrip()}\n\n{retry_wardrobe_lock}"
             prompt = apply_no_branding_direction(prompt)
             prompt = adapt_template_for_visual_style(prompt, visual_style, is_children)
             prompt += build_visual_style_guard(visual_style, is_children)

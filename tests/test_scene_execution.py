@@ -84,3 +84,23 @@ def test_last_part_allows_climax_even_when_its_midpoint_precedes_the_climax():
     assert 'DILARANG menyelesaikan konflik utama' not in rules
     first = build_story_part_rules(0, 15, 90)
     assert 'DILARANG menyelesaikan konflik utama' in first
+
+
+def test_vehicle_motion_guard_prevents_unintended_backward_motorcycle_motion():
+    scene = {
+        'action_summary': 'Aris mengendarai motor melaju meninggalkan rumah',
+        'start_state': 'Motor menghadap ke kanan frame, roda depan di kanan, Aris duduk menghadap kanan',
+        'end_state': 'Motor bergerak maju ke kanan frame menjauh dari rumah',
+    }
+    guard = build_physical_execution_guard(scene)
+    assert 'VEHICLE MOTION DIRECTION LOCK' in guard
+    assert 'Never make a motorcycle or car slide\nbackward' in guard
+    assert 'all travel is forward' in guard
+    assert 'background parallax moves opposite' in guard
+
+
+def test_character_sheet_description_forbids_cross_character_wardrobe_swaps():
+    text = character_sheet_description({'description': 'Maya memakai blouse hijau dan rok beige'})
+    assert 'WARDROBE OWNERSHIP' in text
+    assert "Never swap this outfit with another actor" in text
+    assert "never dress a male actor in the female character's authored clothing" in text

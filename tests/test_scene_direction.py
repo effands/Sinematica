@@ -3,6 +3,7 @@ import unittest
 from backend.scene_direction import (
     apply_no_branding_direction,
     build_speaker_lock,
+    build_character_wardrobe_lock,
     choose_shot_count,
     ensure_unique_character_signatures,
     timeline_markers,
@@ -62,6 +63,20 @@ class SceneDirectionTests(unittest.TestCase):
         self.assertIn("left", lock)
         self.assertIn('"Aku tidak akan menyerah."', lock)
         self.assertIn("non-speakers keep their mouths closed", lock)
+
+
+    def test_character_wardrobe_lock_binds_outfits_to_scene_characters(self):
+        scene = {"characters_in_scene": ["maya", "aris"], "action_summary": "Maya berhadapan dengan Aris"}
+        characters = [
+            {"id": "maya", "name": "Maya", "visual_signature": "emerald blouse, beige skirt, silver ring"},
+            {"id": "aris", "name": "Aris", "visual_signature": "navy suit, white shirt, silver watch"},
+        ]
+        lock = build_character_wardrobe_lock(scene, characters)
+        self.assertIn("Maya owns: emerald blouse, beige skirt, silver ring", lock)
+        self.assertIn("Aris owns: navy suit, white shirt, silver watch", lock)
+        self.assertIn("never swap clothing", lock)
+        self.assertIn("Never put a woman's blouse", lock)
+        self.assertIn("never move a male character's suit", lock)
 
 
 if __name__ == "__main__":

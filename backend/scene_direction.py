@@ -92,6 +92,35 @@ def ensure_unique_character_signatures(characters: List[Dict[str, Any]]) -> List
     return result
 
 
+def build_character_wardrobe_lock(scene: Dict[str, Any], characters: List[Dict[str, Any]]) -> str:
+    """Bind wardrobe/signature ownership to each character present in a scene."""
+    if not characters:
+        return ""
+    tags = {str(tag) for tag in (scene.get("characters_in_scene") or [])}
+    scene_text = " ".join(str(scene.get(k) or "") for k in ("title", "activity", "action_summary", "prompt_for_flow", "narration_id")).casefold()
+    lines = []
+    for character in characters or []:
+        cid = str(character.get("id") or "")
+        name = str(character.get("name") or "").strip()
+        if tags and cid not in tags and name.casefold() not in tags:
+            continue
+        if not tags and name and name.casefold() not in scene_text:
+            continue
+        signature = str(character.get("visual_signature") or character.get("description") or character.get("desc") or "registered wardrobe and appearance").strip()
+        if not name and not signature:
+            continue
+        lines.append(f"- {name or 'Registered character'} owns: {signature}")
+    if not lines:
+        return ""
+    return (
+        "CHARACTER WARDROBE OWNERSHIP LOCK — never swap clothing or identity between actors:\n"
+        + "\n".join(lines)
+        + "\nEach listed character keeps their own face, body, hairstyle, outfit, shoes, jewellery, colour palette, and accessories in every shot. "
+          "Never put a woman's blouse/dress/skirt/hijab/jewellery on a male actor unless the story explicitly says cross-dressing, and never move a male character's suit/shirt/accessories onto a female actor. "
+          "If two characters share a frame, separate them by their registered wardrobe and visual signature before motion begins."
+    )
+
+
 def build_speaker_lock(scene: Dict[str, Any], characters: List[Dict[str, Any]]) -> str:
     """Bind each exact line to one named face; prevent dialogue-role swapping."""
     dialogue = scene.get("dialogue") or []
