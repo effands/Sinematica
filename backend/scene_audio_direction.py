@@ -1,6 +1,7 @@
 """Consistent, restrained score direction for independently generated Flow scenes."""
 
 from typing import Any, Mapping
+from .scene_direction import contains_story_terms
 
 
 def _score_palette(storyboard: Mapping[str, Any]) -> str:
@@ -22,7 +23,7 @@ def _scene_intensity(scene: Mapping[str, Any]) -> str:
     context = " ".join(str(scene.get(key) or "") for key in (
         "title", "action_summary", "prompt_for_flow"
     )).lower()
-    if any(term in context for term in (
+    if contains_story_terms(context, (
         "perang", "battle", "war", "serbu", "attack", "fight", "pasukan", "clash"
     )):
         return "restrained war percussion and low dramatic pulses"
@@ -31,6 +32,16 @@ def _scene_intensity(scene: Mapping[str, Any]) -> str:
     if any(term in context for term in ("klimaks", "reveal", "terungkap", "confront")):
         return "a controlled rise in tension without becoming loud"
     return "a calm, unobtrusive variation matched to the scene emotion"
+
+
+def _scene_music_direction(scene: Mapping[str, Any]) -> str:
+    """Prefer the authored scene music so the generic intensity cannot contradict it."""
+    blueprint = scene.get("audio_blueprint") or {}
+    if isinstance(blueprint, Mapping):
+        explicit = str(blueprint.get("music") or "").strip()
+        if explicit:
+            return explicit
+    return _scene_intensity(scene)
 
 
 def _has_spoken_dialogue(scene: Mapping[str, Any]) -> bool:
@@ -73,7 +84,7 @@ def _infer_foley(scene: Mapping[str, Any]) -> str:
         (("ponsel", "phone", "ketik", "type", "keyboard"), "quiet device taps or keyboard clicks synchronized to finger contact"),
     )
     for terms, cue in cue_map:
-        if any(term in context for term in terms) and cue not in cues:
+        if contains_story_terms(context, terms) and cue not in cues:
             cues.append(cue)
     return "; ".join(cues[:3]) or "only physically motivated contact sounds synchronized to visible actions"
 
@@ -129,16 +140,18 @@ def _character_voice_locks(scene: Mapping[str, Any], storyboard: Mapping[str, An
         vocal_sig = str((char or {}).get("vocal_signature") or "").strip()
         if not vocal_sig:
             c_desc = str((char or {}).get("description") or "").lower()
-            if any(w in c_desc for w in ["wanita", "perempuan", "female", "girl", "woman", "ibu", "gadis", "she"]):
-                vocal_sig = "Warm resonant feminine voice, mid-20s native speaker, natural conversational cadence"
-            elif any(w in c_desc for w in ["pria", "laki", "male", "man", "bapak", "pemuda", "he"]):
-                vocal_sig = "Grounded masculine baritone, late-20s native speaker, steady calm pitch"
+            if contains_story_terms(c_desc, ["wanita", "perempuan", "female", "girl", "woman", "ibu", "gadis", "she"]):
+                vocal_sig = "Natural feminine voice appropriate to the character's established age, native accent, conversational cadence"
+            elif contains_story_terms(c_desc, ["pria", "laki", "male", "man", "bapak", "pemuda", "he"]):
+                vocal_sig = "Natural masculine voice appropriate to the character's established age, native accent, conversational cadence"
             else:
                 vocal_sig = "Clear authentic native conversational voice with consistent acoustic timbre"
 
         voice_locks.append(
             f"VOICE IDENTITY LOCK ({c_name}): Voice timbre MUST remain strictly locked to '{vocal_sig}'. "
-            f"Maintain this exact vocal pitch, timbre, vocal age, and native accent across all scenes with zero drift."
+            "Preserve recognizable timbre, vocal age and native accent across scenes, while allowing pitch, "
+            "tempo, breaths and volume to vary naturally with the immediate emotion. Never freeze intonation "
+            "or force identical syllable timing; restraint and soft speech are valid, even for an antagonist."
         )
 
     if not voice_locks:
@@ -175,10 +188,19 @@ def apply_scene_audio_direction(
             + _character_voice_locks(scene, storyboard)
         )
     else:
+        blueprint = scene.get("audio_blueprint") or {}
+        explicit_music = isinstance(blueprint, Mapping) and bool(str(blueprint.get("music") or "").strip())
+        music_direction = (
+            f"Follow the authored scene music exactly: {_scene_music_direction(scene)}. "
+            "If it requests no music, keep only location sound and dialogue. Otherwise maintain continuity "
+            "across cuts and duck music under speech. "
+            if explicit_music else
+            "Keep a low-volume cinematic underscore continuous throughout the entire "
+            f"clip using {_score_palette(storyboard)}; never restart music abruptly. "
+            f"For this scene use {_scene_intensity(scene)}. "
+        )
         direction = (
-            "AUDIO DIRECTION: Keep a low-volume cinematic underscore continuous throughout the entire "
-            f"clip using {_score_palette(storyboard)}; never drop to awkward silence and never restart the "
-            f"music abruptly. For this scene use {_scene_intensity(scene)}. Keep the score subtle under "
+            "AUDIO DIRECTION: " + music_direction + "Keep the score subtle under "
             "natural ambience and sound effects so dialogue remains clearly audible; raise it only slightly "
             "for a climax or impact."
             + _natural_dialogue_direction(scene)

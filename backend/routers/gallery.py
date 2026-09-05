@@ -8,7 +8,16 @@ import os
 import shutil
 
 from .. import settings
-from ..jobs_executor import list_jobs, get_job_status, delete_job, delete_multiple_jobs, update_job, create_render_job, mark_render_job_completed
+from ..jobs_executor import (
+    list_jobs,
+    get_job_status,
+    delete_job,
+    delete_multiple_jobs,
+    update_job,
+    create_render_job,
+    mark_render_job_completed,
+    recover_jobs_from_storage,
+)
 from ..film_stitcher import stitch_scenes, stitch_scenes_with_transition
 from ..gallery_metadata import gallery_metadata
 
@@ -44,7 +53,11 @@ class UpdateJobRequest(BaseModel):
 @router.get("")
 def get_gallery_items():
     """Get all generated jobs with video clips and full cinematic film URLs."""
-    jobs = list_jobs()
+    jobs = sorted(
+        recover_jobs_from_storage(),
+        key=lambda item: item.get("created_at") or 0,
+        reverse=True,
+    )
     gallery_data = []
 
     for job in jobs:

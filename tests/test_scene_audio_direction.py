@@ -102,6 +102,19 @@ class SceneAudioDirectionTests(unittest.TestCase):
         self.assertIn("cup touches table", result)
         self.assertIn("restrained anger", result)
 
+    def test_explicit_music_replaces_inferred_scene_music_to_avoid_conflict(self):
+        result = apply_scene_audio_direction(
+            "A battle survivor reveals the hidden ring.",
+            {
+                "title": "War Reveal",
+                "audio_blueprint": {"music": "one continuous low bass drone"},
+            },
+            {},
+        )
+        self.assertIn("Follow the authored scene music exactly: one continuous low bass drone", result)
+        self.assertNotIn("orchestral palette", result)
+        self.assertNotIn("restrained war percussion", result)
+
     def test_storyboard_music_track_wins_over_unrelated_settings_value(self):
         result = resolve_master_music_track(
             {"music_track_path": "uploads/song.mp3"},
@@ -126,7 +139,18 @@ class SceneAudioDirectionTests(unittest.TestCase):
         result = apply_scene_audio_direction("Boma berbicara di depan rumah.", scene, storyboard)
         self.assertIn("VOICE IDENTITY LOCK (Boma)", result)
         self.assertIn("Warm baritone, 28yo male, steady calm cadence", result)
-        self.assertIn("Maintain this exact vocal pitch, timbre", result)
+        self.assertIn("allowing pitch", result)
+        self.assertIn("Never freeze intonation", result)
+        self.assertNotIn("Maintain this exact vocal pitch", result)
+
+    def test_wardrobe_and_forward_do_not_trigger_war_score(self):
+        result = apply_scene_audio_direction('', {'prompt_for_flow': 'Same wardrobe, step forward.'}, {})
+        self.assertNotIn('war percussion', result)
+
+    def test_explicit_no_music_does_not_request_continuous_underscore(self):
+        result = apply_scene_audio_direction('', {'audio_blueprint': {'music': 'none'}}, {})
+        self.assertNotIn('underscore continuous', result)
+        self.assertNotIn('orchestral palette', result)
 
 
 if __name__ == "__main__":

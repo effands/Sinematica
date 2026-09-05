@@ -29,6 +29,11 @@ class SceneDirectionTests(unittest.TestCase):
         self.assertEqual(len(timeline_markers(4)), 4)
         self.assertEqual(timeline_markers(5), ["0-2 seconds", "2-4 seconds", "4-6 seconds", "6-8 seconds", "8-10 seconds"])
 
+    def test_wardrobe_and_forward_are_not_combat_and_door_contact_wins(self):
+        self.assertEqual(choose_shot_count({}, 'Same wardrobe. She looks forward and says "Pulang."'), 3)
+        self.assertEqual(choose_shot_count({}, 'Preserve wardrobe while folding a letter.'), 4)
+        self.assertEqual(choose_shot_count({}, 'After the battle she closes the car door.'), 3)
+
     def test_character_signatures_are_present_and_unique(self):
         characters = [
             {"id": 1, "name": "Maya", "description": "Wanita muda berambut hitam."},

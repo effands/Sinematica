@@ -26,6 +26,9 @@ from .gallery_cleanup import cleanup_job_files, job_source_files
 from .media_download import stream_download, stream_exact_media_with_retry
 from .scene_pacing import rewrite_dense_prompt_with_ai, should_try_gemini_storyboard_image
 from .scene_continuity import continuity_start_image
+from .film_asset_cache import (FilmAssetCache, AssetRecoveryRequired, character_asset_key,
+                               ensure_film_asset_id, serialize_film_execution)
+from .scene_execution import character_sheet_description, build_physical_execution_guard, scene_execution_context
 from .scene_audio_direction import apply_scene_audio_direction, resolve_master_music_track
 from .scene_direction import (
     apply_no_branding_direction,
@@ -36,6 +39,11 @@ from .scene_direction import (
 )
 from .content_quality import build_render_realism_guard, build_scene_blueprint_guard
 from .storyboard_image import fetch_image_bytes, generate_storyboard_sheet
+from .profile_reference_cache import (
+    ensure_character_media_for_profile,
+    ensure_files_for_profile,
+    profile_key,
+)
 
 from omniflash.generators import upload_image, poll_video_status
 
@@ -76,6 +84,9 @@ _load_history()
 def _save_history():
     try:
         data = list(_active_jobs.values())
+        if HISTORY_FILE.exists():
+            backup = HISTORY_FILE.with_suffix(".json.bak")
+            backup.write_bytes(HISTORY_FILE.read_bytes())
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
     except Exception as ex:
@@ -105,6 +116,82 @@ def get_job_status(job_id: str) -> Optional[Dict[str, Any]]:
 
 def list_jobs() -> List[Dict[str, Any]]:
     return list(_active_jobs.values())
+
+
+def _job_created_at_from_directory(job_dir: Path) -> float:
+    timestamps = []
+    for path in job_dir.glob("*"):
+        try:
+            timestamps.append(path.stat().st_mtime)
+        except OSError:
+            continue
+    if timestamps:
+        return min(timestamps)
+    try:
+        return job_dir.stat().st_mtime
+    except OSError:
+        return time.time()
+
+
+def recover_jobs_from_storage() -> List[Dict[str, Any]]:
+    """Rebuild missing gallery history entries from storage/jobs folders.
+
+    The actual videos live under storage/jobs. If jobs_history.json is overwritten,
+    Gallery should still show existing rendered folders instead of looking empty.
+    """
+    recovered = 0
+    settings.JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    for job_dir in sorted(settings.JOBS_DIR.iterdir(), key=lambda p: p.stat().st_mtime if p.exists() else 0):
+        if not job_dir.is_dir():
+            continue
+        job_id = job_dir.name
+        if job_id in _active_jobs:
+            continue
+
+        clips = sorted(job_dir.glob("scene_*.mp4"))
+        film_candidates = [
+            job_dir / "cinematic_film_with_audio.mp4",
+            job_dir / "cinematic_film.mp4",
+            job_dir / "cinematic_film_custom.mp4",
+        ]
+        film_path = next((p for p in film_candidates if p.exists()), None)
+        if not clips and not film_path:
+            continue
+
+        created_at = _job_created_at_from_directory(job_dir)
+        title = job_id.replace("_", " ").title()
+        if film_path and job_id.startswith("job_render_"):
+            title = "Sequencer Custom Render"
+
+        _active_jobs[job_id] = {
+            "job_id": job_id,
+            "title": title,
+            "status": "completed" if film_path else "completed_partial",
+            "current_scene": len(clips),
+            "total_scenes": len(clips),
+            "aspect_ratio": "portrait",
+            "scenes": [
+                {
+                    "scene_number": index,
+                    "status": "completed",
+                    "video_url": f"/storage/jobs/{job_id}/{clip.name}",
+                    "relative_url": f"/storage/jobs/{job_id}/{clip.name}",
+                }
+                for index, clip in enumerate(clips, start=1)
+            ],
+            "cinematic_film_path": str(film_path) if film_path else None,
+            "cinematic_film_url": f"/storage/jobs/{job_id}/{film_path.name}" if film_path else None,
+            "cancelled": False,
+            "created_at": created_at,
+            "created_at_formatted": time.strftime("%d %b %Y, %H:%M", time.localtime(created_at)),
+            "initial_prompt": "",
+            "recovered_from_storage": True,
+        }
+        recovered += 1
+
+    if recovered:
+        _save_history()
+    return list_jobs()
 
 
 def cancel_job(job_id: str) -> bool:
@@ -176,7 +263,7 @@ def create_render_job(title: str) -> str:
         "cancelled": False,
         "created_at": time.time(),
         "created_at_formatted": time.strftime("%d %b %Y, %H:%M"),
-        "source_files": job_source_files(theme_image_path, storyboard),
+        "source_files": [],
     }
     _active_jobs[job_id] = job_state
     _save_history()
@@ -195,6 +282,7 @@ def mark_render_job_completed(job_id: str, film_path: str):
 
 
 FLOW_ALLOWED_DURATIONS = (4, 6, 8, 10)
+TEXTLESS_CHARACTER_SHEET_REVISION = "textless-v2"
 
 
 def resolve_scene_duration(scene: Dict[str, Any], fallback: int) -> int:
@@ -533,7 +621,7 @@ def fictionalize_character_names(prompt: str, character_names: List[str]) -> str
 
 def choose_instance_for_project(instances: List[Dict[str, Any]], project_id: Optional[str]) -> Optional[str]:
     """Choose the connected Chrome identity that actually owns the requested Flow project."""
-    connected = [item for item in instances if item.get("connected")]
+    connected = [item for item in instances if item.get("connected") and item.get('ready', True)]
     if not connected:
         return None
     connected.sort(
@@ -662,6 +750,29 @@ async def download_file(
             out.write(result["data"])
 
 
+async def recover_character_master(cache, key, bridge, job_dir):
+    """Retry a generated sheet's download, never its generation."""
+    pending = cache.state(key) or {}
+    if not pending.get('media_id'):
+        raise AssetRecoveryRequired('Sheet belum memiliki media ID untuk dipulihkan.')
+    temporary = job_dir / f"sheet_download_{uuid.uuid4().hex}.png"
+    try:
+        await download_file(
+            bridge, pending.get('image_url') or 'flow_media_id:' + pending['media_id'], temporary,
+            instance_id=pending.get('instance_id'), media_id=pending['media_id'],
+            project_id=pending.get('project_id'),
+        )
+        return cache.save(key, temporary.read_bytes(), name=pending.get('name'))
+    except Exception as error:
+        raise AssetRecoveryRequired(
+            'Sheet sudah dibuat tetapi belum tersimpan lokal. Hubungkan akun asal lalu Resume untuk '
+            'mengunduh ulang; generasi ulang diblokir.'
+        ) from error
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+@serialize_film_execution
 async def execute_storyboard_job(
     job_id: str,
     storyboard: Dict[str, Any],
@@ -678,6 +789,7 @@ async def execute_storyboard_job(
     job_dir.mkdir(parents=True, exist_ok=True)
 
     scenes = storyboard.get("scenes", [])
+    asset_cache = FilmAssetCache(settings.STORAGE_DIR / 'film_assets', ensure_film_asset_id(storyboard))
     total_scenes = len(scenes)
 
     # Persist a job-owned SEO narrative. Gallery SEO must describe this rendered
@@ -768,6 +880,9 @@ async def execute_storyboard_job(
         log_event(job_id, f"🌐 [0%] Flow Project ID terdeteksi: {project_id[:16]}...")
 
     project_instance_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
+    selected_profile = next((item for item in bridge.instance_snapshot()
+                             if item.get('instance_id') == project_instance_id), {})
+    project_id = selected_profile.get('project_id') or project_id
 
     # Step 1: Upload Reference Image, or Generate one Anchor Seed Image PER Character in Flow
     ref_media_id = None
@@ -776,6 +891,8 @@ async def execute_storyboard_job(
     character_media_ids: Dict[Any, str] = {}
     character_image_urls: Dict[Any, str] = {}
     character_image_paths: Dict[Any, str] = {}
+    character_media_by_profile: Dict[Any, Dict[Any, str]] = {}
+    file_media_by_profile: Dict[Any, Dict[str, str]] = {}
 
     cfg = settings.get_settings()
     enable_seed_image = cfg.get("enable_character_seed_image", True)
@@ -831,31 +948,41 @@ async def execute_storyboard_job(
         from omniflash.generators import generate_character_image
         first_target_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
 
-        log_event(job_id, f"🎨 [5%] [Tahap 1/2] Membuat {len(characters)} Gambar Anchor Seed Karakter di Google Flow (Master Prompt Template)...")
+        log_event(job_id, f"🎨 [5%] Memeriksa master cache {len(characters)} karakter; hanya sheet yang belum ada akan dibuat.")
         for c_idx, char in enumerate(characters, start=1):
             char_id = char.get("id", c_idx)
             char_name = char.get("name", f"Karakter {char_id}")
             char_seed = char.get("seed", storyboard.get("character_seed", 123456))
-            char_desc = char.get('description', '')
+            char_desc = character_sheet_description(char)
+            char["sheet_revision"] = TEXTLESS_CHARACTER_SHEET_REVISION
 
             safe_name = "".join(c for c in char_name if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')
             local_sheet_file = job_dir / f"character_sheet_{char_id}_{safe_name}.png"
-            if local_sheet_file.exists() and local_sheet_file.stat().st_size > 500:
-                log_event(job_id, f"💾 [Tahap 1/2] Character sheet '{char_name}' ditemukan di lokal ({local_sheet_file.name}). Mengunggah ke Flow...")
-                try:
-                    reused_media_id = await upload_image(bridge, str(local_sheet_file), project_id=project_id, instance_id=first_target_id)
-                    character_media_ids[char_id] = reused_media_id
-                    character_media_ids[str(char_id)] = reused_media_id
-                    character_media_ids[char_name] = reused_media_id
-                    character_media_ids[char_name.lower()] = reused_media_id
-                    character_image_paths[char_id] = str(local_sheet_file)
-                    character_image_paths[str(char_id)] = str(local_sheet_file)
-                    character_image_paths[char_name] = str(local_sheet_file)
-                    character_image_paths[char_name.lower()] = str(local_sheet_file)
-                    log_event(job_id, f"✅ Character sheet '{char_name}' siap dipakai kembali! Media ID: {reused_media_id[:16]}...")
+            try:
+                owned_reference_paths = resolve_character_reference_paths(char, storyboard)
+                asset_key = character_asset_key(char, visual_style, owned_reference_paths)
+                cached_sheet = asset_cache.ready_path(asset_key)
+                existing_asset = asset_cache.state(asset_key)
+                if not cached_sheet and existing_asset:
+                    cached_sheet = await recover_character_master(asset_cache, asset_key, bridge, job_dir)
+                if not cached_sheet and local_sheet_file.exists():
+                    cached_sheet = asset_cache.save(asset_key, local_sheet_file.read_bytes(), name=char_name)
+                if cached_sheet:
+                    for alias in (char_id, str(char_id), char_name, char_name.lower()):
+                        character_image_paths[alias] = cached_sheet
+                    reused_map, _ = await ensure_character_media_for_profile(
+                        bridge, [char], character_image_paths, project_id, first_target_id,
+                        character_media_by_profile, upload_fn=upload_image,
+                    )
+                    character_media_ids.update(reused_map)
+                    log_event(job_id, f"💾 Master sheet '{char_name}' di-import dari cache laptop; tanpa generate ulang.")
                     continue
-                except Exception as ex:
-                    log_event(job_id, f"⚠️ Gagal upload ulang character sheet lokal '{char_name}': {ex}. Membuat baru...", level="warning")
+            except Exception as ex:
+                job_state['status'] = 'waiting_for_reference'
+                job_state['error'] = f"Cache/import sheet '{char_name}' perlu dipulihkan: {ex}. Gunakan Resume."
+                log_event(job_id, job_state['error'], level='warning')
+                _save_history()
+                return
 
             char_prompt = custom_template.replace("{char_name}", char_name).replace("{char_seed}", str(char_seed)).replace("{char_desc}", char_desc)
             owned_reference_paths = resolve_character_reference_paths(char, storyboard)
@@ -908,6 +1035,12 @@ async def execute_storyboard_job(
                         )
                     media_id = img_res.get("media_id")
                     if media_id:
+                        asset_cache.record(asset_key, status='download_pending', name=char_name,
+                                           media_id=media_id, image_url=img_res.get('image_url'),
+                                           project_id=project_id, instance_id=first_target_id)
+                        cached_sheet = await recover_character_master(asset_cache, asset_key, bridge, job_dir)
+                        for alias in (char_id, str(char_id), char_name, char_name.lower()):
+                            character_image_paths[alias] = cached_sheet
                         character_media_ids[char_id] = media_id
                         character_media_ids[str(char_id)] = media_id
                         character_media_ids[char_name] = media_id
@@ -920,22 +1053,29 @@ async def execute_storyboard_job(
                             character_image_urls[char_name] = img_url
                             character_image_urls[char_name.lower()] = img_url
 
-                            # Cache character sheet locally immediately
-                            sheet_got = await asyncio.to_thread(fetch_image_bytes, img_url)
-                            if sheet_got and sheet_got.get("data"):
-                                safe_name = "".join(c for c in char_name if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')
-                                local_file = job_dir / f"character_sheet_{char_id}_{safe_name}.png"
-                                local_file.write_bytes(sheet_got["data"])
-                                character_image_paths[char_id] = str(local_file)
-                                character_image_paths[str(char_id)] = str(local_file)
-                                character_image_paths[char_name] = str(local_file)
-                                character_image_paths[char_name.lower()] = str(local_file)
-                                log_event(job_id, f"💾 Character sheet '{char_name}' tersimpan di lokal: {local_file.name}")
+                            log_event(job_id, f"💾 Character sheet '{char_name}' tersimpan di master cache film.")
 
                         log_event(job_id, f"✅ Gambar Seed Karakter '{char_name}' berhasil dibuat! Media ID: {media_id[:16]}...")
                         break
                 except Exception as ex:
                     log_event(job_id, f"⚠️ Gagal generate seed image karakter '{char_name}' (Percobaan {try_cnt}): {ex}.", level="warning")
+                    if isinstance(ex, AssetRecoveryRequired) or asset_cache.state(asset_key):
+                        job_state['status'] = 'waiting_for_reference'
+                        job_state['error'] = f"Sheet '{char_name}' sudah dibuat; pulihkan unduhan dengan Resume: {ex}"
+                        log_event(job_id, job_state['error'], level='warning')
+                        _save_history()
+                        return
+                    if "recaptcha" in str(ex).lower() or "unusual_activity" in str(ex).lower():
+                        error_message = (
+                            "Google Flow menolak verifikasi reCAPTCHA (aktivitas tidak biasa). "
+                            "Job dihentikan cepat agar tidak membuang retry/kuota. Buka Flow manual pada profil yang sama, "
+                            "selesaikan verifikasi bila muncul, tunggu beberapa menit, lalu Resume job."
+                        )
+                        job_state["status"] = "waiting_for_login"
+                        job_state["error"] = error_message
+                        log_event(job_id, f"🛡️ {error_message}", level="error")
+                        _save_history()
+                        return
                     if is_flow_auth_error(ex):
                         error_message = (
                             "Sesi OAuth Google Flow kedaluwarsa. Token lama sudah ditolak Google; "
@@ -1004,6 +1144,10 @@ async def execute_storyboard_job(
 
         if character_media_ids and not ref_media_id:
             ref_media_id = list(character_media_ids.values())[0]
+
+        # The IDs above belong only to the profile/project that created or uploaded them.
+        # Other accounts receive their own IDs lazily from the same durable local files.
+        character_media_by_profile[profile_key(first_target_id, project_id)] = dict(character_media_ids)
 
     # Step 2: Render each scene video across connected Chrome profiles
     completed_scene_paths = []
@@ -1076,6 +1220,9 @@ async def execute_storyboard_job(
         prompt += build_finishing_look_guard(storyboard)
         prompt += build_scene_blueprint_guard(sc)
         prompt += build_render_realism_guard(storyboard)
+        prompt += build_physical_execution_guard(sc, prompt=sc.get('prompt_for_flow') or '')
+        prompt += "\n\nREFERENCE TEXT EXCLUSION LOCK: Any name, seed number, label, title bar, UI box, caption, border, or printed metadata visible in reference images is not part of the scene. Never render it, copy it, float it, overlay it, or turn it into a sign/card/subtitle. The final video frame must contain only the cinematic scene and physical story objects. No readable text unless explicitly required by the story, and even then use blurred/unreadable marks instead of words."
+        prompt += "\n\nREFERENCE TEXT EXCLUSION LOCK: Any name, seed number, label, title bar, UI box, caption, border, or printed metadata visible in reference images is not part of the scene. Never render it, copy it, float it, overlay it, or turn it into a sign/card/subtitle. The final video frame must contain only the cinematic scene and physical story objects. No readable text unless explicitly required by the story, and even then use blurred/unreadable marks instead of words."
 
         out_filename = f"scene_{idx:02d}.mp4"
         out_path = job_dir / out_filename
@@ -1155,6 +1302,7 @@ async def execute_storyboard_job(
         # Step 1.5: Generate ONE storyboard key-frame reference image for this scene (composition/blocking/lighting),
         # used ALONGSIDE the character seed image(s) as a second reference for the video render below.
         storyboard_media_id = None
+        storyboard_sheet_path = None
         if enable_scene_storyboard_image:
             # Cartoon sheets are an explicit production mode. Keyword guessing caused
             # live-action drama characters to be rendered as illustrations.
@@ -1176,15 +1324,41 @@ async def execute_storyboard_job(
             storyboard_prompt = adapt_template_for_visual_style(storyboard_prompt, visual_style, is_children)
             storyboard_prompt += build_visual_style_guard(visual_style, is_children)
             storyboard_prompt += build_finishing_look_guard(storyboard)
+            storyboard_prompt += (
+                "\n\nPHYSICAL BLOCKING PRIORITY: " + scene_execution_context(sc)
+                + "\nPanels represent successive physical states, not compulsory camera cuts. "
+                "Keep camera side, hinge, handle, hand and actor inside/outside consistent. "
+                "For door/contact actions, retain a medium three-quarter view showing hand, door edge "
+                "and body clearance throughout reach/contact/movement/release; this overrides any "
+                "generic panel-angle rotation above. Never depict a hand through glass or a body in the door sweep."
+            )
             _sb_manifest_slot = True  # manifest appended once the sheet list is known
             sb_target_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
 
+            sb_character_media_ids = character_media_ids
+            uploaded_names = []
+            if enable_seed_image:
+                sb_character_media_ids, uploaded_names = await ensure_character_media_for_profile(
+                    bridge, characters, character_image_paths, project_id, sb_target_id,
+                    character_media_by_profile, upload_fn=upload_image,
+                )
+            if uploaded_names:
+                log_event(
+                    job_id,
+                    f"🔄 [Adegan {idx}/{total_scenes}] Character sheet diunggah ke profil storyboard: "
+                    + ", ".join(uploaded_names),
+                )
+
             # Feed the character sheets in as references, otherwise the panel invents new
             # faces and wardrobe and every scene ends up with different-looking characters.
-            sb_chars = resolve_scene_characters(sc, storyboard.get("characters") or [], character_media_ids)
+            sb_chars = resolve_scene_characters(sc, storyboard.get("characters") or [], sb_character_media_ids)
             sb_ref_ids = [c["media_id"] for c in sb_chars]
             if is_affiliate_scene:
-                sb_ref_ids.extend(affiliate_media_ids)
+                sb_product_ids, _ = await ensure_files_for_profile(
+                    bridge, affiliate_product.get("reference_paths") or [], project_id, sb_target_id,
+                    file_media_by_profile, upload_fn=upload_image,
+                )
+                sb_ref_ids.extend(sb_product_ids)
             storyboard_prompt += build_sheet_manifest(sb_chars)
 
             who = ", ".join(f"{c['name']} ({c['matched_by']})" for c in sb_chars) or "tanpa karakter"
@@ -1225,6 +1399,7 @@ async def execute_storyboard_job(
                     if sheet.get("image"):
                         sheet_path = job_dir / f"storyboard_{idx:02d}.png"
                         sheet_path.write_bytes(sheet["image"])
+                        storyboard_sheet_path = str(sheet_path)
                         storyboard_media_id = await upload_image(
                             bridge, str(sheet_path), project_id=project_id, instance_id=sb_target_id
                         )
@@ -1264,6 +1439,21 @@ async def execute_storyboard_job(
                             storyboard_media_id = sb_media
                             if sb_img_res.get("image_url"):
                                 scene_record["storyboard_sheet_url"] = sb_img_res["image_url"]
+                                sheet_got = await asyncio.to_thread(fetch_image_bytes, sb_img_res["image_url"])
+                                if not sheet_got or not sheet_got.get("data"):
+                                    try:
+                                        private_sheet = await bridge.download_url(
+                                            sb_img_res["image_url"], instance_id=sb_target_id, timeout=120
+                                        )
+                                        if private_sheet.get("data"):
+                                            sheet_got = {"data": private_sheet["data"]}
+                                    except Exception:
+                                        pass
+                                if sheet_got and sheet_got.get("data"):
+                                    sheet_path = job_dir / f"storyboard_{idx:02d}.png"
+                                    sheet_path.write_bytes(sheet_got["data"])
+                                    storyboard_sheet_path = str(sheet_path)
+                                    scene_record["storyboard_sheet_url"] = f"/storage/jobs/{job_id}/{sheet_path.name}"
                             if sb_img_res.get("reference_applied"):
                                 log_event(job_id, f"✅ [Adegan {idx}/{total_scenes}] Gambar storyboard berhasil dibuat MENGIKUTI "
                                                   f"{sb_img_res.get('reference_count')} character sheet! Media ID: {storyboard_media_id[:16]}...")
@@ -1317,22 +1507,58 @@ async def execute_storyboard_job(
                 )
                 inst_project_id = (
                     continuity_project_id if owns_continuity else None
-                ) or flow_project_id or chosen.get("project_id") or project_id or settings.get_flow_project_id()
+                ) or chosen.get("project_id") or flow_project_id or project_id or settings.get_flow_project_id()
 
                 log_event(job_id, f"🚀 [Adegan {idx}/{total_scenes}: '{scene_title}'] [{target_name}] Mengirim prompt video {scene_duration}s ke Google Flow (Model: abra_t2v_{scene_duration}s, Ratio: {aspect_ratio})...", profile=target_name)
                 scene_record["profile_used"] = target_name
 
                 try:
                     media_ids = None
-                    v_chars = scene_characters_for_retry
+                    profile_character_ids = character_media_ids
+                    uploaded_names = []
+                    if enable_seed_image:
+                        profile_character_ids, uploaded_names = await ensure_character_media_for_profile(
+                            bridge, characters, character_image_paths, inst_project_id, target_instance_id,
+                            character_media_by_profile, upload_fn=upload_image,
+                        )
+                    if uploaded_names:
+                        log_event(
+                            job_id,
+                            f"🔄 Character sheet otomatis dipindahkan ke {target_name}: "
+                            + ", ".join(uploaded_names),
+                            profile=target_name,
+                        )
+                    v_chars = resolve_scene_characters(
+                        sc, storyboard.get("characters") or [], profile_character_ids
+                    )
                     character_ref_ids = [c["media_id"] for c in v_chars if c.get("media_id")]
+                    profile_storyboard_media_id = storyboard_media_id
+                    if storyboard_sheet_path:
+                        uploaded_storyboard_ids, uploaded_count = await ensure_files_for_profile(
+                            bridge, [storyboard_sheet_path], inst_project_id, target_instance_id,
+                            file_media_by_profile, upload_fn=upload_image,
+                        )
+                        profile_storyboard_media_id = uploaded_storyboard_ids[0] if uploaded_storyboard_ids else None
+                        if uploaded_count:
+                            log_event(
+                                job_id,
+                                f"🔄 Storyboard sheet adegan {idx} diunggah ke {target_name}.",
+                                profile=target_name,
+                            )
+                    profile_product_ids = []
+                    if is_affiliate_scene:
+                        profile_product_ids, _ = await ensure_files_for_profile(
+                            bridge, affiliate_product.get("reference_paths") or [],
+                            inst_project_id, target_instance_id, file_media_by_profile,
+                            upload_fn=upload_image,
+                        )
                     scene_ref_ids = build_video_reference_ids(
                         character_ref_ids,
-                        storyboard_media_id,
+                        profile_storyboard_media_id,
                         policy_attempt=policy_attempt,
                         drop_all_references=drop_all_scene_references,
                         continuity_media_id=available_continuity_id if owns_continuity else None,
-                        product_media_ids=affiliate_media_ids if is_affiliate_scene else None,
+                        product_media_ids=profile_product_ids if is_affiliate_scene else None,
                     )
                     scene_record["reference_count"] = len(scene_ref_ids)
                     scene_record["reference_media_ids"] = list(scene_ref_ids)
@@ -1345,7 +1571,7 @@ async def execute_storyboard_job(
                             f"[3+] {len(character_ref_ids)} Sheet Karakter.",
                             profile=target_name,
                         )
-                    elif storyboard_media_id:
+                    elif profile_storyboard_media_id:
                         log_event(
                             job_id,
                             f"🎨 [Adegan {idx}/{total_scenes}] Prioritas referensi (Maks 7): "
@@ -1560,6 +1786,7 @@ async def execute_storyboard_job(
             if policy_attempt < 2:
                 prompt += build_scene_blueprint_guard(sc)
             prompt += build_render_realism_guard(storyboard)
+            prompt += build_physical_execution_guard(sc, prompt=sc.get('prompt_for_flow') or '')
             if drop_all_scene_references:
                 prompt = fictionalize_character_names(
                     prompt,

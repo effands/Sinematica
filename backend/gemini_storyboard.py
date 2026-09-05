@@ -14,12 +14,450 @@ from PIL import Image
 
 from . import settings
 from .scene_direction import ensure_unique_character_signatures
+from .scene_execution import NATURAL_ACTION_RULES, DOOR_INTERACTION_RULES
 from .text_generation import generate_text
 from .content_quality import normalize_creative_brief, build_creative_brief_prompt, build_five_realism_prompt
+from .cinematic_pacing import build_dynamic_narrative_rules, build_story_part_rules, detect_cinematic_archetype
 
 log = logging.getLogger("sinematica.storyboard")
 
 WEB2API_TIMEOUT = 180
+
+
+def _complete_scene_fields(scene: Dict[str, Any], index: int, total: int) -> Dict[str, Any]:
+    """Keep the editor usable when a provider omits optional-looking scene fields."""
+    action = str(scene.get("action_summary") or scene.get("activity") or "Aksi adegan berlangsung").strip()
+    title = str(scene.get("title") or f"Adegan {index}").strip()
+    shot_type = str(scene.get("shot_type") or "Medium Shot").strip()
+    camera = str(scene.get("camera_movement") or "Static locked-off").strip()
+
+    if index == 1:
+        purpose = "Hook / context"
+    elif index == total:
+        purpose = "Payoff / CTA"
+    elif index <= max(2, total // 2):
+        purpose = "Problem / development"
+    else:
+        purpose = "Escalation / proof"
+
+    defaults = {
+        "scene_purpose": purpose,
+        "activity": action,
+        "expression": "Ekspresi natural berubah mengikuti aksi dan konflik adegan",
+        "visual_composition": f"{shot_type}; subjek utama dan properti aksi terbaca jelas dalam frame",
+        "transition_bridge": "Arah pandang atau gerakan terakhir mengantar mulus ke adegan berikutnya",
+        "shot_type": shot_type,
+        "camera_movement": camera,
+        "narration_id": action,
+        "text_overlay": " ".join(title.split()[:6]),
+    }
+    for field, default in defaults.items():
+        if not scene.get(field):
+            scene[field] = default
+    if not scene.get("shot_flow"):
+        duration = max(1, int(scene.get("duration") or 10))
+        split = max(1, duration // 3)
+        scene["shot_flow"] = [
+            {"time": f"0-{split}s", "angle": shot_type, "description": "Pembuka dan konteks aksi"},
+            {"time": f"{split}-{min(duration, split * 2)}s", "angle": "Close Up", "description": "Detail aksi dan perubahan ekspresi"},
+            {"time": f"{min(duration, split * 2)}-{duration}s", "angle": "Reaction / Final Look", "description": "Reaksi akhir dan jembatan transisi"},
+        ]
+    return scene
+
+
+def _complete_storyboard_scene_fields(storyboard: Dict[str, Any]) -> Dict[str, Any]:
+    scenes = storyboard.get("scenes") or []
+    for index, scene in enumerate(scenes, 1):
+        _complete_scene_fields(scene, index, len(scenes))
+    return storyboard
+
+
+def _scene_story_text(scene: Dict[str, Any]) -> str:
+    dialogue_lines = []
+    for item in scene.get("dialogue") or []:
+        if isinstance(item, dict):
+            dialogue_lines.append(str(item.get("line") or ""))
+        else:
+            dialogue_lines.append(str(item))
+    fields = (
+        scene.get("title"),
+        scene.get("scene_purpose"),
+        scene.get("activity"),
+        scene.get("expression"),
+        scene.get("action_summary"),
+        scene.get("transition_bridge"),
+        scene.get("narration_id"),
+        scene.get("prompt_for_flow"),
+        " ".join(dialogue_lines),
+    )
+    return " ".join(str(value or "") for value in fields).lower()
+
+
+_CONFLICT_TERMS = (
+    "konflik", "bertengkar", "pertikaian", "menolak", "ditolak", "menghina", "dihina",
+    "ancaman", "mengancam", "rahasia", "terbongkar", "pengkhianatan", "berkhianat",
+    "curiga", "tuduhan", "menuduh", "tekanan", "jebakan", "krisis", "masalah",
+    "melawan", "konfrontasi", "bukti", "terdesak", "kehilangan", "ultimatum",
+    "conflict", "refuse", "betray", "secret", "threat", "evidence", "crisis",
+)
+_ESCALATION_TERMS = (
+    "semakin", "memuncak", "meningkat", "terdesak", "mendesak", "memburuk",
+    "membongkar", "menemukan", "menantang", "menghadapi", "keputusan", "pilihan",
+    "akibat", "konsekuensi", "menyodorkan", "mengungkap", "terungkap", "balasan",
+    "rising", "complication", "pressure", "turning point", "reversal",
+)
+_CLIMAX_TERMS = (
+    "klimaks", "puncak", "konfrontasi", "menghadapi", "mengalahkan", "menang",
+    "kalah", "terbongkar", "pengakuan", "keputusan terakhir", "pertarungan",
+    "ledakan emosi", "balas dendam", "membuktikan", "menentukan", "final clash",
+    "climax", "confrontation", "decisive", "showdown",
+)
+_ENDING_TERMS = (
+    "ending", "akhir", "resolusi", "selesai", "berakhir", "akibat", "konsekuensi",
+    "bahagia", "sedih", "menangis lega", "memaafkan", "berpisah", "hukuman",
+    "keadilan", "damai", "happy", "sad", "resolution", "aftermath", "payoff",
+)
+_HOOK_TERMS = (
+    "hook", "penasaran", "pertanyaan", "rahasia", "anomali", "janji", "masalah",
+    "kejutan", "bukti", "ancaman", "tujuan", "mencari", "menemukan", "curiosity",
+    "cold open", "open loop", "promise",
+)
+_CHANGE_TERMS = (
+    "berubah", "memutuskan", "keputusan", "menolak", "menerima", "mengambil",
+    "memberi", "menyerahkan", "menemukan", "membongkar", "mengungkap", "terungkap",
+    "kehilangan", "menyadari", "menghadapi", "menantang", "menolong", "mencoba",
+    "gagal", "berhasil", "akibat", "konsekuensi", "tekanan", "reveal", "decision",
+    "discovers", "chooses", "changes", "fails", "succeeds",
+)
+_PAYOFF_TERMS = _ENDING_TERMS + (
+    "jawaban", "terjawab", "hasil", "pelajaran", "perayaan", "restu", "kebenaran",
+    "terbayar", "cta", "call to action", "proof", "benefit", "celebration",
+)
+_FLAT_TERMS = (
+    "berjalan pelan", "melihat ruangan", "mengamati suasana", "menatap kejauhan",
+    "menikmati pemandangan", "duduk diam", "berdiri diam", "quietly walking",
+    "looking around", "stands still", "walks slowly",
+)
+
+
+def _has_any(text: str, terms) -> bool:
+    return any(term in text for term in terms)
+
+
+def _is_complete_story_range(scene_offset: int, scene_count: int, total_scene_count: Optional[int]) -> bool:
+    total = int(total_scene_count or scene_count or 0)
+    return int(scene_offset or 0) <= 0 and int(scene_count or 0) >= total
+
+
+def _normalize_story_part_request(
+    requested_part_scene_count: int,
+    story_total_scene_count: Optional[int],
+    story_scene_offset: int,
+) -> tuple[int, int, int]:
+    """Return safe part counts and collapse accidental one/two-scene tails.
+
+    A dangling final part of 1-2 scenes is almost always a UI/preset mismatch for this
+    tool. It skips the complete-story audits and causes fake part endings, like a
+    15-scene storyboard reporting total_scene_count=16. Longer totals such as
+    40 scenes with a 20-scene part remain untouched.
+    """
+    requested = max(1, min(25, int(requested_part_scene_count or 4)))
+    total = max(requested, min(2000, int(story_total_scene_count or requested)))
+    offset = max(0, min(int(story_scene_offset or 0), total - 1))
+    if offset == 0 and total > requested and (total - requested) <= 2:
+        total = requested
+    target = min(requested, total - offset)
+    return total, offset, target
+
+
+def _sync_creative_brief_result(
+    creative_brief: Dict[str, Any],
+    *,
+    aspect_ratio: str,
+    scene_count: int,
+    duration_seconds: Optional[int],
+) -> Dict[str, Any]:
+    """Keep user-facing result metadata aligned with normalized engine counts."""
+    brief = dict(creative_brief or {})
+    default = f"Storyboard video {aspect_ratio}, {scene_count} scene" + (
+        f", sekitar {duration_seconds} detik" if duration_seconds else ""
+    )
+    result = str(brief.get("result") or "").strip()
+    if not result or re.search(r"\b\d+\s*scene\b", result, flags=re.IGNORECASE):
+        brief["result"] = default
+    return brief
+
+
+def _story_parts_meta(
+    *,
+    story_part_number: int,
+    story_scene_offset: int,
+    target_scene_count: int,
+    story_total_scene_count: int,
+) -> Dict[str, Any]:
+    generated = min(story_total_scene_count, story_scene_offset + target_scene_count)
+    return {
+        "part_number": max(1, int(story_part_number or 1)),
+        "scene_offset": max(0, int(story_scene_offset or 0)),
+        "part_scene_count": max(1, int(target_scene_count or 1)),
+        "total_scene_count": max(1, int(story_total_scene_count or target_scene_count or 1)),
+        "generated_scene_count": generated,
+        "has_next_part": generated < max(1, int(story_total_scene_count or target_scene_count or 1)),
+    }
+
+
+_CONTINUATION_TERMS = (
+    "belum", "namun", "tetapi", "tiba-tiba", "mendadak", "telepon", "pesan",
+    "datang", "muncul", "menunggu", "ancaman", "tekanan", "pertanyaan",
+    "rahasia baru", "jejak", "cliffhanger", "open loop", "berikutnya", "lanjut",
+)
+
+
+def _audit_story_part_boundary(
+    storyboard: Dict[str, Any],
+    *,
+    children_mode: bool = False,
+    script_mode: bool = False,
+    story_scene_offset: int = 0,
+    story_total_scene_count: Optional[int] = None,
+    strict: bool = True,
+) -> Dict[str, Any]:
+    scenes = storyboard.get("scenes") or []
+    total = len(scenes)
+    if script_mode or total < 1:
+        storyboard["story_part_boundary_audit"] = {"status": "skipped"}
+        return storyboard
+    global_total = int(story_total_scene_count or total or 0)
+    generated = int(story_scene_offset or 0) + total
+    has_next_part = generated < global_total
+    final_text = _scene_story_text(scenes[-1])
+    if not has_next_part:
+        ok = _has_any(final_text, _PAYOFF_TERMS) or children_mode
+        storyboard["story_part_boundary_audit"] = {"status": "passed" if ok else "failed", "final_payoff": ok, "has_next_part": False}
+        if strict and not ok:
+            raise ValueError("Storyboard ditolak sebelum render: part terakhir belum punya payoff/ending final yang jelas.")
+        return storyboard
+
+    looks_final = _has_any(final_text, _ENDING_TERMS) or "part 1 ending" in final_text or "part ending" in final_text
+    leaves_open_loop = _has_any(final_text, _CONTINUATION_TERMS)
+    ok = (not looks_final) or leaves_open_loop
+    storyboard["story_part_boundary_audit"] = {
+        "status": "passed" if ok else "failed",
+        "has_next_part": True,
+        "avoids_fake_ending": ok,
+        "looks_final": looks_final,
+        "leaves_open_loop": leaves_open_loop,
+    }
+    if strict and not ok:
+        raise ValueError(
+            "Storyboard ditolak sebelum render: part ini masih punya lanjutan, tetapi scene terakhir terasa seperti ending final. "
+            "Buat cliffhanger, tekanan baru, atau keputusan belum selesai; jangan menutup konflik utama sebelum part terakhir."
+        )
+    return storyboard
+
+
+def _audit_dramatic_arc(
+    storyboard: Dict[str, Any],
+    *,
+    children_mode: bool = False,
+    script_mode: bool = False,
+    story_scene_offset: int = 0,
+    story_total_scene_count: Optional[int] = None,
+    strict: bool = True,
+) -> Dict[str, Any]:
+    """Fail cheap when a complete drama has no conflict, climax, or ending."""
+    scenes = storyboard.get("scenes") or []
+    total = len(scenes)
+    is_complete_story = _is_complete_story_range(story_scene_offset, total, story_total_scene_count)
+    if children_mode or script_mode or total < 3 or not is_complete_story:
+        storyboard["dramatic_arc_audit"] = {"status": "skipped"}
+        return storyboard
+
+    thirds = [
+        " ".join(_scene_story_text(scene) for scene in scenes[: max(1, int(total * 0.35))]),
+        " ".join(_scene_story_text(scene) for scene in scenes[max(1, int(total * 0.25)): max(2, int(total * 0.75))]),
+        " ".join(_scene_story_text(scene) for scene in scenes[max(0, int(total * 0.65)):]),
+    ]
+    final_scene_text = _scene_story_text(scenes[-1])
+    whole = " ".join(thirds)
+    findings = {
+        "conflict": _has_any(thirds[0], _CONFLICT_TERMS) or _has_any(whole, _CONFLICT_TERMS),
+        "escalation": _has_any(thirds[1], _ESCALATION_TERMS),
+        "climax": _has_any(thirds[2], _CLIMAX_TERMS),
+        "ending": _has_any(final_scene_text, _ENDING_TERMS),
+    }
+    storyboard["dramatic_arc_audit"] = {"status": "passed" if all(findings.values()) else "failed", **findings}
+    if strict and not all(findings.values()):
+        missing = ", ".join(key for key, ok in findings.items() if not ok)
+        raise ValueError(
+            "Storyboard ditolak sebelum render: alur terlalu datar, beat drama belum lengkap "
+            f"({missing}). Generate ulang dengan konflik, eskalasi, klimaks, dan ending yang jelas."
+        )
+    return storyboard
+
+
+def _audit_story_engagement_quality(
+    storyboard: Dict[str, Any],
+    *,
+    children_mode: bool = False,
+    script_mode: bool = False,
+    story_scene_offset: int = 0,
+    story_total_scene_count: Optional[int] = None,
+    strict: bool = True,
+) -> Dict[str, Any]:
+    """Reject stories that are technically complete but not watchable."""
+    scenes = storyboard.get("scenes") or []
+    total = len(scenes)
+    is_complete_story = _is_complete_story_range(story_scene_offset, total, story_total_scene_count)
+    if script_mode or not is_complete_story or total < 1:
+        storyboard["story_engagement_audit"] = {"status": "skipped"}
+        return storyboard
+
+    texts = [_scene_story_text(scene) for scene in scenes]
+    first_text = " ".join(texts[: max(1, min(total, max(1, int(total * 0.30))))])
+    final_text = texts[-1]
+    whole = " ".join(texts)
+
+    active_scene_count = sum(1 for text in texts if _has_any(text, _CHANGE_TERMS))
+    flat_scene_count = sum(1 for text in texts if _has_any(text, _FLAT_TERMS) and not _has_any(text, _CHANGE_TERMS))
+    purposes = [str(scene.get("scene_purpose") or "").strip().lower() for scene in scenes]
+    repeated_purpose_count = len(purposes) - len(set(p for p in purposes if p))
+    min_active = max(1, int(total * (0.55 if children_mode else 0.65)))
+
+    findings = {
+        "hook_or_question": _has_any(first_text, _HOOK_TERMS) or _has_any(whole, _HOOK_TERMS),
+        "scene_progression": active_scene_count >= min_active,
+        "low_flatness": flat_scene_count <= max(1, int(total * 0.20)),
+        "payoff_or_ending": _has_any(final_text, _PAYOFF_TERMS),
+    }
+    if children_mode:
+        # Kids content should still have curiosity, a gentle problem, attempts, and a warm payoff.
+        findings["safe_child_progress"] = _has_any(whole, ("mencoba", "belajar", "menolong", "bergantian", "bersama", "berhasil", "pelajaran", "try", "learn", "help"))
+
+    audit = {
+        "status": "passed" if all(findings.values()) else "failed",
+        "active_scene_count": active_scene_count,
+        "flat_scene_count": flat_scene_count,
+        "repeated_purpose_count": repeated_purpose_count,
+        "purpose_variety": repeated_purpose_count <= max(1, int(total * 0.45)),
+        **findings,
+    }
+    storyboard["story_engagement_audit"] = audit
+    if strict and not all(findings.values()):
+        missing = ", ".join(key for key, ok in findings.items() if not ok)
+        raise ValueError(
+            "Storyboard ditolak sebelum render: kualitas cerita belum cukup menarik "
+            f"({missing}). Setiap durasi wajib punya hook, progres scene, sebab-akibat, dan payoff."
+        )
+    return storyboard
+
+
+def _quality_audit_failures(storyboard: Dict[str, Any]) -> List[str]:
+    failures = []
+    for key in ("story_engagement_audit", "dramatic_arc_audit", "story_part_boundary_audit"):
+        audit = storyboard.get(key) or {}
+        if audit.get("status") == "failed":
+            missing = [name for name, value in audit.items() if isinstance(value, bool) and not value]
+            failures.extend(missing or [key])
+    return list(dict.fromkeys(failures))
+
+
+def _repair_storyboard_quality(
+    storyboard: Dict[str, Any],
+    *,
+    premise: str,
+    target_lang: str,
+    scene_count: int,
+    fixed_scene_duration: Optional[int],
+    children_mode: bool,
+    script_mode: bool,
+    story_scene_offset: int,
+    story_total_scene_count: int,
+    generator=None,
+) -> Dict[str, Any]:
+    """Ask the text model to doctor a weak storyboard before giving up."""
+    if script_mode:
+        return storyboard
+    generator = generator or generate_text
+    first_pass = _complete_storyboard_scene_fields(storyboard)
+    first_pass = _audit_story_engagement_quality(
+        first_pass,
+        children_mode=children_mode,
+        script_mode=script_mode,
+        story_scene_offset=story_scene_offset,
+        story_total_scene_count=story_total_scene_count,
+        strict=False,
+    )
+    first_pass = _audit_dramatic_arc(
+        first_pass,
+        children_mode=children_mode,
+        script_mode=script_mode,
+        story_scene_offset=story_scene_offset,
+        story_total_scene_count=story_total_scene_count,
+        strict=False,
+    )
+    first_pass = _audit_story_part_boundary(
+        first_pass,
+        children_mode=children_mode,
+        script_mode=script_mode,
+        story_scene_offset=story_scene_offset,
+        story_total_scene_count=story_total_scene_count,
+        strict=False,
+    )
+    failures = _quality_audit_failures(first_pass)
+    if not failures:
+        return first_pass
+
+    scenes_payload = json.dumps(first_pass.get("scenes") or [], ensure_ascii=False)[:70000]
+    characters_payload = json.dumps(first_pass.get("characters") or [], ensure_ascii=False)[:20000]
+    mode_note = (
+        "Konten anak: jangan menambah konflik dewasa, kekerasan, ancaman, atau rasa takut. Perbaiki dengan "
+        "rasa penasaran, hambatan ringan, usaha mencoba, kerja sama, pembelajaran, dan payoff hangat."
+        if children_mode else
+        "Drama/cerita umum: wajib tambah hook, konflik, stakes, eskalasi, krisis, klimaks, dan ending yang terasa terbayar."
+    )
+    repair_prompt = f"""
+Anda adalah script doctor dan editor retensi penonton.
+Storyboard berikut jumlah scene-nya benar, tetapi audit kualitas menemukan kelemahan: {', '.join(failures)}.
+
+TUGAS:
+- Tulis ulang scene yang lemah saja secara kreatif, tapi pertahankan tepat {scene_count} scene.
+- Jangan mengubah medium visual, jumlah scene, karakter utama, target bahasa, durasi scene, atau urutan besar premis.
+- Setiap scene wajib punya sebab-akibat dari scene sebelumnya dan memaksa scene berikutnya.
+- Scene pertama wajib memberi alasan menonton.
+- Jika ini part terakhir/cerita lengkap, scene terakhir wajib memberi payoff/ending yang jelas.
+- Jika masih ada part lanjutan, scene terakhir wajib menyisakan tekanan/open-loop/cliffhanger dan DILARANG terasa seperti ending final.
+- Untuk 10 detik, jangan membuat adegan kosong. Isi dengan aksi, reaksi, bukti, dialog pendek, atau keputusan.
+- {mode_note}
+
+PREMIS:
+{premise}
+
+TARGET BAHASA: {target_lang}
+FIXED DURATION: {fixed_scene_duration or 'ikuti duration yang sudah ada'}
+KARAKTER:
+{characters_payload}
+
+SCENES SAAT INI:
+{scenes_payload}
+
+OUTPUT HANYA JSON VALID dengan struktur:
+{{"film_title":"...", "logline":"...", "emotional_arc":"...", "characters":[...], "scenes":[...]}}
+"""
+    result = generator(repair_prompt, json_output=True)
+    repaired = json.loads(_extract_json_text(result.text))
+    if not repaired.get("characters"):
+        repaired["characters"] = first_pass.get("characters") or []
+    if not repaired.get("film_title"):
+        repaired["film_title"] = first_pass.get("film_title") or "Film Sinematik"
+    scenes = repaired.get("scenes") or []
+    if len(scenes) != scene_count:
+        raise ValueError(f"Repair storyboard menghasilkan {len(scenes)} scene, seharusnya {scene_count}.")
+    for local_index, scene in enumerate(scenes, start=1):
+        scene["scene_number"] = story_scene_offset + local_index
+        if fixed_scene_duration:
+            scene["duration"] = fixed_scene_duration
+    return _complete_storyboard_scene_fields(repaired)
 
 
 _children_variation_lock = threading.Lock()
@@ -148,26 +586,24 @@ def format_auto_art_direction(direction: Dict[str, str]) -> str:
     )
 
 
-ADULT_ACTION_RULES = """ATURAN KEPADATAN AKSI (WAJIB — INI YANG MEMBUAT CERITA TIDAK MEMBOSANKAN):
+ADULT_ACTION_RULES = """ATURAN KEPADATAN AKSI SINEMATIK (WAJIB — INI YANG MEMBUAT CERITA HIDUP & MENGIKAT):
 1. **Setiap adegan WAJIB mengubah situasi.** Di akhir adegan harus ada sesuatu yang berbeda dari awalnya:
-   informasi baru terbongkar, konflik naik satu tingkat, keputusan diambil, atau hubungan antar tokoh berubah.
+   informasi baru terbongkar, tensi/hubungan bergeser, keputusan diambil, atau anomali baru terungkap.
    Jika sebuah adegan bisa dihapus tanpa mengubah cerita, adegan itu SALAH dan harus dirancang ulang.
-2. **DILARANG adegan "cuma jalan".** Tokoh berjalan, menatap ke kejauhan, memandang kota, menyesap kopi,
-   atau memasuki ruangan TIDAK boleh menjadi isi utama sebuah adegan. Aktivitas semacam itu hanya boleh
-   menjadi latar sambil tokoh melakukan aksi dramatis yang sesungguhnya.
-3. **Mulai dari tengah aksi (start late, end early).** Buang basa-basi pembuka. Adegan dimulai tepat saat
-   konflik sudah berjalan, dan dipotong tepat setelah titik baliknya — jangan menunggu tokoh datang lalu duduk.
+2. **DILARANG adegan statis / kosong tanpa makna.** Tokoh berjalan, menatap ke kejauhan, atau berada di ruangan
+   TIDAK boleh hampa. Aktivitas semacam itu wajib memuat ketegangan terselubung, pencarian petunjuk, atau subteks emosi.
+3. **Mulai dari aksi termotivasi (start with intent, end with impact).** Buang basa-basi kosong. Setiap adegan
+   memiliki tujuan dramatis yang jelas dan dipotong tepat setelah titik reaksi atau perubahannya.
 3a. **Khusus adegan 10 detik, gunakan 4–6 variasi sudut kamera bertimestamp (Multi-Angle Shot Progression):**
    Rancang 4 hingga 6 perubahan angle sinematik bertahap (seperti Low Angle Close Up -> Medium Wide -> Over-The-Shoulder / Macro Detail -> Medium Close -> Wide Ending Shot).
    Setiap sub-shot memuat framing dan aksi fisik berbeda agar visual video tidak monoton di satu angle saja.
    Isi rincian ini di field `shot_flow` dan rangkai instruksi transisi kameranya ke dalam `prompt_for_flow`.
    Jika ada dialog, wajib minimal DUA giliran bicara pendek yang dipisahkan reaksi fisik/counter-action.
-4. **Adegan pertama WAJIB langsung menyodorkan konflik atau pertanyaan besar** dalam 2 detik pertama.
-   DILARANG membuka film dengan establishing shot kota, gedung, atau tokoh berjalan tanpa masalah.
-5. **Maksimal SATU establishing shot** di seluruh film, itu pun wajib memuat aksi dramatis di dalamnya.
-6. Field `action_summary` WAJIB memuat kata kerja aksi konkret (menampar, merebut, membanting, menuduh,
-   membongkar, mengusir, menangis, berteriak) — bukan kata kerja pasif seperti "terlihat", "berada",
-   "menikmati", "berjalan menuju", atau "memandangi"."""
+4. **Adegan pembuka (Scene 1) memicu rasa penasaran & empati**:
+   - Untuk cerita multi-scene (>= 5 scene), bangun suasana atmosferik, interaksi wajar, dan ketegangan halus/misteri (DILARANG langsung teriak/menampar tanpa konteks).
+   - Untuk cerita ultra-pendek (1-4 scene), gunakan hook instan / in medias res yang memikat.
+5. **Maksimal SATU establishing shot** di seluruh film, itu pun wajib memuat aksi dramatis/subjek penting di dalamnya.
+6. Field `action_summary` WAJIB memuat kata kerja aksi konkret dan ekspresif (misal: menatap dingin, menyembunyikan surat, menyodorkan kontrak, melangkah menantang, membongkar bukti, merangkul haru, berbisik tegas) — bukan kata kerja pasif hampa seperti "berada di kamar" atau "menikmati pemandangan"."""
 
 CHILDREN_ACTION_RULES = """ATURAN CERITA ANAK (WAJIB — MENGGANTIKAN ATURAN KONFLIK DEWASA):
 2. **DILARANG KERAS**: kekerasan sekecil apa pun (memukul, menampar, mendorong), pengkhianatan, fitnah,
@@ -788,6 +1224,107 @@ OUTPUT WAJIB FORMAT JSON VALID:
         return normalize_youtube_seo_kit(fallback, film_title, premise, aspect_ratio=aspect_ratio)
 
 
+def _extend_storyboard_scenes(
+    storyboard: Dict[str, Any],
+    target_count: int,
+    premise: str,
+    target_lang: str = "Indonesia",
+    seed: int = 100000,
+    fixed_scene_duration: Optional[int] = None,
+    generator=None,
+) -> Dict[str, Any]:
+    """Seamlessly generate remaining scenes when an AI provider returns fewer scenes than requested."""
+    if generator is None:
+        generator = generate_text
+
+    scenes = storyboard.get("scenes") or []
+    if len(scenes) >= target_count or not scenes:
+        return storyboard
+
+    max_attempts = 4
+    attempt = 0
+    while len(scenes) < target_count and attempt < max_attempts:
+        attempt += 1
+        missing_count = target_count - len(scenes)
+        batch_size = min(missing_count, 20)
+        start_idx = len(scenes) + 1
+        end_idx = len(scenes) + batch_size
+        last_scene = scenes[-1]
+        film_title = storyboard.get("film_title") or "Film Sinematik"
+
+        continuation_prompt = f"""
+Anda adalah Sutradara Film AI Sinematik Kelas Dunia.
+Lanjutkan pembuatan adegan untuk film "{film_title}".
+Saat ini sudah ada {len(scenes)} adegan. Anda WAJIB menghasilkan TEPAT {batch_size} adegan berikutnya (Scene {start_idx} sampai Scene {end_idx}) untuk melengkapi target {target_count} scene.
+
+KONTEKS CERITA:
+- Premis: {premise}
+- Bahasa Utama: {target_lang}
+- Karakter & Seeds: {json.dumps(storyboard.get('characters', []), ensure_ascii=False)}
+- Adegan Terakhir Saat Ini (Scene {len(scenes)}):
+  * Judul: {last_scene.get('title')}
+  * Aksi: {last_scene.get('action_summary')}
+  * End State: {last_scene.get('end_state')}
+  * Prompt Terakhir: {last_scene.get('prompt_for_flow')}
+
+TUGAS MUTLAK:
+Hasilkan TEPAT {batch_size} adegan berikutnya (Scene {start_idx} s/d {end_idx}) yang melanjutkan alur cerita dari Scene {len(scenes)} menuju resolusi/klimaks.
+Pertahankan format JSON LENGKAP yang identik. Setiap scene WAJIB mengisi semua field berikut dan tidak boleh
+mengosongkannya: scene_number, title, scene_purpose, activity, expression, visual_composition,
+transition_bridge, shot_type, camera_movement, action_summary, narration_id, text_overlay,
+prompt_for_flow, shot_flow (3-6 shot bertimestamp), audio_blueprint, dialogue,
+characters_in_scene, start_state, end_state, lighting_mood, dan duration.
+
+OUTPUT WAJIB FORMAT JSON VALID (HANYA JSON):
+{{
+  "scenes": [
+    ... {batch_size} objek adegan berurutan ...
+  ]
+}}
+"""
+        try:
+            res = generator(continuation_prompt, json_output=True)
+            parsed = json.loads(_extract_json_text(res.text))
+            new_scenes = parsed.get("scenes") or []
+            if not new_scenes:
+                break
+            for s in new_scenes:
+                s["scene_number"] = len(scenes) + 1
+                scenes.append(s)
+                if len(scenes) >= target_count:
+                    break
+        except Exception as err:
+            log.warning("Gagal melanjutkan batch scene (attempt %d): %s", attempt, err)
+            break
+
+    # Re-calculate cumulative time_range and clamp
+    scenes = scenes[:target_count]
+    cum_sec = 0
+    for idx, s in enumerate(scenes, 1):
+        s["scene_number"] = idx
+        dur = int(s.get("duration") or (fixed_scene_duration or 10))
+        start_m, start_s = divmod(cum_sec, 60)
+        end_m, end_s = divmod(cum_sec + dur, 60)
+        s["time_range"] = f"{start_m}:{start_s:02d}–{end_m}:{end_s:02d}"
+        cum_sec += dur
+
+    storyboard["scenes"] = scenes
+    return _complete_storyboard_scene_fields(storyboard)
+
+
+def _normalize_duration_seconds(value):
+    """Accept numeric values and UI labels such as '10 seconds' safely."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return max(1, int(value))
+    import re
+    match = re.search(r"\d+(?:[.,]\d+)?", str(value))
+    if not match:
+        raise ValueError(f"Durasi tidak valid: {value!r}. Gunakan angka detik, misalnya 10.")
+    return max(1, int(float(match.group(0).replace(',', '.'))))
+
+
 def generate_storyboard(
     premise: str,
     image_paths: List[str] = None,
@@ -818,15 +1355,28 @@ def generate_storyboard(
     script_mode: bool = False,
     affiliate_config: Optional[Dict[str, Any]] = None,
     target_lang: str = "",
+    story_total_scene_count: Optional[int] = None,
+    story_scene_offset: int = 0,
+    story_part_number: int = 1,
+    previous_part_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Generate multi-scene structured storyboard JSON using the configured AI providers."""
 
+    fixed_scene_duration = _normalize_duration_seconds(fixed_scene_duration)
+    target_total_duration = _normalize_duration_seconds(target_total_duration)
+
     image_paths = image_paths or []
     affiliate_config = dict(affiliate_config or {})
-    scene_count = max(1, min(60, int(scene_count or 4)))
+    requested_part_scene_count = max(1, min(25, int(scene_count or 4)))
+    story_total_scene_count, story_scene_offset, target_scene_count = _normalize_story_part_request(
+        requested_part_scene_count,
+        story_total_scene_count,
+        story_scene_offset,
+    )
+    scene_count = target_scene_count
     cfg = settings.get_settings()
     seed = character_seed or random.randint(100000, 999999)
-    estimated_duration = target_total_duration or ((fixed_scene_duration or 10) * scene_count)
+    estimated_duration = target_total_duration or ((fixed_scene_duration or 10) * story_total_scene_count)
     creative_brief = dict(creative_brief or {})
     from .ugc_conversion import build_conversion_prompt, normalize_conversion_brief
     ugc_conversion_brief = normalize_conversion_brief(ugc_conversion_brief)
@@ -840,7 +1390,13 @@ def generate_storyboard(
     creative_brief = normalize_creative_brief(
         creative_brief, premise=premise, aspect_ratio=aspect_ratio,
         target_country=target_country, target_lang=target_lang,
-        scene_count=scene_count, duration_seconds=estimated_duration,
+        scene_count=story_total_scene_count, duration_seconds=estimated_duration,
+    )
+    creative_brief = _sync_creative_brief_result(
+        creative_brief,
+        aspect_ratio=aspect_ratio,
+        scene_count=story_total_scene_count,
+        duration_seconds=estimated_duration,
     )
     creative_brief_rules = build_creative_brief_prompt(creative_brief)
     visual_style_contracts = {
@@ -1021,7 +1577,24 @@ DILARANG: photorealistic, cinematic chiaroscuro, dark moody lighting, harsh shad
 anamorphic lens, teal-and-orange grading, human child characters.
 `shot_type` cukup sederhana (Wide Shot / Medium Shot / Close Up) dan gerakan kamera lembut & pelan.
 """ if children_mode else ""
-    action_density_rules = CHILDREN_ACTION_RULES if children_mode else ADULT_ACTION_RULES
+    if children_mode:
+        action_density_rules = CHILDREN_ACTION_RULES
+    else:
+        action_density_rules = build_dynamic_narrative_rules(
+            scene_count=story_total_scene_count,
+            genre=dracin_theme or visual_style or "",
+            premise=premise,
+            target_country=target_country,
+            is_children=False,
+            is_microdrama=microdrama_mode,
+        )
+    story_part_rules = build_story_part_rules(
+        scene_offset=story_scene_offset,
+        part_scene_count=scene_count,
+        total_scene_count=story_total_scene_count,
+        part_number=story_part_number,
+        previous_context=previous_part_context,
+    )
     premise_lower = str(premise or "").lower()
     reading_mode = children_mode and any(token in premise_lower for token in (
         "belajar membaca", "pembaca pemula", "bunyi awal", "huruf vokal", "suku kata",
@@ -1144,6 +1717,7 @@ BAHASA OUTPUT UTAMA: {target_lang} (Semua ringkasan aksi, narasi voiceover, teks
 {duration_rules}
 
 {action_density_rules}
+{story_part_rules}
 {battle_vs_rules}
 
 {microdrama_rules}
@@ -1178,9 +1752,19 @@ rendering technique, bentuk anatomi, material, atau jenis karakter di tengah fil
 {conversion_rules}
 
 ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
+ATURAN GERAK FISIK DAN AKTING (mengalahkan tuntutan variasi kamera):
+{NATURAL_ACTION_RULES}
+Untuk adegan yang memang melibatkan pintu, isi interaction_plan berdasarkan tata ruang; jangan tambahkan
+aksi pintu pada scene lain. Terapkan urutan berikut hanya pada operasi yang diminta:
+{DOOR_INTERACTION_RULES}
+CHARACTER BIBLE: Tetapkan role protagonis/antagonis/pendukung (atau peran non-konflik untuk cerita anak),
+motivasi, hubungan, bahasa tubuh, rentang ekspresi, serta identitas fisik lengkap per tokoh. Antagonis tidak
+harus selalu berteriak atau berwajah marah; tampilkan tujuan dan tekanan melalui akting yang bernuansa.
+Deskripsi harus bisa dipakai membuat sheet: usia, bentuk wajah/mata/hidung/rahang, rambut, postur, proporsi,
+warna kulit, potongan/warna/lapisan pakaian, sepatu dan lokasi aksesori. Hormati wajah referensi pengguna.
 1. **Multi-Character Seed Matrix (Wajib)**: Dukung sampai 10 karakter berbeda dengan menyebutkan Seed ID unik masing-masing (misal: Main Hero Seed `{seed}`, Companion Seed `{seed+101}`, Rival Seed `{seed+202}`). Pertahankan ciri visual wajah dan baju di setiap adegan!
 2. **Dynamic Multi-Angle Camera Choreography (Wajib 100% Variatif Di Setiap Scene)**:
-   - WAJIB gunakan sudut & gerakan kamera yang BERBEDA-BEDA untuk SETIAP adegan!
+   - Variasikan coverage bila termotivasi; kontinuitas kontak tangan, pintu dan tubuh lebih penting daripada variasi!
    - Rotasi bervariasi: `Wide Master Establishing Tracking Shot`, `Extreme Low-Angle Dynamic Hero Shot`, `Over-the-Shoulder (OTS) Medium Close-Up`, `High-Angle Birdseye Drone View`, `Dutch-Angle High Action Tracking`, `Slow Push-in Tight Close-Up`.
    - Di dalam `prompt_for_flow` SETIAP adegan, WAJIB secara eksplisit diawali dengan klausa tipe kamera sinematik tersebut! (contoh: "A 10-second Over-The-Shoulder Close-Up Shot...", "A 10-second Low Angle Dynamic Tracking Shot...").
 3. **Seamless Visual Continuation Antarvideo (Wajib)**: Adegan $N+1$ melanjutkan posisi fisik, properti,
@@ -1196,9 +1780,9 @@ ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
 4a. **AKSI HARUS TERJADI DI DALAM KLIP (Wajib)**: `prompt_for_flow` WAJIB mendeskripsikan gerakan yang benar-benar
    berlangsung selama klip, bukan pose diam atau tablo. Tuliskan progresi jelas memakai penanda urutan waktu
    seperti "begins by...", "then...", "and finally..." sehingga terlihat perubahan dari awal ke akhir klip.
-   Contoh BENAR: "begins gripping the envelope, then slams it onto the table, and finally turns away in tears."
+   Contoh BENAR: "begins clutching the sealed letter, slowly steps closer to the mahogany desk, and locks eyes with an unwavering cold stare before turning away."
    Contoh SALAH: "stands in the ballroom looking sad" (statis, tidak ada perubahan — DILARANG).
-   Sertakan kata kerja gerak eksplisit (slams, snatches, shoves, storms out, collapses, spins around, lunges). Jika UGC Mode aktif, akhiri prompt dengan Aesthetic Add-On yang 100% cocok dengan tema (Girly/Pastel untuk Beauty, Corporate Luxury untuk Working Girl, Travel Vacation untuk Travel, dll.).
+   Sertakan kata kerja gerak eksplisit yang termotivasi (steps closer, sets down firmly, turns away, unrolls scroll, grips tightly, confronts, retreats, slams, snatches, shoves, collapses, lunges). Jika UGC Mode aktif, akhiri prompt dengan Aesthetic Add-On yang 100% cocok dengan tema (Girly/Pastel untuk Beauty, Corporate Luxury untuk Working Girl, Travel Vacation untuk Travel, dll.).
 4b. **BAHASA AUDIO/DIALOG VIDEO (WAJIB)**: Jika karakter berbicara, WAJIB tulis dialog ASLI dalam bahasa {target_lang} di dalam `prompt_for_flow`. (TERJEMAHKAN KE {target_lang} SECARA MUTLAK!).
 4c. **Tanpa Logo/Watermark (Wajib)**: Dilarang ada logo/watermark di `prompt_for_flow`.
 4d. **FLOW PROMPT BLUEPRINT — DETAIL YANG DAPAT DIEKSEKUSI (WAJIB)**:
@@ -1360,7 +1944,11 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "seed": {seed},
       "description": "Deskripsi visual lengkap",
       "visual_signature": "Kombinasi pakaian, aksesori, rambut/usia/ciri wajah yang permanen dan unik",
-      "vocal_signature": "Warna suara, timbre, pitch, usia vokal, aksen, dan ritme bicara yang dikunci mati",
+      "role": "protagonis / antagonis / pendukung / mentor / peran sesuai cerita",
+      "motivation": "Tujuan konkret, hambatan dan alasan bertindak",
+      "body_language": "Postur dasar, kebiasaan gerak dan respons saat tertekan yang natural",
+      "expression_range": "Netral, menyimak, emosi tertahan, dan reaksi intens sesuai karakter",
+      "vocal_signature": "Identitas timbre, usia vokal dan aksen konsisten; pitch, ritme, napas dan volume fleksibel sesuai emosi",
       "relationship_to_others": "Hubungan, tingkat keakraban, status sosial, dan sapaan natural kepada karakter lain"
     }}
   ],
@@ -1376,6 +1964,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "expression": "Ekspresi awal, pemicu, lalu perubahan ekspresi yang terlihat",
       "visual_composition": "Posisi model, produk, foreground/background, eyeline, dan ruang negatif",
       "spatial_continuity": "Kiri/kanan frame, arah hadap/gerak, tangan aktif, orientasi dan urutan kontak pintu/kendaraan/properti",
+      "interaction_plan": {{"object": "Properti aktif saja, kosong bila tidak ada", "initial_state": "Keadaan dan orientasi awal", "actor_side": "Sisi fisik aktor dan kamera", "active_hand": "Tangan yang dipakai", "mechanism": "Engsel/handle/arah ayun atau geser bila relevan", "contact_sequence": "Jangkau, genggam, gerak, ruang bebas tubuh, pelepasan sesuai aksi", "final_state": "Keadaan akhir yang terlihat"}},
       "shot_flow": [
         {{"time": "0-2s", "angle": "Low Angle Close Up", "description": "Aksi pembuka karakter dan ekspresi natural"}},
         {{"time": "2-4s", "angle": "Medium Wide Shot", "description": "Interaksi dengan ruang dan lingkungan sekitar"}},
@@ -1398,7 +1987,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
       "dialogue": [{{"speaker_id": 1, "line": "Kalimat persis", "screen_position": "left/center/right"}}],
       "start_state": "Posisi tubuh, tangan, properti, arah pandang, dan lokasi pada frame awal",
       "end_state": "Posisi tubuh, tangan, properti, arah pandang, dan lokasi pada frame akhir",
-      "prompt_for_flow": "One 130-220 word English production paragraph with cinematic 4-6 multi-angle camera cut progression: opening angle; full visible character identity and wardrobe; ordered physical sub-shot actions; exact final frame status; lighting and camera movement; voice identity locked without drift",
+      "prompt_for_flow": "English production paragraph: explicit opening state, visible identity and wardrobe, one main action with readable physical contact, motivated coverage, natural exact dialogue, and final continuity frame. Retain one continuous view during door/contact operations; no forced cut count or constant gestures.",
       "text_overlay": "Panduan teks editing 2-5 kata dalam bahasa {target_lang}; jangan minta Flow merender teks ini di dalam prompt_for_flow",
       "camera_movement": "Pergerakan kamera saja, terpisah dari shot_type (misal: Slow push-in, Handheld tracking, Static locked-off)",
       "lighting_mood": "Mood pencahayaan (misal: Soft natural lighting, cinematic bokeh lights)",
@@ -1426,16 +2015,68 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
 
     last_err = None
     try:
-        # Gemini receives reference images; OpenAI-compatible fallbacks retain the
-        # complete textual direction when their adapter drops local PIL objects.
         result = generate_text(user_contents, json_output=True)
         text_resp = _extract_json_text(result.text)
         storyboard = json.loads(text_resp)
         actual_scene_count = len(storyboard.get("scenes") or [])
-        if actual_scene_count != scene_count:
-            raise ValueError(
-                f"Provider menghasilkan {actual_scene_count} scene, seharusnya tepat {scene_count} scene."
+        if 0 < actual_scene_count < target_scene_count:
+            log.info(
+                "Model menghasilkan %d dari %d scene. Melanjutkan sisa scene secara otomatis...",
+                actual_scene_count, target_scene_count
             )
+            storyboard = _extend_storyboard_scenes(
+                storyboard=storyboard,
+                target_count=target_scene_count,
+                premise=premise,
+                target_lang=target_lang,
+                seed=seed,
+                fixed_scene_duration=fixed_scene_duration,
+            )
+            actual_scene_count = len(storyboard.get("scenes") or [])
+
+        if actual_scene_count > target_scene_count:
+            storyboard["scenes"] = (storyboard.get("scenes") or [])[:target_scene_count]
+            actual_scene_count = len(storyboard.get("scenes") or [])
+
+        if actual_scene_count != target_scene_count:
+            raise ValueError(
+                f"Provider menghasilkan {actual_scene_count} scene, seharusnya tepat {target_scene_count} scene."
+            )
+        for local_index, scene in enumerate(storyboard.get("scenes") or [], start=1):
+            scene["scene_number"] = story_scene_offset + local_index
+        storyboard = _complete_storyboard_scene_fields(storyboard)
+        storyboard = _repair_storyboard_quality(
+            storyboard,
+            premise=premise,
+            target_lang=target_lang,
+            scene_count=target_scene_count,
+            fixed_scene_duration=fixed_scene_duration,
+            children_mode=children_mode,
+            script_mode=script_mode,
+            story_scene_offset=story_scene_offset,
+            story_total_scene_count=story_total_scene_count,
+        )
+        storyboard = _audit_story_engagement_quality(
+            storyboard,
+            children_mode=children_mode,
+            script_mode=script_mode,
+            story_scene_offset=story_scene_offset,
+            story_total_scene_count=story_total_scene_count,
+        )
+        storyboard = _audit_dramatic_arc(
+            storyboard,
+            children_mode=children_mode,
+            script_mode=script_mode,
+            story_scene_offset=story_scene_offset,
+            story_total_scene_count=story_total_scene_count,
+        )
+        storyboard = _audit_story_part_boundary(
+            storyboard,
+            children_mode=children_mode,
+            script_mode=script_mode,
+            story_scene_offset=story_scene_offset,
+            story_total_scene_count=story_total_scene_count,
+        )
         storyboard["raw_response"] = text_resp
         storyboard["characters"] = ensure_unique_character_signatures(storyboard.get("characters") or [])
         storyboard["character_seed"] = seed
@@ -1462,6 +2103,12 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
             storyboard["affiliate_product"] = affiliate_config
         storyboard["generated_via"] = result.provider
         storyboard["generated_model"] = result.model
+        storyboard["story_parts"] = _story_parts_meta(
+            story_part_number=story_part_number,
+            story_scene_offset=story_scene_offset,
+            target_scene_count=target_scene_count,
+            story_total_scene_count=story_total_scene_count,
+        )
         return storyboard
     except Exception as ex:
         last_err = ex
@@ -1473,10 +2120,60 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
         try:
             storyboard = json.loads(_extract_json_text(web_txt))
             actual_scene_count = len(storyboard.get("scenes") or [])
-            if actual_scene_count != scene_count:
-                raise ValueError(
-                    f"Fallback menghasilkan {actual_scene_count} scene, seharusnya tepat {scene_count} scene."
+            if 0 < actual_scene_count < target_scene_count:
+                storyboard = _extend_storyboard_scenes(
+                    storyboard=storyboard,
+                    target_count=target_scene_count,
+                    premise=premise,
+                    target_lang=target_lang,
+                    seed=seed,
+                    fixed_scene_duration=fixed_scene_duration,
                 )
+                actual_scene_count = len(storyboard.get("scenes") or [])
+
+            if actual_scene_count > target_scene_count:
+                storyboard["scenes"] = (storyboard.get("scenes") or [])[:target_scene_count]
+                actual_scene_count = len(storyboard.get("scenes") or [])
+
+            if actual_scene_count != target_scene_count:
+                raise ValueError(
+                    f"Fallback menghasilkan {actual_scene_count} scene, seharusnya tepat {target_scene_count} scene."
+                )
+            for local_index, scene in enumerate(storyboard.get("scenes") or [], start=1):
+                scene["scene_number"] = story_scene_offset + local_index
+            storyboard = _complete_storyboard_scene_fields(storyboard)
+            storyboard = _repair_storyboard_quality(
+                storyboard,
+                premise=premise,
+                target_lang=target_lang,
+                scene_count=target_scene_count,
+                fixed_scene_duration=fixed_scene_duration,
+                children_mode=children_mode,
+                script_mode=script_mode,
+                story_scene_offset=story_scene_offset,
+                story_total_scene_count=story_total_scene_count,
+            )
+            storyboard = _audit_story_engagement_quality(
+                storyboard,
+                children_mode=children_mode,
+                script_mode=script_mode,
+                story_scene_offset=story_scene_offset,
+                story_total_scene_count=story_total_scene_count,
+            )
+            storyboard = _audit_dramatic_arc(
+                storyboard,
+                children_mode=children_mode,
+                script_mode=script_mode,
+                story_scene_offset=story_scene_offset,
+                story_total_scene_count=story_total_scene_count,
+            )
+            storyboard = _audit_story_part_boundary(
+                storyboard,
+                children_mode=children_mode,
+                script_mode=script_mode,
+                story_scene_offset=story_scene_offset,
+                story_total_scene_count=story_total_scene_count,
+            )
             storyboard["raw_response"] = web_txt
             storyboard["characters"] = ensure_unique_character_signatures(storyboard.get("characters") or [])
             storyboard["character_seed"] = seed
@@ -1502,6 +2199,12 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
             if affiliate_config.get("enabled"):
                 storyboard["affiliate_product"] = affiliate_config
             storyboard["generated_via"] = "web2api_fallback"
+            storyboard["story_parts"] = _story_parts_meta(
+                story_part_number=story_part_number,
+                story_scene_offset=story_scene_offset,
+                target_scene_count=target_scene_count,
+                story_total_scene_count=story_total_scene_count,
+            )
             log.info("Storyboard berhasil dibuat via fallback Web2API (%d adegan, seed %d)!",
                      len(storyboard.get("scenes", [])), seed)
             return storyboard

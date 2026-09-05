@@ -27,13 +27,13 @@ DEFAULT_CHARACTER_SHEET_TEMPLATE = """3×3 CHARACTER CONTACT SHEET MASTER PROMPT
 
 Ultra-Photorealistic Studio Edition • 9-Panel Identity Lock • AI Optimized
 
-Create an ultra-photorealistic 3×3 Character Contact Sheet for {char_name} (Character Seed: {char_seed}): {char_desc}.
+Create an ultra-photorealistic 3×3 character identity reference sheet for this person: {char_desc}. The seed value is internal metadata only and must not appear visually.
 
 Transform the subject into a consistent, definitive character design while strictly preserving and locking identity, bone structure, facial proportions, skin tone, hairstyle, outfit, silhouette, and recognizable visual language across all 9 panels.
 
 COMPOSITION & LAYOUT:
 One single vertical 9:16 image containing a clean, evenly arranged 3×3 contact sheet (9 panels total).
-Title bar at top: "CHARACTER SHEET: {char_name}" with subtle seed tag.
+NO title bar, NO visible name, NO seed text, NO labels, NO captions, NO typography anywhere in the image.
 All 9 panels must be clearly separated by thin, clean divider lines on a neutral studio background with subtle realistic shadows. Balanced margins, professional editorial portfolio presentation.
 Consistent lighting, color, wardrobe, styling, and character identity across all panels. Each panel should feel like a different camera capture of the exact same person in the same studio session.
 
@@ -50,7 +50,7 @@ Every panel captures a distinct camera angle of the exact same person, with no i
   Panel 9: Full-body view (complete head-to-toe stance showing full costume silhouette, shoes, and authentic proportions)
 
 IDENTITY LOCK (HIGHEST PRIORITY):
-Preserve the exact identity of {char_name} across all 9 panels:
+Preserve the exact identity across all 9 panels:
 • Identical face structure and bone structure
 • Identical facial proportions
 • Identical skin tone and natural realistic skin texture
@@ -63,7 +63,7 @@ PHOTOGRAPHY & RENDER STYLE:
 Ultra-photorealistic editorial photography | 85mm lens equivalent | RAW photography look | Extremely high detail and optical sharpness | Natural realistic skin texture with visible skin pores | Controlled professional studio lighting | Neutral studio background | Subtle realistic shadows | Accurate anatomy and natural fabric behavior.
 
 ANTI-DRIFT & NEGATIVE PROMPT:
-Do NOT change the person's identity, alter facial structure, beautify or airbrush the face, smooth skin unnaturally, change skin tone, redesign facial features, change body proportions, create different people, repeat identical camera angles, stylize into cartoon or anime, introduce inconsistent wardrobe or changing accessories, recoloured clothing, cluttered layout, oversized text, watermark, blurry textures, AI artifacts, extra limbs, distorted anatomy."""
+Do NOT change the person's identity, alter facial structure, beautify or airbrush the face, smooth skin unnaturally, change skin tone, redesign facial features, change body proportions, create different people, repeat identical camera angles, stylize into cartoon or anime, introduce inconsistent wardrobe or changing accessories, recoloured clothing, cluttered layout, visible text, title bars, captions, name tags, seed numbers, labels, watermark, blurry textures, AI artifacts, extra limbs, distorted anatomy."""
 
 
 DEFAULT_SCENE_STORYBOARD_TEMPLATE = """SCENE STORYBOARD CONTACT SHEET (4-6 MULTI-ANGLE SHOT FLOW)
@@ -71,19 +71,19 @@ DEFAULT_SCENE_STORYBOARD_TEMPLATE = """SCENE STORYBOARD CONTACT SHEET (4-6 MULTI
 Professional cinematic film pre-visualization contact sheet for ONE scene (0–10s), laid out as a
 clean editorial grid of 4 to 6 storyboard panels showing the precise camera angle progression:
 
-SCENE {scene_number}: {scene_title} | DURATION: {scene_duration} seconds
+Create visual panels only. Do not render any title, scene number, duration, caption, label, typography, or readable text.
+Scene number for planning only: {scene_number}. Scene title for planning only: {scene_title}. Duration for planning only: {scene_duration} seconds.
 ACTION & BEAT: {scene_action}
 ESTABLISHED CAMERA & MOVEMENT: {camera_movement}
 
 GRID LAYOUT — 4 TO 6 MULTI-ANGLE SHOT PROGRESSION (0-10s):
-Header reading: "SCENE {scene_number} – Multi-Angle Shot Flow (0–{scene_duration}s)"
-Followed by a clean 2×3 or 1×4 storyboard panel grid with thin borders and distinct photographic camera angles:
+A clean 2×3 or 1×4 storyboard panel grid with thin borders and distinct photographic camera angles:
   • PANEL S1 (0–2s): Low Angle Close Up — opening physical action & natural candid expression.
   • PANEL S2 (2–4s): Medium Wide Shot — interaction with immediate environment, space & blocking.
   • PANEL S3 (4–6s): Extreme Close-Up / Macro Detail or Over-The-Shoulder — key object focus, hand contact or gaze shift.
   • PANEL S4 (6–8s): Medium Close / Dynamic Angle — reaction beat, emotion peak or decisive turning point.
   • PANEL S5 (8–10s): Wide Shot / Final Resolution Look — concluding framing, open relaxed or cliffhanger posture.
-Each panel features a clean dark caption bar below it showing: "[Shot Number] (Timecode) [Camera Angle] — [Brief Shot Description]".
+No caption bars, no shot labels, no timecode text, and no readable writing inside any panel.
 
 CHARACTER LOCK (HIGHEST PRIORITY):
 The attached character sheet images define exactly who these people are. Reproduce those exact
@@ -97,11 +97,35 @@ between panels following the {scene_duration}-second timeline. Art direction: {a
 
 RENDER STYLE:
 Ultra photorealistic editorial contact sheet | High-end cinematic cinematography | Natural skin pores and textures |
-Authentic fabric folds | Believable depth of field | Cohesive color grading | Crisp clean typography.
+Authentic fabric folds | Believable depth of field | Cohesive color grading | no typography or rendered text.
 
 NEGATIVE PROMPT:
 Different people in different panels, facial drift, morphing clothing, cartoon/anime style unless specified,
-inconsistent lighting, comic speech bubbles, oversized floating text, blurry textures, AI artifacts, distorted hands."""
+inconsistent lighting, comic speech bubbles, oversized floating text, captions, name tags, seed text, readable writing, blurry textures, AI artifacts, distorted hands."""
+
+
+def _migrate_textful_reference_templates(config: dict) -> dict:
+    """Replace old saved sheet templates that asked the model to render labels/seed text."""
+    char_template = str(config.get("character_seed_template") or "")
+    if (
+        "Title bar at top" in char_template
+        or "subtle seed tag" in char_template
+        or "Character Seed:" in char_template
+        or "The seed value is internal metadata only" not in char_template
+        or "Character Name:" in char_template
+    ):
+        config["character_seed_template"] = DEFAULT_CHARACTER_SHEET_TEMPLATE
+
+    scene_template = str(config.get("scene_storyboard_template") or "")
+    if (
+        "Header reading" in scene_template
+        or "caption bar" in scene_template
+        or "Title bar reading" in scene_template
+        or "duration tag" in scene_template
+        or "No title bar, no scene title text, no time or duration text" not in scene_template
+    ):
+        config["scene_storyboard_template"] = DEFAULT_SCENE_STORYBOARD_TEMPLATE
+    return config
 
 
 def get_settings() -> dict:
@@ -155,6 +179,7 @@ def get_settings() -> dict:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 saved = json.load(f)
                 defaults.update(saved)
+                defaults = _migrate_textful_reference_templates(defaults)
                 # Alibaba/Qwen was removed in favor of xAI/Grok. Never retain its
                 # credentials invisibly or leave an invalid provider in failover order.
                 for old_key in (
@@ -169,6 +194,7 @@ def get_settings() -> dict:
                 ]
         except Exception:
             pass
+    defaults = _migrate_textful_reference_templates(defaults)
     return defaults
 
 
@@ -212,7 +238,7 @@ def get_flow_project_id() -> str:
 
 CHILDREN_CHARACTER_SHEET_TEMPLATE = """CHARACTER SHEET — 3D CARTOON ANIMAL FOR PRESCHOOL SERIES
 
-Create a bright, friendly character sheet for {char_name} (Character Seed: {char_seed}): {char_desc}.
+Create a bright, friendly character identity reference sheet for this character: {char_desc}. The seed value is internal metadata only and must not appear visually.
 
 CHARACTER TYPE (MANDATORY):
 A cute anthropomorphic ANIMAL rendered as a soft 3D cartoon character, in the style of a modern
@@ -221,10 +247,10 @@ Big friendly eyes, soft rounded shapes, chunky proportions, oversized head, smal
 gentle smile, simple colourful outfit. Appealing and huggable, never scary or edgy.
 
 LAYOUT:
-Large "CHARACTER SHEET" title | Character Name: {char_name} | Clean pastel background |
-Turnaround: Front View, Side View, Back View with identical proportions and colours |
-Three expressions: Happy, Curious, Surprised (gentle and friendly, never angry or frightening) |
-Three poses: Standing, Walking, Waving.
+NO title, NO character name text, NO seed text, NO labels, NO captions, NO typography anywhere in the image. Clean pastel background.
+Turnaround: front view, side view, back view with identical proportions and colours.
+Three expressions: happy, curious, surprised (gentle and friendly, never angry or frightening).
+Three poses: standing, walking, waving.
 
 RENDER STYLE:
 Soft 3D cartoon render | Preschool animation style | Bright cheerful colours | Smooth rounded forms |
@@ -234,7 +260,7 @@ Consistent colour palette across every panel.
 NEGATIVE PROMPT:
 Human child, human children, realistic human, photorealistic, scary, creepy, sharp teeth, weapons,
 dark shadows, horror, gore, moody lighting, harsh contrast, complex textures, adult themes,
-inconsistent character design, different colours between panels, cluttered layout."""
+inconsistent character design, different colours between panels, cluttered layout, visible text, title bars, captions, name tags, seed numbers, labels, watermark."""
 
 
 CHILDREN_SCENE_STORYBOARD_TEMPLATE = """SCENE STORYBOARD SHEET — PRESCHOOL 3D CARTOON
@@ -247,12 +273,11 @@ CAMERA: {camera_movement}
 ACTION: {scene_action}
 
 LAYOUT:
-Title bar reading "SCENE {scene_number} - {scene_title}" with a small duration tag.
-Below it, three storyboard panels with thin borders, reading left to right:
-  PANEL 1 "OPENING FRAME" — how the shot begins.
-  PANEL 2 "MID ACTION" — the happy peak of the action above.
-  PANEL 3 "END FRAME" — how the shot resolves.
-A short framing note under each panel.
+No title bar, no scene title text, no time or duration text, no panel labels, no captions, no typography anywhere.
+Three storyboard panels with thin borders, reading left to right visually only:
+  Panel 1: how the shot begins.
+  Panel 2: the happy peak of the action above.
+  Panel 3: how the shot resolves.
 
 CHARACTER LOCK (HIGHEST PRIORITY):
 The attached character sheets define exactly who these characters are. Reproduce those exact

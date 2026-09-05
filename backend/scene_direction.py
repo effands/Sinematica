@@ -46,14 +46,22 @@ def choose_shot_count(scene: Dict[str, Any], prompt: str = "") -> int:
     """Choose 3, 4, or 5 shots from story energy, never by blind randomness."""
     text = " ".join(str(scene.get(k) or "") for k in ("title", "action_summary", "dialogue"))
     text = f"{text} {prompt}".lower()
-    if any(word in text for word in _ACTION_WORDS):
+    # Door/contact actions need readable continuous coverage even in a tense scene.
+    if re.search(r"\b(?:door|doorway|pintu|gerbang)\b", text):
+        return 3
+    if contains_story_terms(text, _ACTION_WORDS):
         return 5
     speech_present = bool(scene.get("dialogue")) or any(
         marker in text for marker in ('"', "speaks", "speaking", "says", "shouts", "berkata", "berbicara")
     )
-    if any(word in text for word in _EMOTIONAL_WORDS) or speech_present:
+    if contains_story_terms(text, _EMOTIONAL_WORDS) or speech_present:
         return 3
     return 4
+
+
+def contains_story_terms(text: str, terms) -> bool:
+    """Match complete words/phrases; wardrobe and forward are not war scenes."""
+    return any(re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, re.I) for term in terms)
 
 
 def timeline_markers(count: int) -> List[str]:

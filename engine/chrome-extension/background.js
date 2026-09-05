@@ -3,7 +3,7 @@
  * Executes API requests natively in tab main world with real reCAPTCHA Enterprise tokens.
  */
 
-importScripts('trpc-response.js', 'flow-tab.js');
+importScripts('trpc-response.js', 'flow-tab.js', 'flow-auth.js');
 
 const API_KEY = 'AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
 
@@ -22,6 +22,8 @@ let reconnectTimer = null;
 let reconnectAttempts = 0;
 let offlineLogged = false;
 let registrationRefreshTimer = null;
+let sessionRecovery = null;
+let lastSessionRecoveryAt = 0;
 
 // Requests Sinematica itself fires also pass through webRequest. Without this guard the
 // schema learner would "learn" from our own rejected guesses instead of from the Flow UI.
@@ -100,11 +102,11 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     if (flowKey !== token) {
       flowKey = token;
       chrome.storage.local.set({ flowKey });
-      console.log('[Sinematica Agent] Captured OAuth Bearer token:', flowKey.slice(0, 20) + '...');
+      console.log('[Sinematica Agent] Captured Flow OAuth session.');
       notifyTokenCaptured();
     }
   },
-  { urls: ['https://aisandbox-pa.googleapis.com/*', 'https://labs.google/*', 'https://flow.google.com/*'] },
+  { urls: ['https://aisandbox-pa.googleapis.com/*', 'https://aisandbox-pa.sandbox.googleapis.com/*', 'https://labs.google/*', 'https://flow.google.com/*'] },
   ['requestHeaders', 'extraHeaders'],
 );
 
@@ -498,6 +500,9 @@ async function notifyRegistration() {
       flowTab = await FlowTab.waitForTabComplete(chrome, flowTab);
     }
     await _detectProjectIdFromTabs(flowTab?.id ?? null);
+    if (!flowKey && flowTab?.id) {
+      await _probeTokenFromTab(flowTab.id);
+    }
   } catch (error) {
     readinessError = error?.message || String(error);
   }
@@ -527,6 +532,57 @@ function notifyTokenCaptured() {
   notifyRegistration();
 }
 
+async function _probeTokenFromTab(tabId) {
+  if (flowKey || !tabId) return flowKey;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const v = localStorage.getItem(localStorage.key(i));
+            if (v && typeof v === 'string' && v.includes('ya29.')) {
+              const m = v.match(/ya29\.[A-Za-z0-9_.~-]+/);
+              if (m && m[0]) return m[0];
+            }
+          }
+          for (let i = 0; i < sessionStorage.length; i++) {
+            const v = sessionStorage.getItem(sessionStorage.key(i));
+            if (v && typeof v === 'string' && v.includes('ya29.')) {
+              const m = v.match(/ya29\.[A-Za-z0-9_.~-]+/);
+              if (m && m[0]) return m[0];
+            }
+          }
+        } catch (_) {}
+        return null;
+      },
+    });
+    const foundToken = results?.[0]?.result;
+    if (foundToken && typeof foundToken === 'string' && !flowKey) {
+      flowKey = foundToken;
+      chrome.storage.local.set({ flowKey });
+      console.log('[Sinematica Agent] Recovered OAuth session from Flow tab.');
+      notifyTokenCaptured();
+      return flowKey;
+    }
+  } catch (_) {}
+  // A logged-in Flow page need not keep its access token in Web Storage or
+  // send an API request while idle. Recover from the existing Google session.
+  if (!flowKey) {
+    if (!sessionRecovery && Date.now() - lastSessionRecoveryAt >= 15000) {
+      lastSessionRecoveryAt = Date.now();
+      sessionRecovery = FlowAuth.recoverSession().finally(() => { sessionRecovery = null; });
+    }
+    const recovered = sessionRecovery ? await sessionRecovery : null;
+    if (recovered && !flowKey) {
+      flowKey = recovered;
+      chrome.storage.local.set({ flowKey });
+      notifyTokenCaptured();
+    }
+  }
+  return flowKey;
+}
 // ─── Native Main World API Request Proxy ───────────────────
 async function handleApiRequest(msg) {
   const { id, endpoint, body, flow_key } = msg;

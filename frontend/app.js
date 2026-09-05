@@ -3,6 +3,7 @@
  */
 
 let currentStoryboard = null;
+let storyPartContinuationRequested = false;
 let currentJobId = null;
 let pollTimer = null;
 let selectedRefFiles = [];
@@ -786,10 +787,32 @@ function showCuteAiLoading(title = '🤖 Gemini AI Memuat Ide...', message = 'Se
   const modal = document.getElementById('aiCuteLoadingModal');
   const titleEl = document.getElementById('aiCuteLoadingTitle');
   const msgEl = document.getElementById('aiCuteLoadingMsg');
+  const barEl = document.getElementById('aiCuteLoadingBar');
+  const progressEl = document.getElementById('aiCuteLoadingProgressText');
 
   if (titleEl) titleEl.textContent = title;
   if (msgEl) msgEl.textContent = message;
+  if (barEl) {
+    barEl.style.width = '45%';
+    barEl.dataset.mode = 'indeterminate';
+  }
+  if (progressEl) progressEl.textContent = 'Sedang diproses…';
   if (modal) modal.classList.add('active');
+}
+
+function setCuteAiSceneProgress(completedScenes, totalScenes, processingPart = false) {
+  const total = Math.max(1, Number(totalScenes) || 1);
+  const completed = Math.max(0, Math.min(total, Number(completedScenes) || 0));
+  const percent = Math.round((completed / total) * 100);
+  const barEl = document.getElementById('aiCuteLoadingBar');
+  const progressEl = document.getElementById('aiCuteLoadingProgressText');
+  if (barEl) {
+    barEl.dataset.mode = 'scene-progress';
+    barEl.style.width = `${percent}%`;
+  }
+  if (progressEl) {
+    progressEl.textContent = `${completed}/${total} scene selesai · ${percent}%${processingPart ? ' · part berikutnya sedang diproses' : ''}`;
+  }
 }
 
 function hideCuteAiLoading() {
@@ -857,10 +880,43 @@ function bindSeoCopyActions(body, kit) {
               <p style="color:#34d399; font-weight:800; font-size:13px; margin:0 0 8px 0;">✅ Cover Thumbnail Berhasil Dibuat di Google Flow!</p>
               ${data.image_url ? `<img src="${data.image_url}" style="max-width:100%; max-height:260px; border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,0.5); margin-bottom:8px;" />` : ''}
               <div>
-                ${data.image_url ? `<a href="${data.image_url}" download="youtube_thumbnail.png" class="btn-primary" style="display:inline-block; text-decoration:none; padding:6px 14px; font-size:12px; font-weight:800;">💾 Download Cover Image</a>` : ''}
+                ${data.image_url ? `<button type="button" id="btnDownloadGeneratedCover" class="btn-primary" style="display:inline-block; padding:6px 14px; font-size:12px; font-weight:800;">💾 Download Cover Image</button>` : ''}
               </div>
             </div>
           `;
+          const downloadBtn = resultContainer.querySelector('#btnDownloadGeneratedCover');
+          downloadBtn?.addEventListener('click', async () => {
+            downloadBtn.disabled = true;
+            downloadBtn.textContent = '⏳ Menyiapkan download...';
+            try {
+              const downloadRes = await fetch('/api/storyboard/download_thumbnail', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  image_url: data.image_url,
+                  instance_id: data.profile_instance_id || null,
+                }),
+              });
+              if (!downloadRes.ok) {
+                const errorData = await downloadRes.json().catch(() => ({}));
+                throw new Error(errorData.detail || 'Gagal download cover image');
+              }
+              const blob = await downloadRes.blob();
+              const objectUrl = URL.createObjectURL(blob);
+              const anchor = document.createElement('a');
+              anchor.href = objectUrl;
+              anchor.download = 'youtube_thumbnail.png';
+              document.body.appendChild(anchor);
+              anchor.click();
+              anchor.remove();
+              setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+              downloadBtn.textContent = '✅ Berhasil Didownload';
+            } catch (downloadErr) {
+              showToast(downloadErr.message, 'error');
+              downloadBtn.disabled = false;
+              downloadBtn.textContent = '💾 Coba Download Lagi';
+            }
+          });
         }
         genThumbBtn.textContent = '✅ Sukses Dibuat!';
       } catch (err) {
@@ -1053,6 +1109,7 @@ function initSeoKitModal() {
 
 function saveStoryboardToHistory(sb) {
   if (!sb) return;
+  if (!sb.film_asset_id) sb.film_asset_id = crypto.randomUUID();
   try {
     localStorage.setItem('sinematica_last_storyboard', JSON.stringify(sb));
 
@@ -1417,6 +1474,14 @@ function initStatusPolling() {
 }
 
 let fleetCreditsMap = {};
+const FLOW_CREDITS_PER_VIDEO = 15;
+
+function estimateFlowVideosRemaining(creditsValue) {
+  const match = String(creditsValue ?? '').replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const credits = Number(match[1]);
+  return Number.isFinite(credits) ? Math.max(0, Math.floor(credits / FLOW_CREDITS_PER_VIDEO)) : null;
+}
 
 async function fetchFleetCredits() {
   const checkBtn = document.getElementById('checkCreditsFleetBtn');
@@ -1479,10 +1544,15 @@ async function fetchFleetStatus() {
       let credBadgeColor = isReady ? 'rgba(16, 185, 129, 0.12)' : 'rgba(244, 63, 94, 0.1)';
       let credBorder = isReady ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.3)';
       let credTextColor = isReady ? '#34d399' : '#f43f5e';
+      let videoRemainingText = '';
 
       if (credData) {
         if (credData.success) {
           credText = `⚡ ${credData.credits}`;
+          const remainingVideos = estimateFlowVideosRemaining(credData.credits);
+          if (remainingVideos !== null) {
+            videoRemainingText = `≈ ${remainingVideos} video (15 kredit/video)`;
+          }
           credTextColor = '#34d399';
           credBadgeColor = 'rgba(16, 185, 129, 0.12)';
           credBorder = 'rgba(16, 185, 129, 0.4)';
@@ -1508,7 +1578,7 @@ async function fetchFleetStatus() {
           </div>
           <div style="background: ${credBadgeColor}; border: 1px solid ${credBorder}; border-radius: 10px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
             <span style="font-size: 12px; font-weight: 700; color: #ffffff;">💳 Sisa Kuota Flow:</span>
-            <span style="font-size: 13px; font-weight: 800; color: ${credTextColor};" id="cred-${p.instance_id}">${credText}</span>
+            <span style="font-size: 13px; font-weight: 800; color: ${credTextColor}; text-align:right;" id="cred-${p.instance_id}">${credText}${videoRemainingText ? `<small style="display:block; margin-top:3px; font-size:10px; font-weight:700; color:${credTextColor}; opacity:.9;">${videoRemainingText}</small>` : ''}</span>
           </div>
         </div>
       `;
@@ -1595,6 +1665,73 @@ function renderImagePreviews() {
     list.appendChild(wrapper);
     reader.readAsDataURL(file);
   });
+}
+
+function compactStoryPartContext(storyboard) {
+  if (!storyboard) return {};
+  const scenes = Array.isArray(storyboard.scenes) ? storyboard.scenes : [];
+  return {
+    film_title: storyboard.film_title || '',
+    logline: storyboard.logline || '',
+    genre_style: storyboard.genre_style || '',
+    emotional_arc: storyboard.emotional_arc || '',
+    characters: storyboard.characters || [],
+    consistent_characters: storyboard.consistent_characters || '',
+    open_loops: storyboard.open_loops || storyboard.loop_ledger || [],
+    last_scenes: scenes.slice(-3).map(scene => ({
+      scene_number: scene.scene_number,
+      title: scene.title,
+      action_summary: scene.action_summary,
+      dialogue: scene.dialogue,
+      characters_in_scene: scene.characters_in_scene,
+      start_state: scene.start_state,
+      end_state: scene.end_state,
+      transition_bridge: scene.transition_bridge,
+      duration: scene.duration
+    }))
+  };
+}
+
+function mergeStoryPart(previous, nextPart) {
+  if (!previous) return nextPart;
+  const oldScenes = Array.isArray(previous.scenes) ? previous.scenes : [];
+  const newScenes = Array.isArray(nextPart.scenes) ? nextPart.scenes : [];
+  const merged = { ...previous, ...nextPart, scenes: [...oldScenes, ...newScenes] };
+  const characterMap = new Map();
+  [...(previous.characters || []), ...(nextPart.characters || [])].forEach(character => {
+    const key = String(character.source_actor_id || character.id || character.name || '').toLowerCase();
+    if (!key) return;
+    characterMap.set(key, { ...(characterMap.get(key) || {}), ...character });
+  });
+  merged.characters = [...characterMap.values()];
+  merged.character_references = {
+    ...(nextPart.character_references || {}),
+    ...(previous.character_references || {})
+  };
+  [
+    'film_asset_id', 'film_title', 'logline', 'premise', 'character_seed', 'consistent_characters',
+    'character_info', 'aspect_ratio', 'visual_style', 'visual_vibe', 'lighting_style',
+    'color_palette', 'target_country', 'target_lang', 'dracin_theme', 'creative_brief'
+  ].forEach(key => {
+    if (previous[key] !== undefined && previous[key] !== null && previous[key] !== '') {
+      merged[key] = previous[key];
+    }
+  });
+  let elapsed = 0;
+  merged.scenes.forEach((scene, index) => {
+    const duration = parseInt(scene.duration, 10) || 10;
+    const fmt = seconds => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+    scene.scene_number = index + 1;
+    scene.time_range = `${fmt(elapsed)}–${fmt(elapsed + duration)}`;
+    elapsed += duration;
+  });
+  merged.scene_count = merged.scenes.length;
+  merged.story_parts = {
+    ...(nextPart.story_parts || previous.story_parts || {}),
+    generated_scene_count: merged.scenes.length,
+    has_next_part: merged.scenes.length < Number(nextPart.story_parts?.total_scene_count || previous.story_parts?.total_scene_count || merged.scenes.length)
+  };
+  return merged;
 }
 
 // Gemini Storyboard Form
@@ -1774,6 +1911,8 @@ function initStoryboardForm() {
   const totalLabel = document.getElementById('totalDurationLabel');
   const flowSceneSlotInput = document.getElementById('flowSceneSlotInput');
   const flowSceneSlotHint = document.getElementById('flowSceneSlotHint');
+  const storyPartSizeInput = document.getElementById('storyPartSizeInput');
+  const storyPartSizeHint = document.getElementById('storyPartSizeHint');
 
   function updateTotalDuration() {
     const scenes = parseInt(sceneInput.value) || 1;
@@ -1791,6 +1930,14 @@ function initStoryboardForm() {
       totalLabel.innerHTML = `⏱️ Total: ${fmt(scenes * dur)} (${scenes} Scene × ${dur}s) • Flow: ${scenes} × 15 = <b style="color:#c4b5fd;">${flowCredits} Kredit</b>`;
     }
     totalLabel.title = `Estimasi kredit Google Flow: ${scenes} scene × 15 kredit = ${flowCredits} kredit`;
+    if (storyPartSizeHint) {
+      const partSize = Math.max(1, Math.min(25, parseInt(storyPartSizeInput?.value, 10) || 15));
+      const partCount = Math.ceil(scenes / partSize);
+      const lastPart = scenes % partSize || partSize;
+      storyPartSizeHint.innerHTML = scenes > partSize
+        ? `Storyboard dibuat <b>${partCount} part</b>: maksimal ${partSize} scene per part, part terakhir ${lastPart} scene. Lanjutkan memakai tombol di Scene Master.`
+        : `Total ${scenes} scene cukup dibuat dalam satu part.`;
+    }
     if (flowSceneSlotHint) {
       const requestedSlots = parseInt(flowSceneSlotInput?.value, 10);
       const slots = Number.isFinite(requestedSlots) && requestedSlots > 0
@@ -1819,6 +1966,7 @@ function initStoryboardForm() {
   if (sceneInput) sceneInput.addEventListener('input', updateTotalDuration);
   if (durationSelect) durationSelect.addEventListener('change', updateTotalDuration);
   if (flowSceneSlotInput) flowSceneSlotInput.addEventListener('input', updateTotalDuration);
+  if (storyPartSizeInput) storyPartSizeInput.addEventListener('input', updateTotalDuration);
 
   const multiAngleChk = document.getElementById('chkMultiAngleShotFlow');
   if (multiAngleChk) {
@@ -2054,6 +2202,19 @@ function initStoryboardForm() {
     const theme = premiseInput ? premiseInput.value.trim() : '';
 
     const sceneCount = sceneInput ? (parseInt(sceneInput.value) || 4) : 4;
+    const partSizeInput = document.getElementById('storyPartSizeInput');
+    const requestedPartSize = Math.max(1, Math.min(25, parseInt(partSizeInput?.value, 10) || 15));
+    const canContinuePart = Boolean(
+      storyPartContinuationRequested && currentStoryboard?.story_parts?.has_next_part
+    );
+    const totalStoryScenes = canContinuePart
+      ? Number(currentStoryboard.story_parts.total_scene_count || sceneCount)
+      : sceneCount;
+    const storySceneOffset = canContinuePart ? (currentStoryboard.scenes || []).length : 0;
+    const partSceneCount = Math.min(requestedPartSize, Math.max(0, totalStoryScenes - storySceneOffset));
+    const storyPartNumber = canContinuePart
+      ? Number(currentStoryboard.story_parts.part_number || 1) + 1
+      : 1;
 
     const aspectSelect = document.getElementById('aspectSelect') || document.getElementById('aspectRatioSelect') || document.getElementById('settingAspectRatio');
     const aspectRatio = aspectSelect ? aspectSelect.value : 'portrait';
@@ -2125,7 +2286,14 @@ function initStoryboardForm() {
     formData.append('actor_ids', actorIds);
     formData.append('premise', theme);
     formData.append('creative_brief', JSON.stringify(creativeBrief));
-    formData.append('scene_count', sceneCount);
+    formData.append('scene_count', partSceneCount);
+    formData.append('total_scene_count', totalStoryScenes);
+    formData.append('story_part_number', storyPartNumber);
+    formData.append('story_scene_offset', storySceneOffset);
+    formData.append(
+      'previous_part_context',
+      JSON.stringify(canContinuePart ? compactStoryPartContext(currentStoryboard) : {})
+    );
     formData.append('aspect_ratio', aspectRatio);
     formData.append('target_country', targetCountry);
     formData.append('target_lang', targetLanguage);
@@ -2171,7 +2339,7 @@ function initStoryboardForm() {
     // Tell the storyboard writer which pacing the user picked, so scene durations
     // match what will actually be rendered instead of drifting.
     if (durMode === 'auto') {
-      formData.append('target_total_duration', String(sceneCount * 7));
+      formData.append('target_total_duration', String(totalStoryScenes * 7));
     } else {
       formData.append('fixed_scene_duration', durMode);
     }
@@ -2188,9 +2356,13 @@ function initStoryboardForm() {
       showCuteAiLoading(
         isScriptMode ? '📄 Memformat Script untuk Render...' : '🎬 Generating Storyboard Sinematik...',
         isScriptMode
-          ? `Membagi script menjadi ${sceneCount} adegan teknis tanpa mengubah alur atau dialog...`
-          : `Sedang meracik ${sceneCount} adegan dengan multi-angle camera & seed karakter konsisten...`
+          ? `Membagi Part ${storyPartNumber} menjadi ${partSceneCount} adegan teknis tanpa mengubah alur atau dialog...`
+          : `Sedang meracik Part ${storyPartNumber}: ${partSceneCount} scene (${storySceneOffset + 1}–${storySceneOffset + partSceneCount}) dari total ${totalStoryScenes}...`
       );
+      const completedBeforeRequest = canContinuePart && currentStoryboard?.scenes
+        ? currentStoryboard.scenes.length
+        : 0;
+      setCuteAiSceneProgress(completedBeforeRequest, totalStoryScenes, true);
 
       showToast('Merancang alur adegan dan prompt sinematik dengan Gemini 3.6 Flash...', 'info', 'Gemini AI Studio');
       const res = await fetch('/api/storyboard/generate', {
@@ -2201,7 +2373,9 @@ function initStoryboardForm() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Gagal generate storyboard');
 
-      currentStoryboard = data.storyboard;
+      const previousStoryboard = canContinuePart ? currentStoryboard : null;
+      currentStoryboard = mergeStoryPart(previousStoryboard, data.storyboard);
+      setCuteAiSceneProgress(currentStoryboard.scenes?.length || 0, totalStoryScenes, false);
       const weakAssets = (data.asset_quality_report || []).filter(item => item.status !== 'production_ready');
       if (weakAssets.length) {
         showToast(`${weakAssets.length} aset referensi perlu diperbaiki. Detail audit disimpan di storyboard.`, 'warning', 'Asset Quality Gate');
@@ -2210,7 +2384,15 @@ function initStoryboardForm() {
       // exact same setup from any tab, without depending on the form still being filled in.
       currentStoryboard.aspect_ratio = aspectRatio;
       currentStoryboard.premise = theme;
-      currentStoryboard.scene_count = sceneCount;
+      currentStoryboard.scene_count = currentStoryboard.scenes.length;
+      currentStoryboard.story_parts = {
+        ...(currentStoryboard.story_parts || {}),
+        part_number: storyPartNumber,
+        part_size: requestedPartSize,
+        total_scene_count: totalStoryScenes,
+        generated_scene_count: currentStoryboard.scenes.length,
+        has_next_part: currentStoryboard.scenes.length < totalStoryScenes
+      };
       currentStoryboard.character_info = consistentChar;
       currentStoryboard.target_country = targetCountry;
       currentStoryboard.target_lang = targetLanguage;
@@ -2235,7 +2417,12 @@ function initStoryboardForm() {
       saveStoryboardToHistory(currentStoryboard);
       renderStoryboardResult(currentStoryboard);
       if (btnSend) btnSend.disabled = false;
-      showToast('AI Storyboard adegan berhasil dibuat! Membuka Scene Master...', 'success');
+      showToast(
+        currentStoryboard.story_parts.has_next_part
+          ? `Part ${storyPartNumber} selesai. ${currentStoryboard.scenes.length}/${totalStoryScenes} scene sudah tersusun.`
+          : `Seluruh ${totalStoryScenes} scene storyboard berhasil disusun.`,
+        'success'
+      );
 
       const sceneMasterNav = document.querySelector('.nav-item[data-tab="tab-history"]');
       if (sceneMasterNav) sceneMasterNav.click();
@@ -2243,6 +2430,7 @@ function initStoryboardForm() {
     } catch (err) {
       showCustomAlert(err.message, 'Gagal Generate Storyboard', '❌');
     } finally {
+      storyPartContinuationRequested = false;
       hideCuteAiLoading();
       btn.disabled = false;
       btn.innerHTML = isScriptMode
@@ -2492,6 +2680,9 @@ function renderStoryboardResult(storyboard) {
   if (!container) return;
 
   const scenes = storyboard.scenes || [];
+  const storyParts = storyboard.story_parts || null;
+  const totalStoryScenes = Number(storyParts?.total_scene_count || scenes.length);
+  const hasNextStoryPart = Boolean(storyParts?.has_next_part && scenes.length < totalStoryScenes);
 
   let html = `
     <div style="margin-bottom: 24px; padding: 24px; background: linear-gradient(145deg, rgba(8, 14, 28, 0.9), rgba(16, 25, 48, 0.8)); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
@@ -2506,6 +2697,8 @@ function renderStoryboardResult(storyboard) {
         <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
           <span style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 700;">🌱 Seed: ${storyboard.character_seed || 'Auto'}</span>
           <span title="Rasio ini yang akan dipakai saat Kirim & Eksekusi ke Flow" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 700;">${storyboard.aspect_ratio === 'portrait' ? '📱 Portrait 9:16' : '🖥️ Landscape 16:9'}</span>
+          ${storyParts ? `<span style="background:rgba(167,139,250,.14);color:#ddd6fe;border:1px solid rgba(167,139,250,.4);padding:8px 14px;border-radius:20px;font-size:12px;font-weight:800;">🧩 Part ${storyParts.part_number || 1} · ${scenes.length}/${totalStoryScenes} Scene</span>` : ''}
+          ${storyParts ? `<button type="button" class="btn-success" id="btnGenerateNextStoryPart" style="padding:9px 16px;font-size:12px;font-weight:800;border-radius:10px;height:40px;cursor:pointer;border:none;">${hasNextStoryPart ? '➕ Generate Part Berikutnya' : '➕ Tambah Part Baru'}</button>` : ''}
           <button type="button" class="btn-secondary" id="btnFullRegenerate" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: var(--neon-purple); color: #e9d5ff; border-radius: 10px; height: 40px; cursor: pointer;">🎲 Regenerate Storyboard</button>
           <button type="button" class="btn-secondary" id="btnCopyAllPrompts" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; height: 40px; cursor: pointer;">📋 Copy untuk AI</button>
           <button type="button" class="btn-secondary" id="btnPasteReplaceStoryboard" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: #34d399; color: #6ee7b7; border-radius: 10px; height: 40px; cursor: pointer;">📥 Paste & Replace</button>
@@ -2611,7 +2804,7 @@ function renderStoryboardResult(storyboard) {
             <input type="text" class="edit-sc-overlay" data-idx="${idx}" value="${escapeHtml(sc.text_overlay || '')}" placeholder="Teks pendek di layar (maks 6 kata)..." style="${SB_INPUT} color: #fbbf24; font-weight: 700;" />
           </div>
 
-          <div style="${SB_LABEL_CELL}">🎞️ SHOT FLOW (4-6)</div>
+          <div style="${SB_LABEL_CELL}">🎞️ SHOT FLOW</div>
           <div style="${SB_VALUE_CELL}">
             <div style="font-size: 11px; color: #a5f3fc; line-height: 1.6; padding: 4px 0;">
               ${Array.isArray(sc.shot_flow) && sc.shot_flow.length ? sc.shot_flow.map((sf, sfIdx) => `
@@ -2648,6 +2841,31 @@ function bindStoryboardLiveEditing() {
 
   const charEl = document.getElementById('editConsistentCharacters');
   if (charEl) charEl.addEventListener('input', (e) => currentStoryboard.consistent_characters = e.target.value);
+
+  const nextPartButton = document.getElementById('btnGenerateNextStoryPart');
+  if (nextPartButton) {
+    nextPartButton.addEventListener('click', () => {
+      const meta = currentStoryboard?.story_parts || {};
+      if (!meta.has_next_part) {
+        const increment = Math.max(1, Number(meta.part_size || 15));
+        meta.total_scene_count = (currentStoryboard.scenes || []).length + increment;
+        meta.has_next_part = true;
+        currentStoryboard.story_parts = meta;
+      }
+      const totalInput = document.getElementById('sceneCountInput');
+      const partInput = document.getElementById('storyPartSizeInput');
+      const premiseInput = document.getElementById('premiseInput') || document.getElementById('themeInput');
+      const seedInput = document.getElementById('characterSeedInput') || document.getElementById('characterSeed');
+      const characterInput = document.getElementById('characterInfoInput') || document.getElementById('consistentCharacterInput') || document.getElementById('characterInfo');
+      if (totalInput) totalInput.value = meta.total_scene_count || currentStoryboard.scenes.length;
+      if (partInput && meta.part_size) partInput.value = meta.part_size;
+      if (premiseInput) premiseInput.value = currentStoryboard.premise || currentStoryboard.logline || '';
+      if (seedInput && currentStoryboard.character_seed) seedInput.value = currentStoryboard.character_seed;
+      if (characterInput) characterInput.value = currentStoryboard.character_info || currentStoryboard.consistent_characters || '';
+      storyPartContinuationRequested = true;
+      document.getElementById('storyboardForm')?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    });
+  }
 
   document.querySelectorAll('.edit-sc-title').forEach(el => {
     el.addEventListener('input', (e) => {
@@ -3188,6 +3406,36 @@ function updateGalleryDeleteSelectedButton() {
   }
 }
 
+
+function galleryVersionedMediaUrl(url, item = {}, extra = '') {
+  if (!url) return '';
+  const parts = [];
+  if (item.completed_at != null) parts.push(`done=${encodeURIComponent(String(item.completed_at))}`);
+  if (item.output_size_bytes != null) parts.push(`bytes=${encodeURIComponent(String(item.output_size_bytes))}`);
+  if (item.job_id) parts.push(`job=${encodeURIComponent(String(item.job_id))}`);
+  if (extra) parts.push(`clip=${encodeURIComponent(String(extra))}`);
+  if (!parts.length) parts.push(`v=${Date.now()}`);
+  return `${url}${url.includes('?') ? '&' : '?'}${parts.join('&')}`;
+}
+
+function installGalleryVideoRecovery(container) {
+  container.querySelectorAll('video[data-gallery-src]').forEach(video => {
+    const original = video.getAttribute('data-gallery-src');
+    let recovered = false;
+    const reloadWithFreshUrl = () => {
+      if (recovered || !original) return;
+      recovered = true;
+      const fresh = `${original}${original.includes('?') ? '&' : '?'}reload=${Date.now()}`;
+      video.src = fresh;
+      video.load();
+    };
+    video.addEventListener('error', reloadWithFreshUrl, { once: true });
+    video.addEventListener('loadedmetadata', () => {
+      if (!Number.isFinite(video.duration) || video.duration <= 0) reloadWithFreshUrl();
+    }, { once: true });
+  });
+}
+
 async function refreshGallery() {
   try {
     const res = await fetch('/api/gallery');
@@ -3229,7 +3477,9 @@ async function refreshGallery() {
       return;
     }
 
-    container.innerHTML = `<div class="gallery-grid">` + items.map(item => `
+    container.innerHTML = `<div class="gallery-grid">` + items.map(item => {
+      const fullMovieUrl = galleryVersionedMediaUrl(item.cinematic_film_url, item, 'full');
+      return `
       <div class="film-card" style="position: relative;">
         <!-- Header Row 1: Title, Checkbox & Quick Edit/Delete Actions -->
         <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px;">
@@ -3273,9 +3523,9 @@ async function refreshGallery() {
         ${item.cinematic_film_url ? `
           <div style="margin-bottom: 12px; background: rgba(52, 211, 153, 0.1); padding: 12px; border-radius: 8px; border: 1px solid rgba(52, 211, 153, 0.3);">
             <b style="color: var(--neon-green); font-size: 13px;">🎬 Full Cinematic Movie:</b>
-            <video src="${item.cinematic_film_url}" controls preload="metadata" style="margin-top: 6px; width: 100%; max-height: 300px; object-fit: contain; background: #000; border-radius: 8px;"></video>
+            <video src="${fullMovieUrl}" data-gallery-src="${item.cinematic_film_url}" controls preload="auto" playsinline style="margin-top: 6px; width: 100%; max-height: 300px; object-fit: contain; background: #000; border-radius: 8px;"></video>
             <div style="display: flex; gap: 8px; margin-top: 10px;">
-              <a href="${item.cinematic_film_url}" download class="btn-primary" style="flex: 1; text-align: center; text-decoration: none; font-size: 13px;">⬇️ Download Movie MP4</a>
+              <a href="${fullMovieUrl}" download class="btn-primary" style="flex: 1; text-align: center; text-decoration: none; font-size: 13px;">⬇️ Download Movie MP4</a>
               ${item.srt_subtitles_url ? `<a href="${item.srt_subtitles_url}" download class="btn-secondary" style="text-align: center; text-decoration: none; font-size: 13px;">💬 Subtitle SRT</a>` : ''}
             </div>
             ${localStorage.getItem(seoStorageKey(item.job_id)) ? `
@@ -3292,9 +3542,9 @@ async function refreshGallery() {
         <h5 style="margin-top: 14px; font-size: 13px; color: var(--neon-cyan);">🎞️ Klip Adegan (${(item.clips || []).length} Scene) — klik untuk preview:</h5>
         <div class="gallery-clips-grid" style="--clip-row-height: ${item.aspect_ratio === 'portrait' ? '172px' : '96px'};">
           ${(item.clips || []).map((c, i) => `
-            <div class="clip-thumb" data-url="${c.url}" data-label="${escapeHtml(item.title || 'Film')} — Adegan ${i + 1}" title="Klik untuk preview Adegan ${i + 1}"
+            <div class="clip-thumb" data-url="${galleryVersionedMediaUrl(c.url, item, c.filename || i + 1)}" data-label="${escapeHtml(item.title || 'Film')} — Adegan ${i + 1}" title="Klik untuk preview Adegan ${i + 1}"
                  style="position: relative; cursor: pointer; border: 1px solid var(--glass-border); border-radius: 8px; overflow: hidden; background: #04070f; aspect-ratio: ${item.aspect_ratio === 'portrait' ? '9 / 16' : '16 / 9'};">
-              <video src="${c.url}#t=0.5" preload="metadata" muted playsinline style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;"></video>
+              <video src="${galleryVersionedMediaUrl(c.url, item, c.filename || i + 1)}#t=0.5" data-gallery-src="${c.url}" preload="metadata" muted playsinline style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;"></video>
               <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(180deg, rgba(0,0,0,0.05), rgba(0,0,0,0.6));">
                 <span style="font-size: 18px; opacity: 0.9;">▶️</span>
               </div>
@@ -3305,7 +3555,10 @@ async function refreshGallery() {
           `).join('')}
         </div>
       </div>
-    `).join('') + `</div>`;
+    `;
+    }).join('') + `</div>`;
+
+    installGalleryVideoRecovery(container);
 
     // Keep only the first gallery row visible (three films on desktop). Additional
     // films scroll inside the gallery instead of making the whole page very long.
@@ -4305,6 +4558,31 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast('Product Master sudah dipasang ke Storyboard dan Creative Brief.', 'success');
   });
 
+  document.getElementById('runTrendRadar')?.addEventListener('click', async () => {
+    const input = document.getElementById('trendRadarInput');
+    const status = document.getElementById('trendRadarStatus');
+    const button = document.getElementById('runTrendRadar');
+    const catalogTheme = document.getElementById('genreCatalogSelect')?.selectedOptions?.[0]?.value?.trim() || '';
+    const source = input?.value.trim() || catalogTheme;
+    if (!source || source === '__auto_ai__') { if (status) status.textContent = 'Ketik tema/kata kunci atau pilih tema dari katalog terlebih dahulu.'; showToast('Tema pencarian belum diisi.', 'warning'); return; }
+    if (button) { button.disabled = true; button.textContent = '⏳ Menganalisis…'; }
+    if (status) status.textContent = 'AI sedang membaca pola hook, konflik, dan SEO…';
+    try {
+      const res = await fetch('/api/storyboard/trend_radar', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ theme: `TREND RADAR. Sumber judul/pola: ${source}. Buat 8 judul SEO baru berbahasa Indonesia, masing-masing dengan logline singkat dan hook episode 1. Pertahankan genre dan emosi yang sedang diminati, tetapi jangan menyalin judul, karakter, dialog, atau plot spesifik karya sumber.`, series_mode: true, target_lang: 'Indonesia' }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Gagal menganalisis tren');
+      const concept = data.concept || data.suggestion?.suggested_premise || '';
+      const premise = document.getElementById('premiseInput');
+      if (premise && concept) premise.value = concept;
+      if (status) status.textContent = 'Selesai. Konsep AI sudah dikirim ke kolom premis; Anda dapat mengedit sebelum generate.';
+      showToast('Trend Radar selesai membuat konsep baru.', 'success');
+    } catch (err) {
+      if (status) status.textContent = `Trend Radar gagal: ${err.message}`;
+      showToast(err.message, 'error');
+    } finally { if (button) { button.disabled = false; button.textContent = '✨ Analisis Tren & Buat Judul Baru'; } }
+  });
+
   // Initial load
   fetchActors();
 });
+

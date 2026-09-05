@@ -20,10 +20,10 @@ class DenseScenePromptTests(unittest.TestCase):
         self.assertIn("0-3.3 seconds", result)
         self.assertIn("3.3-6.6 seconds", result)
         self.assertIn("6.6-10 seconds", result)
-        self.assertIn("at least two distinct short speaking turns", result)
-        self.assertIn("No silent staring", result)
-        self.assertIn("at least two linked physical actions in every beat", result)
-        self.assertIn("No static hold may last longer than 0.5 seconds", result)
+        self.assertIn("do not invent a second line", result)
+        self.assertIn("one main action and at most two supporting actions", result)
+        self.assertNotIn("No static hold may last longer than 0.5 seconds", result)
+        self.assertNotIn("at least two distinct short speaking turns", result)
 
     def test_non_ten_second_prompt_is_not_changed(self):
         prompt = "A 6-second tracking shot."
@@ -42,9 +42,11 @@ class DenseScenePromptTests(unittest.TestCase):
         class Result:
             provider = "deepseek"
             text = (
-                '{"prompt_for_flow":"A 10-second three-shot sequence. 0-3.3 seconds: WIDE ANGLE, Arif slams '
+                '{"prompt_for_flow":"OPENING STATE: Arif stands screen-left facing Sinta, phone in his right hand. '
+                'A 10-second three-shot sequence. 0-3.3 seconds: WIDE ANGLE, Arif slams '
                 'the phone and shouts \\"Bank menolak!\\" 3.3-6.6 seconds: OTS SHOT, Sinta pushes a contract '
-                'and replies \\"Tandatangani ini.\\" 6.6-10 seconds: CLOSE-UP, Arif signs and exits."}'
+                'and replies \\"Tandatangani ini.\\" 6.6-10 seconds: CLOSE-UP, Arif signs and exits. '
+                'FINAL CONTINUITY FRAME: Sinta remains at the desk watching Arif leave through the door."}'
             )
 
         def generator(request, json_output=False):
@@ -70,6 +72,10 @@ class DenseScenePromptTests(unittest.TestCase):
         self.assertIn("ONLY spoken lines", calls[0][0])
         self.assertIn("THREE SHOTS", calls[0][0])
         self.assertIn("SAME location and SAME continuous time window", calls[0][0])
+        self.assertIn("OPENING STATE", calls[0][0])
+        self.assertIn("FINAL CONTINUITY FRAME", calls[0][0])
+        self.assertIn("never looks into camera", calls[0][0])
+        self.assertIn("no subtitles, captions", calls[0][0].lower())
         self.assertNotIn("one continuous scene/location", calls[0][0])
         self.assertTrue(calls[0][1])
 
@@ -125,6 +131,14 @@ class DenseScenePromptTests(unittest.TestCase):
         self.assertIn("Previous 10-second video", calls[0])
         self.assertIn("right hand grips the archive-door handle", calls[0])
         self.assertIn("instead of\nteleporting", calls[0])
+
+    def test_local_fallback_still_locks_opening_props_eyeline_and_final_frame(self):
+        result = densify_flow_prompt("Sari examines a ring.", {}, 10)
+        self.assertIn("OPENING STATE:", result)
+        self.assertIn("prop parts unambiguously", result)
+        self.assertIn("never use an ambiguous 'look forward'", result)
+        self.assertIn("No subtitles, captions", result)
+        self.assertIn("FINAL CONTINUITY FRAME:", result)
 
 
 if __name__ == "__main__":

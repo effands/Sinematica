@@ -9,6 +9,30 @@
 })();
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg.type === 'GET_PAGE_AUTH_TOKEN') {
+    let token = null;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const v = localStorage.getItem(localStorage.key(i));
+        if (v && typeof v === 'string' && v.includes('ya29.')) {
+          const m = v.match(/ya29\.[A-Za-z0-9_.~-]+/);
+          if (m && m[0]) { token = m[0]; break; }
+        }
+      }
+      if (!token) {
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const v = sessionStorage.getItem(sessionStorage.key(i));
+          if (v && typeof v === 'string' && v.includes('ya29.')) {
+            const m = v.match(/ya29\.[A-Za-z0-9_.~-]+/);
+            if (m && m[0]) { token = m[0]; break; }
+          }
+        }
+      }
+    } catch (_) {}
+    reply({ flow_key: token });
+    return true;
+  }
+
   if (msg.type === 'GET_CAPTCHA') {
     const { requestId, pageAction } = msg;
 
