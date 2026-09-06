@@ -90,7 +90,10 @@ function scanCreditsFromPage() {
     const text = document.body ? (document.body.innerText || document.body.textContent || '') : '';
     const m = text.match(/([\d,.]+)\s*(?:Google Flow credits?|credits?|kredit(?: google flow)?|poin|points?)/i);
     if (m && m[1] && /\d/.test(m[1])) {
-      const raw = Number(m[1].replace(/,/g, ''));
+      const token = m[1];
+      const raw = Number(token.includes('.') && /^\d{1,3}(?:\.\d{3})+$/.test(token)
+        ? token.replace(/\./g, '')
+        : token.replace(/,/g, ''));
       if (Number.isFinite(raw)) {
         chrome.runtime.sendMessage({
           type: 'SNIFFED_FLOW_CREDITS',

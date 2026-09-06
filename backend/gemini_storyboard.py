@@ -54,13 +54,30 @@ def _complete_scene_fields(scene: Dict[str, Any], index: int, total: int) -> Dic
     for field, default in defaults.items():
         if not scene.get(field):
             scene[field] = default
+    raw_shot_flow = scene.get("shot_flow")
+    if isinstance(raw_shot_flow, dict):
+        raw_shot_flow = raw_shot_flow.get("shots") or raw_shot_flow.get("items") or []
+    if isinstance(raw_shot_flow, list) and raw_shot_flow:
+        normalized_shot_flow = []
+        for sf_idx, item in enumerate(raw_shot_flow[:5], 1):
+            if isinstance(item, dict):
+                timecode = item.get("time") or item.get("timestamp") or item.get("duration") or f"S{sf_idx}"
+                angle = item.get("angle") or item.get("shot") or item.get("shot_type") or item.get("camera") or "Dynamic coverage"
+                description = item.get("description") or item.get("action") or item.get("visual") or item.get("beat") or str(item.get("prompt") or "Visible action beat")
+            else:
+                timecode, angle, description = f"S{sf_idx}", "Dynamic coverage", str(item)
+            normalized_shot_flow.append({"time": str(timecode), "angle": str(angle), "description": str(description)})
+        scene["shot_flow"] = normalized_shot_flow
+
     if not scene.get("shot_flow"):
         duration = max(1, int(scene.get("duration") or 10))
-        split = max(1, duration // 3)
+        count = random.randint(3, 5)
+        boundaries = [round(duration * i / count, 1) for i in range(count + 1)]
+        angles = [shot_type, "Over-The-Shoulder / Detail", "Close Up Reaction", "Medium Two-Shot", "Wide Final Look"]
+        descriptions = ["Pembuka dan konteks aksi", "Detail aksi atau properti penting", "Perubahan ekspresi dan reaksi", "Konsekuensi aksi terlihat jelas", "Reaksi akhir dan jembatan transisi"]
         scene["shot_flow"] = [
-            {"time": f"0-{split}s", "angle": shot_type, "description": "Pembuka dan konteks aksi"},
-            {"time": f"{split}-{min(duration, split * 2)}s", "angle": "Close Up", "description": "Detail aksi dan perubahan ekspresi"},
-            {"time": f"{min(duration, split * 2)}-{duration}s", "angle": "Reaction / Final Look", "description": "Reaksi akhir dan jembatan transisi"},
+            {"time": f"{boundaries[i]:g}-{boundaries[i + 1]:g}s", "angle": angles[i], "description": descriptions[i]}
+            for i in range(count)
         ]
     return scene
 
@@ -127,7 +144,10 @@ _CHANGE_TERMS = (
     "memberi", "menyerahkan", "menemukan", "membongkar", "mengungkap", "terungkap",
     "kehilangan", "menyadari", "menghadapi", "menantang", "menolong", "mencoba",
     "gagal", "berhasil", "akibat", "konsekuensi", "tekanan", "reveal", "decision",
-    "discovers", "chooses", "changes", "fails", "succeeds",
+    "discovers", "chooses", "changes", "fails", "succeeds", "moves", "steps", "enters",
+    "leaves", "turns", "reveals", "reacts", "speaks", "answers", "attacks", "blocks",
+    "strikes", "dodges", "falls", "rises", "runs", "pours", "grabs", "pulls", "pushes",
+    "collides", "explodes", "charges", "creates", "opens", "closes", "hands", "takes",
 )
 _PAYOFF_TERMS = _ENDING_TERMS + (
     "jawaban", "terjawab", "hasil", "pelajaran", "perayaan", "restu", "kebenaran",
@@ -594,8 +614,8 @@ ADULT_ACTION_RULES = """ATURAN KEPADATAN AKSI SINEMATIK (WAJIB — INI YANG MEMB
    TIDAK boleh hampa. Aktivitas semacam itu wajib memuat ketegangan terselubung, pencarian petunjuk, atau subteks emosi.
 3. **Mulai dari aksi termotivasi (start with intent, end with impact).** Buang basa-basi kosong. Setiap adegan
    memiliki tujuan dramatis yang jelas dan dipotong tepat setelah titik reaksi atau perubahannya.
-3a. **Khusus adegan 10 detik, gunakan 4–6 variasi sudut kamera bertimestamp (Multi-Angle Shot Progression):**
-   Rancang 4 hingga 6 perubahan angle sinematik bertahap (seperti Low Angle Close Up -> Medium Wide -> Over-The-Shoulder / Macro Detail -> Medium Close -> Wide Ending Shot).
+3a. **Khusus setiap adegan, gunakan 3–5 variasi sudut kamera bertimestamp (Multi-Angle Shot Progression):**
+   Rancang secara acak 3 hingga 5 perubahan angle sinematik bertahap (seperti Low Angle Close Up -> Medium Wide -> Over-The-Shoulder / Macro Detail -> Medium Close -> Wide Ending Shot).
    Setiap sub-shot memuat framing dan aksi fisik berbeda agar visual video tidak monoton di satu angle saja.
    Isi rincian ini di field `shot_flow` dan rangkai instruksi transisi kameranya ke dalam `prompt_for_flow`.
    Jika ada dialog, wajib minimal DUA giliran bicara pendek yang dipisahkan reaksi fisik/counter-action.
@@ -878,7 +898,9 @@ ATURAN WAJIB REALISME LOKAL / TARGET NEGARA: "{country}"
 1. **Skin Tone & Etnisitas**: Seluruh karakter WAJIB memiliki warna kulit, fitur wajah, dan ciri etnis yang sesuai populasi asli "{country}" — JANGAN gunakan skin tone/fitur wajah Kaukasia/Barat kecuali karakter tersebut memang secara eksplisit dideskripsikan sebagai warga asing/ekspatriat dalam premis cerita.
 2. **Gaya Busana & Wardrobe**: Pakaian, aksesoris, dan gaya rambut karakter WAJIB mencerminkan budaya/fashion sehari-hari masyarakat "{country}" (baik gaya kasual, formal kantoran, hingga mewah), bukan gaya Barat generik.
 3. **Lingkungan & Set Lokasi**: Latar tempat (rumah, jalanan, kantor, kendaraan, signage, interior) WAJIB terlihat autentik seperti kondisi nyata di "{country}" — arsitektur, dekorasi, dan detail lingkungan lokal, bukan skyline/interior ala Amerika/Eropa generik.
-4. **Nama Karakter**: Gunakan nama-nama yang lazim dan natural dipakai di "{country}", bukan nama Barat (contoh: hindari "Julian Mercer", "Elena Rostova" — gunakan nama yang umum di "{country}").
+4. **Nama Karakter**: Jangan mengubah nama atau identitas karakter yang sudah diberikan pengguna. Hanya jika karakter
+   belum diberi nama, buat nama yang sesuai konteks "{country}"; bahasa/negara target tidak pernah menjadi alasan
+   mengganti karakter yang sudah ada.
 5. **Realita Sosial "Merakyat"**: Premis, konflik, dan detail kehidupan sehari-hari (makanan, transportasi, kebiasaan, dialog) WAJIB terasa dekat dengan realita masyarakat "{country}" sehari-hari, bukan fantasi hidup mewah generik ala Hollywood yang tidak membumi.
 6. Setiap `prompt_for_flow` WAJIB tetap menyisipkan deskripsi fisik/etnis & wardrobe lokal ini secara eksplisit dalam Bahasa Inggris (sesuaikan dengan etnis mayoritas di {country}, misal jika negara target adalah Jepang: "East Asian Japanese woman, fair skin tone, wearing minimalist modern office wear...").
 7. **Bahasa Suara/Dialog Video**: Kalau karakter berbicara di adegan, dialognya WAJIB diucapkan dalam bahasa asli "{country}" (bukan Inggris) — kutip langsung dialognya di dalam `prompt_for_flow` sesuai format yang dijelaskan di aturan Dynamic Multi-Angle Camera. Jangan biarkan Google Flow menghasilkan suara berbahasa Inggris untuk konten yang menyasar penonton "{country}".
@@ -893,7 +915,8 @@ def build_children_localization_rules(target_country: str = "", target_lang: str
 ATURAN LOKALISASI EDUKASI ANAK (WAJIB):
 1. Pertahankan tujuan belajar dan kelompok usia pada premis; jangan menaikkan kompleksitas bahasa atau konflik.
 2. Semua narasi, dialog, lagu pendek, pengulangan, label angka/huruf, dan teks layar harus natural dalam bahasa {language}; jangan menyisakan bahasa Indonesia bila targetnya berbeda.
-3. Sesuaikan nama karakter, sapaan, makanan, permainan, benda sekolah, rumah, cuaca, musim, rambu, arah lalu lintas, dan kebiasaan sehari-hari agar familier bagi anak di {country}.
+3. Sesuaikan sapaan, makanan, permainan, benda sekolah, rumah, cuaca, musim, rambu, arah lalu lintas, dan kebiasaan
+   sehari-hari agar familier bagi anak di {country}; jangan mengubah nama/identitas karakter yang sudah diberikan.
 4. Untuk konsep huruf, bunyi, rima, atau berhitung, adaptasikan contoh katanya—jangan menerjemahkan secara harfiah jika bunyi/polanya rusak dalam bahasa {language}.
 5. Gunakan representasi keluarga dan komunitas yang hangat serta beragam. Hindari karikatur, token budaya, stereotip, simbol politik, dan klaim bahwa satu kebiasaan mewakili semua warga {country}.
 6. Dialog toddler maksimal 3–6 kata per giliran dan memakai pengulangan; dialog prasekolah maksimal 8–12 kata per giliran dengan satu gagasan konkret.
@@ -1302,7 +1325,7 @@ OUTPUT WAJIB FORMAT JSON VALID (HANYA JSON):
     cum_sec = 0
     for idx, s in enumerate(scenes, 1):
         s["scene_number"] = idx
-        dur = int(s.get("duration") or (fixed_scene_duration or 10))
+        dur = _normalize_duration_seconds(s.get("duration") or fixed_scene_duration or 10) or 10
         start_m, start_s = divmod(cum_sec, 60)
         end_m, end_s = divmod(cum_sec + dur, 60)
         s["time_range"] = f"{start_m}:{start_s:02d}–{end_m}:{end_s:02d}"
@@ -1323,6 +1346,29 @@ def _normalize_duration_seconds(value):
     if not match:
         raise ValueError(f"Durasi tidak valid: {value!r}. Gunakan angka detik, misalnya 10.")
     return max(1, int(float(match.group(0).replace(',', '.'))))
+
+
+def _build_dynamic_action_rules(premise: str, genre_style: str, custom_instructions: str,
+                                visual_style: str) -> str:
+    """Add varied action-direction guidance only when the brief calls for it."""
+    brief = " ".join(str(value or "") for value in (premise, genre_style, custom_instructions)).lower()
+    action_terms = (
+        "battle", "fight", "combat", "duel", "war", "action", "chase", "kejar", "pertarungan",
+        "perkelahian", "berkelahi", "serangan", "tinju", "ninja", "superhero", "martial",
+    )
+    if not any(term in brief for term in action_terms):
+        return "MODE AKSI DINAMIS: nonaktif. Prioritaskan blocking realistis dan gerak kamera yang termotivasi."
+    return f"""MODE AKSI DINAMIS: aktif untuk tema action/battle ({visual_style or 'live_action'}). Jangan menyalin template atau urutan shot yang sama.
+Pilih secara kontekstual 3-5 beat kamera dari wide establish, low-angle reveal, whip-pan, crash zoom,
+handheld tracking, over-the-shoulder impact, orbit, aerial follow, dan extreme close-up detail.
+Susun satu rantai aksi yang jelas: ancaman/serangan awal -> karakter terkena dampak atau menghindar ->
+perpindahan posisi yang terlihat -> serangan balasan -> benturan/konsekuensi -> final stance yang berbeda.
+Jika karakter terpukul, tampilkan sebab-akibat fisik: recoil, terpental, debu, debris, retakan, atau
+shockwave yang sesuai skala; jangan teleportasi atau sekadar pose. Variasikan siapa yang unggul,
+jenis serangan, arah gerak, tempo, jarak kamera, dan final frame berdasarkan isi scene.
+Untuk anime/kartun gunakan cel shading, garis tegas, speed lines, impact frames, dan efek energi bergaya;
+untuk live action gunakan gravitasi, bobot tubuh, kamera handheld, dan debris yang realistis.
+Tetap hormati batas keamanan konten, kontinuitas karakter/properti, dan dialog asli pengguna."""
 
 
 def generate_storyboard(
@@ -1412,9 +1458,21 @@ def generate_storyboard(
         "pixel_art": "CINEMATIC PIXEL-ART ANIMATION: one consistent pixel grid, deliberate limited colour palette, crisp pixel silhouettes, detailed retro-game backgrounds, sprite-consistent character proportions. Never smooth vector lines, live action, 3D rendering, anti-aliased photorealism, or mixed pixel resolutions.",
         "comic_book": "CINEMATIC COMIC-BOOK ANIMATION: consistent graphic-novel character design, bold ink contours, controlled halftone shading, dramatic panel-like compositions, limited print-inspired palette. Never live-action photography, 3D CGI, watercolor, or model redesign between scenes.",
     }
+    # An explicit medium in the user's prompt outranks the UI default. This
+    # prevents a pasted 2D-anime brief from being silently converted to the
+    # default live-action/3D contract.
+    premise_style_lower = str(premise or '').lower()
+    if visual_style in {"", "live_action", "3d_cartoon"} and re.search(
+        r"\b(?:2d\s+anime|anime\s+2d|cel[- ]shaded|celshaded|anime battle|animasi anime)\b",
+        premise_style_lower,
+    ):
+        visual_style = "anime_2d"
     default_visual_style = "3d_cartoon" if children_mode else "live_action"
     visual_style = visual_style if visual_style in visual_style_contracts else default_visual_style
     visual_style_contract = visual_style_contracts.get(visual_style, visual_style_contracts["live_action"])
+    dynamic_action_rules = _build_dynamic_action_rules(
+        premise, creative_brief.get("genre_style", ""), custom_instructions, visual_style
+    )
     five_realism_rules = build_five_realism_prompt(visual_style)
     finishing_maps = {
         "vibe": {
@@ -1616,6 +1674,21 @@ MODE LITERASI / BELAJAR MEMBACA (WAJIB):
         and any(token in premise_lower for token in ("anime", "superhero", "pahlawan", "mecha", "ninja", "jurus"))
     )
     battle_vs_rules = BATTLE_VS_RULES if battle_vs_mode else ""
+    story_quality_contract = f"""
+STORY QUALITY CONTRACT — RANCANG SEBELUM MENULIS SCENE (WAJIB):
+- Jangan membuat scene sebagai kumpulan deskripsi suasana yang datar. Sebelum menulis JSON, susun beat map
+  internal: hook → tujuan/konflik → komplikasi → eskalasi → titik terendah atau risiko terbesar → klimaks → payoff.
+- Minimal {max(1, int(scene_count * 0.65))} dari {scene_count} scene harus memuat perubahan yang terlihat atau
+  terdengar: karakter bergerak, mengambil keputusan, menemukan bukti, gagal, membalas, mengubah relasi,
+  mengubah posisi, atau menghasilkan konsekuensi. Establishing shot tanpa perubahan maksimal {max(1, int(scene_count * 0.20))} scene.
+- Bagian awal wajib menanam konflik atau pertanyaan; bagian tengah wajib menaikkan taruhan dan sebab-akibat;
+  bagian akhir wajib membayar konflik lewat klimaks dan resolusi/ending yang terasa earned.
+- Setiap scene wajib menjawab: apa yang berubah dibanding scene sebelumnya, mengapa perubahan itu terjadi,
+  dan tekanan baru apa yang dipaksa muncul setelahnya. Tulis perubahan itu eksplisit di `action_summary`,
+  `scene_purpose`, `end_state`, dan `prompt_for_flow`.
+- Jangan menunggu quality audit untuk memperbaiki struktur. Audit hanya pemeriksaan akhir; hasil utama harus
+  sudah memenuhi kontrak ini sejak draft pertama.
+"""
     # Children's mode uses anthropomorphic animals, so human ethnicity/skin-tone rules would
     # conflict with its visual contract. Its country adaptation is handled below instead.
     local_realism_rules = build_local_realism_rules(target_country) if target_country and not children_mode else ""
@@ -1693,6 +1766,11 @@ Pertahankan bentuk, kemasan, warna, label, dan proporsi produk dari gambar refer
 4. Panjang narasi/dialog proporsional: 4 detik ~8-10 kata, 6 detik ~12-15, 8 detik ~18-22, 10 detik ~25-30.
 5. Awali `prompt_for_flow` dengan durasi yang sesuai (contoh: "A 4-second ...", "A 8-second ...").{budget_rule}"""
 
+    # Keep a six-scene JSON response below router output limits while retaining
+    # the actionable visual information Flow needs. The user's premise is not
+    # shortened; only repetitive packaging in each generated scene is bounded.
+    prompt_word_target = "90–150" if target_scene_count >= 4 else "130–220"
+
     elegant_rules = """
 6. **Premium "Elegant & Expensive" Production Value (Wajib di Setiap Scene)**: Ini yang membedakan hasil murahan vs High-End Studio Look. Setiap `prompt_for_flow` WAJIB menyisipkan minimal 3 elemen berikut secara eksplisit:
    - **Lensa Sinema**: sebutkan jenis lensa spesifik (misal `35mm anamorphic lens`, `85mm portrait lens, shallow depth of field`, `24mm wide-angle establishing lens`) — jangan generik.
@@ -1702,11 +1780,19 @@ Pertahankan bentuk, kemasan, warna, label, dan proporsi produk dari gambar refer
    - Hindari kata generik murahan seperti "beautiful", "high quality", "detailed" tanpa spesifik teknis di atas.
 """ if not ugc_mode and not children_mode else ""
 
-    char_desc_instruction = (
-        f"{character_info}\n(CATATAN PENTING: Jika nama karakter, busana, atau ciri etnis di atas masih berupa nama/budaya negara lain yang tidak cocok dengan target negara '{target_country}', Anda WAJIB mengadaptasikan nama, etnisitas, warna kulit, dan busana mereka agar 100% otentik masyarakat lokal '{target_country}'!)"
-        if character_info and target_country and target_country.lower() != "indonesia"
-        else (character_info or f"Otomatis rancang karakter-karakter lokal yang 100% otentik dengan budaya dan etnis '{target_country or 'internasional'}'")
-    )
+    # Character identity and language/country are independent dimensions. The
+    # target language may change dialogue and narration, but must never rename,
+    # localize, recast, or redesign an explicitly supplied character.
+    char_desc_instruction = f"""
+CHARACTER IDENTITY LOCK — PRIORITAS TERTINGGI:
+Pertahankan nama, identitas, wajah, usia, bentuk tubuh, rambut, kostum, aksesori, kemampuan, teknik,
+hubungan, dan visual signature setiap karakter persis dari premis/character_info. DILARANG mengganti
+karakter karena target bahasa atau target negara; Naruto tetap Naruto dan Goku tetap Goku meskipun dialog
+ditulis dalam bahasa Indonesia, Inggris, Jepang, atau bahasa lain. Target language hanya mengubah dialogue,
+narration, dan teks metadata. Target country hanya mengatur konteks lokasi/budaya bila diminta, bukan identitas
+tokoh. Jangan membuat nama lokal/generik pengganti seperti Arya, Bagas, atau pendekar baru.
+{character_info or 'Jika karakter belum diberi nama, rancang karakter baru satu kali lalu kunci identitasnya untuk semua scene.'}
+"""
 
     system_prompt = f"""
 Anda adalah Sutradara Film AI Sinematik Kelas Dunia & Visual Director untuk Google Flow Omni Flash.
@@ -1717,6 +1803,7 @@ BAHASA OUTPUT UTAMA: {target_lang} (Semua ringkasan aksi, narasi voiceover, teks
 {duration_rules}
 
 {action_density_rules}
+{story_quality_contract}
 {story_part_rules}
 {battle_vs_rules}
 
@@ -1752,6 +1839,7 @@ rendering technique, bentuk anatomi, material, atau jenis karakter di tengah fil
 {conversion_rules}
 
 ATURAN UTAMA DYNAMIC MULTI-ANGLE & MULTI-CHARACTER STABILITY:
+{dynamic_action_rules}
 ATURAN GERAK FISIK DAN AKTING (mengalahkan tuntutan variasi kamera):
 {NATURAL_ACTION_RULES}
 Untuk adegan yang memang melibatkan pintu, isi interaction_plan berdasarkan tata ruang; jangan tambahkan
@@ -1804,7 +1892,7 @@ warna kulit, potongan/warna/lapisan pakaian, sepatu dan lokasi aksesori. Hormati
    f) **Scene-specific negatives**: tulis larangan konkret yang mencegah kegagalan scene, misalnya `no extra
       characters`, `no object disappearance`, `no location change`, `no character redesign`, `stable anatomy`,
       `no malformed text`; tambahkan larangan sensitif sesuai tema. Jangan mengandalkan `high quality` atau `8K`.
-   Panjang target setiap `prompt_for_flow` adalah 130–220 kata bahasa Inggris. Detail harus spesifik untuk scene
+   Panjang target setiap `prompt_for_flow` adalah {prompt_word_target} kata bahasa Inggris. Detail harus spesifik untuk scene
    tersebut; dilarang memakai paragraf template identik pada semua scene. Untuk konten anak/edukasi prioritaskan
    satu kejadian kontinu, gerakan sederhana yang terbaca, dan 1–3 beat kamera; jangan memaksakan lima cut cepat.
 4e. **OBJECT LEDGER (Wajib)**: Properti persisten (kartu, kotak, tas, makanan, kendaraan, senjata, produk,

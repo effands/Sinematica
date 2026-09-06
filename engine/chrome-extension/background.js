@@ -495,10 +495,10 @@ async function notifyRegistration() {
   let flowTab = null;
   let readinessError = null;
   try {
-    flowTab = await FlowTab.findExistingFlowTab(chrome);
-    if (flowTab && flowTab.status !== 'complete') {
-      flowTab = await FlowTab.waitForTabComplete(chrome, flowTab);
-    }
+    // A profile may already have a valid Flow project/token while its tab was
+    // closed or was opened after the worker registered. Ensure the tab here so
+    // the fleet card does not incorrectly report NO_FLOW_WINDOW.
+    flowTab = await FlowTab.ensureFlowTab(chrome);
     await _detectProjectIdFromTabs(flowTab?.id ?? null);
     if (!flowKey && flowTab?.id) {
       await _probeTokenFromTab(flowTab.id);
@@ -706,7 +706,10 @@ async function handleApiRequest(msg) {
       if (creditsFound) {
         const numMatch = creditsFound.match(/\d[\d,.]*/);
         if (numMatch) {
-          const rawNum = Number(numMatch[0].replace(/,/g, ''));
+          const token = numMatch[0];
+          const rawNum = Number(token.includes('.') && /^\d{1,3}(?:\.\d{3})+$/.test(token)
+            ? token.replace(/\./g, '')
+            : token.replace(/,/g, ''));
           if (Number.isFinite(rawNum)) {
             lastKnownCredits = rawNum;
             chrome.storage.local.set({ lastKnownCredits });

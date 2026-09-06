@@ -163,7 +163,10 @@ class OpenAICompatibleAdapter:
         if not isinstance(prompt, str):
             prompt = "\n\n".join(str(item) for item in prompt if isinstance(item, str))
         payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "stream": False}
-        if json_output:
+        # Some OpenAI-compatible local routers return an empty body when they
+        # receive response_format=json_object. The prompt already requires
+        # valid JSON, so let 9Router produce it without this optional hint.
+        if json_output and self.provider != "9router":
             payload["response_format"] = {"type": "json_object"}
         try:
             response = self.transport.post(
@@ -205,6 +208,12 @@ class TextGenerationManager:
         cfg = self.settings_loader()
         default = cfg.get("default_text_provider", "gemini")
         order = provider_order or provider_order_from_settings(cfg, default)
+        # 9Router is itself the user's routing layer. Do not silently fan out
+        # to paid providers after it fails, and do not spend a second request
+        # retrying malformed JSON through the same router.
+        router_only = default == "9router" and provider_order is None
+        if router_only:
+            order = ["9router"]
         last_error = None
         for provider in order:
             if provider == "web2api":
@@ -226,7 +235,16 @@ class TextGenerationManager:
                 attempts = 2 if json_output else 1
                 for attempt in range(1, attempts + 1):
                     try:
-                        text = adapter.generate(prompt, key, model, json_output=json_output)
+                        request_prompt = prompt
+                        if json_output and provider == "9router" and attempt > 1:
+                            retry_instruction = (
+                                "\n\nRETRY JSON COMPACT: Respons sebelumnya kosong atau terpotong. "
+                                "Kirim ulang HANYA satu objek JSON valid yang lengkap, tanpa markdown, "
+                                "tanpa penjelasan, tanpa mengulang instruksi ini. Ringkas deskripsi tetapi "
+                                "isi semua field wajib dan pastikan JSON ditutup sempurna."
+                            )
+                            request_prompt = f"{prompt}{retry_instruction}" if isinstance(prompt, str) else list(prompt) + [retry_instruction]
+                        text = adapter.generate(request_prompt, key, model, json_output=json_output)
                         if json_output:
                             _validate_json_output(text)
                         log.info("Teks berhasil dibuat via %s key #%d (%s).", provider, index, model)

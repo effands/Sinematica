@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="icon" type="image/x-icon" href="favicon.ico?v=1.2.0">
-  <link rel="stylesheet" href="style.css?v=1.3.5">
+  <link rel="stylesheet" href="style.css?v=1.3.17">
 </head>
 <body>
   <div class="app-container">
@@ -161,13 +161,14 @@
 
           <form id="storyboardForm">
             <!-- 2-Column Inner Form Layout -->
-            <div style="display: grid; grid-template-columns: 1.25fr 1fr; gap: 28px; margin-bottom: 24px; align-items: start;">
+            <div style="display: grid; grid-template-columns: 1.6fr 1fr; gap: 28px; margin-bottom: 24px; align-items: start;">
               
               <!-- LEFT COLUMN: Cerita & Konsep -->
               <div style="display: flex; flex-direction: column; gap: 20px;">
                 <!-- Katalog Genre -->
                 <div class="form-group" style="margin: 0;">
                   <label style="font-size: 14px; font-weight: 700; color: #e9d5ff; margin-bottom: 8px; display: block;">🎯 Katalog Genre & Preset Cerita:</label>
+                  <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center;">
                   <select id="genreCatalogSelect" style="width: 100%; height: 44px; border-radius: 12px; padding: 0 14px; font-size: 13px; background: rgba(4, 7, 16, 0.9); border: 1px solid var(--neon-purple); color: #ffffff; cursor: pointer;">
                     <option value="">-- Pilih Katalog Genre / Tema --</option>
                     <option value="__auto_ai__">✨ Auto AI — Buat Niche, Tema, Karakter & Object Baru</option>
@@ -264,6 +265,7 @@
 
                     <optgroup label="⚡ Anime & Superhero Battle / VS — Adu Kekuatan & Jurus Andalan">
                       <option data-country="Japan" data-battle="true" data-visual-style="anime_2d" value="Anime Battle VS orisinal: Pendekar api biru bernama Akito berduel melawan pengendali badai bernama Raiga di arena terapung. Tampilkan pembukaan aura, adu kecepatan, jurus Api Naga Langit, counter Perisai Guntur, ultimate masing-masing, benturan energi non-lethal, dan pemenang yang ditentukan oleh strategi. Semua tokoh, kostum, kekuatan, dan nama jurus wajib orisinal tanpa meniru franchise apa pun.">🔥 Anime VS — Api Naga vs Pengendali Badai</option>
+                      <option data-country="Japan" data-battle="true" data-visual-style="anime_2d" value="Dynamic Anime Battle orisinal: Dua petarung dengan kekuatan dan gaya bertarung berbeda berhadapan di arena yang sesuai tema. Bangun duel sinematik dengan pembukaan ancaman, serangan cepat, karakter terkena dampak dan terpental, serangan balasan, perpindahan keunggulan, jurus pamungkas, benturan energi non-lethal, dan final stance yang jelas. Gunakan perpindahan kamera cepat yang bervariasi: whip-pan, crash zoom, tracking, orbit, low angle, impact close-up, speed lines, debris, shockwave, dan motion blur bergaya anime. Sesuaikan nama tokoh, kekuatan, lokasi, warna energi, dan teknik secara dinamis dengan premis pengguna. Semua desain wajib orisinal dan tidak meniru franchise tertentu.">⚔️ Dynamic Anime Battle — Duel Energi Sinematik</option>
                       <option data-country="Japan" data-battle="true" data-visual-style="anime_2d" value="Anime Battle VS orisinal: Ksatria es wanita bernama Setsuna menghadapi petarung magma bernama Guren di lembah kristal. Masing-masing memperlihatkan teknik dasar, pertahanan khas, kelemahan elemen, jurus andalan Istana Es Seribu Cermin dan Tinju Inti Vulkanik, lalu final clash non-lethal dengan hasil jelas.">❄️ Anime VS — Ratu Es vs Petarung Magma</option>
                       <option data-country="Japan" data-battle="true" data-visual-style="anime_2d" value="Anime Ninja VS orisinal: Ninja bayangan Kagehiro melawan pendekar cahaya Hikari Ren di kota kuil futuristik. Bangun duel taktik berisi klon bayangan orisinal, jebakan cahaya, teleportasi pendek, pembacaan gerak lawan, jurus Gerhana Tanpa Suara dan Tebasan Fajar Prisma, lalu kemenangan melalui kecerdikan tanpa luka atau kematian.">🥷 Anime VS — Ninja Bayangan vs Pendekar Cahaya</option>
                       <option data-country="Japan" data-battle="true" data-visual-style="anime_2d" value="Anime Mecha VS orisinal: Robot pilot Crimson Aegis beradu dengan unit Azure Tempest di orbit bulan buatan. Tampilkan manuver khas, sistem perisai, senjata energi non-lethal, mode transformasi unik, jurus Solar Breaker dan Cyclone Rail Burst, kerusakan mekanis ringan tanpa korban, serta duel final yang dimenangkan lewat penguasaan medan.">🤖 Mecha VS — Crimson Aegis vs Azure Tempest</option>
@@ -473,6 +475,11 @@
                       <option data-country="Indonesia" data-children="true" data-age-group="preschool" data-learning-domain="agama-islam" value="Anak belajar menyambut Ramadan dengan kalender gambar, membantu menyiapkan takjil, berbagi, dan memahami bahwa anak boleh belajar bertahap sesuai arahan orang tua tanpa dipaksa berpuasa penuh.">🌙 Mengenal Ramadan</option>
                     </optgroup>
                   </select>
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <button type="button" id="btnEditGenre" class="btn-secondary" style="height: 44px; padding: 0 12px; border-color: var(--neon-purple); color: #e9d5ff; font-weight: 700; white-space: nowrap; border-radius: 12px; cursor: pointer;">✏️ Edit</button>
+                    <button type="button" id="btnNewGenre" class="btn-secondary" style="height: 44px; padding: 0 14px; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700; white-space: nowrap; border-radius: 12px; cursor: pointer;">＋ New Genre</button>
+                  </div>
+                  </div>
                   <div id="trendRadarPanel" style="margin-top:12px;padding:12px;border:1px solid rgba(34,211,238,.25);border-radius:12px;background:rgba(34,211,238,.04);">
                     <div style="font-weight:800;color:#a5f3fc;margin-bottom:6px;">📡 Trend Radar AI</div>
                     <textarea id="trendRadarInput" rows="2" placeholder="Ketik tema/kata kunci, misalnya: drama mertua menantu, toy hunt, kerajaan monster, kisah Islami…" style="width:100%;box-sizing:border-box;border-radius:9px;padding:8px;background:#050914;color:#fff;border:1px solid rgba(255,255,255,.16);"></textarea>
@@ -1604,6 +1611,58 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="newGenreModal">
+    <div class="modal-card custom-alert-card" style="width: 520px; max-width: calc(100vw - 32px);">
+      <div class="custom-alert-icon" style="color: var(--neon-cyan);">✨</div>
+      <h3 class="custom-alert-title">Buat Katalog Genre Baru</h3>
+      <p class="custom-alert-msg" style="margin-bottom: 18px;">Simpan judul katalog dan prompt buatan Anda sendiri.</p>
+      <label style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; display: block; text-align: left;">Judul Katalog:</label>
+      <input type="text" id="newGenreTitleInput" style="width: 100%; height: 42px; border-radius: 10px; padding: 0 14px; margin-bottom: 14px; background: rgba(4, 7, 16, 0.7); border: 1px solid var(--accent-cyan); color: #ffffff; font-size: 14px; box-sizing: border-box;" placeholder="Contoh: Thriller Kota Hujan" />
+      <label style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; display: block; text-align: left;">Niche / Kategori:</label>
+      <select id="newGenreNicheInput" style="width: 100%; height: 42px; border-radius: 10px; padding: 0 14px; margin-bottom: 14px; background: rgba(4, 7, 16, 0.7); border: 1px solid rgba(255,255,255,.18); color: #ffffff; font-size: 14px; box-sizing: border-box;">
+        <option value="action_anime">⚔️ Action / Anime Battle</option><option value="drama">🎭 Drama / Melodrama</option><option value="romance">💖 Romance</option><option value="mystery_thriller">🕵️ Mystery / Thriller</option><option value="fantasy">🐉 Fantasy / Adventure</option><option value="comedy">😂 Comedy</option><option value="horror">👻 Horror</option><option value="kids">🧸 Kids / Education</option><option value="documentary">🎥 Documentary / Real Story</option><option value="music">🎵 Music Video</option>
+        <option value="__new_niche__">＋ Buat Niche Baru…</option>
+      </select>
+      <label style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; display: block; text-align: left;">Prompt Cerita / Konsep Detail:</label>
+      <textarea id="newGenrePromptInput" rows="6" style="width: 100%; border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; background: rgba(4, 7, 16, 0.7); border: 1px solid rgba(255,255,255,.18); color: #ffffff; font-size: 14px; box-sizing: border-box; resize: vertical;" placeholder="Tulis ide, tokoh, konflik, suasana, dan arahan cerita Anda..."></textarea>
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="btn-secondary" id="newGenreCancelBtn" style="padding: 8px 18px; font-size: 13px;">Batal</button>
+        <button type="button" class="btn-primary" id="newGenreSaveBtn" style="padding: 8px 18px; font-size: 13px;">Simpan Katalog</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="editGenreModal">
+    <div class="modal-card custom-alert-card" style="width: 560px; max-width: calc(100vw - 32px);">
+      <div class="custom-alert-icon" style="color: var(--neon-purple);">✏️</div>
+      <h3 class="custom-alert-title">Edit Katalog Genre</h3>
+      <p class="custom-alert-msg" style="margin-bottom: 18px;">Perubahan disimpan di browser ini dan akan dipakai setiap kali preset dipilih.</p>
+      <label style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; display: block; text-align: left;">Judul Katalog:</label>
+      <input type="text" id="editGenreTitleInput" style="width: 100%; height: 42px; border-radius: 10px; padding: 0 14px; margin-bottom: 14px; background: rgba(4, 7, 16, 0.7); border: 1px solid var(--accent-cyan); color: #ffffff; font-size: 14px; box-sizing: border-box;" />
+      <label style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; display: block; text-align: left;">Niche / Kategori:</label>
+      <select id="editGenreNicheInput" style="width: 100%; height: 42px; border-radius: 10px; padding: 0 14px; margin-bottom: 14px; background: rgba(4, 7, 16, 0.7); border: 1px solid rgba(255,255,255,.18); color: #ffffff; font-size: 14px; box-sizing: border-box;"></select>
+      <label style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; display: block; text-align: left;">Prompt / Konsep Detail:</label>
+      <textarea id="editGenrePromptInput" rows="9" style="width: 100%; border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; background: rgba(4, 7, 16, 0.7); border: 1px solid rgba(255,255,255,.18); color: #ffffff; font-size: 14px; box-sizing: border-box; resize: vertical;"></textarea>
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="btn-secondary" id="editGenreCancelBtn" style="padding: 8px 18px;">Batal</button>
+        <button type="button" class="btn-primary" id="editGenreSaveBtn" style="padding: 8px 18px;">Simpan Update</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="newNicheModal">
+    <div class="modal-card custom-alert-card" style="width: 500px; max-width: calc(100vw - 32px);">
+      <div class="custom-alert-icon" style="color: var(--neon-cyan);">🧩</div>
+      <h3 class="custom-alert-title">Buat Niche Baru</h3>
+      <p class="custom-alert-msg">Niche ini akan muncul di pilihan kategori dan bisa dipakai berulang.</p>
+      <label style="font-size:12px;color:var(--text-secondary);display:block;text-align:left;margin-bottom:4px;">Nama Niche:</label>
+      <input id="newNicheNameInput" type="text" placeholder="Contoh: Cosmic Martial Arts" style="width:100%;height:40px;box-sizing:border-box;margin-bottom:10px;padding:0 12px;border-radius:9px;background:#050914;color:#fff;border:1px solid rgba(255,255,255,.18);" />
+      <label style="font-size:12px;color:var(--text-secondary);display:block;text-align:left;margin-bottom:4px;">Deskripsi / Arah Gaya:</label>
+      <textarea id="newNicheDescriptionInput" rows="4" placeholder="Contoh: duel energi anime, kamera cepat, jurus bertingkat, arena kosmik..." style="width:100%;box-sizing:border-box;margin-bottom:14px;padding:10px 12px;border-radius:9px;background:#050914;color:#fff;border:1px solid rgba(255,255,255,.18);resize:vertical;"></textarea>
+      <div style="display:flex;justify-content:flex-end;gap:10px;"><button type="button" class="btn-secondary" id="newNicheCancelBtn" style="padding:8px 18px;">Batal</button><button type="button" class="btn-primary" id="newNicheSaveBtn" style="padding:8px 18px;">Simpan Niche</button></div>
+    </div>
+  </div>
+
   <!-- Cute AI Loading Overlay Modal -->
   <div class="modal-overlay" id="aiCuteLoadingModal" style="backdrop-filter: blur(12px); background: rgba(4, 7, 16, 0.85); z-index: 99999;">
     <div class="modal-card" style="width: 420px; text-align: center; padding: 32px 24px; background: linear-gradient(145deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95)); border: 1px solid var(--accent-cyan); border-radius: 20px; box-shadow: 0 0 50px rgba(56, 189, 248, 0.3);">
@@ -1636,6 +1695,6 @@
   </div>
 
   <script src="history_selection.js?v=1.0.0"></script>
-  <script src="app.js?v=1.3.35"></script>
+  <script src="app.js?v=1.3.47"></script>
 </body>
 </html>

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 import time
 import uuid
+import random
 
 from . import settings
 from .bridge_manager import get_bridge, ensure_ready
@@ -66,6 +67,15 @@ log = logging.getLogger("sinematica.jobs_executor")
 HISTORY_FILE = settings.DATA_DIR / "jobs_history.json"
 _active_jobs: Dict[str, Dict[str, Any]] = {}
 _job_logs: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def is_flow_quota_error(error: Exception) -> bool:
+    """Identify exhausted Flow capacity so this profile is skipped for later scenes."""
+    text = str(error or "").lower()
+    return any(marker in text for marker in (
+        "quota", "credit", "insufficient", "rate limit", "too many requests", "429",
+        "limit reached", "out of credits", "not enough credits",
+    ))
 
 
 def _load_history():
@@ -840,6 +850,7 @@ async def execute_storyboard_job(
         "seo_storyboard": seo_storyboard,
         "target_lang": storyboard.get("target_lang") or "",
         "target_country": storyboard.get("target_country") or "",
+        "profile_failures": {},
     }
     _active_jobs[job_id] = job_state
 
@@ -1163,7 +1174,44 @@ async def execute_storyboard_job(
         total_scenes, affiliate_product.get("scene_position", "auto")
     ) if affiliate_product.get("enabled") else set()
 
+    # Flow is more reliable when a long film is dispatched in small background
+    # waves.  This is an execution throttle only: storyboard content and prompts
+    # remain unchanged.  An explicit render_scene_limit still keeps its old
+    # quota/checkpoint behavior; otherwise use the automatic six-scene waves.
+    automatic_batch_size = 6 if render_scene_limit is None else None
+    automatic_batch_number = 0
+
+    def scan_rendered_batch() -> List[str]:
+        """Rescan durable MP4 outputs before starting the next background wave."""
+        found = []
+        for scene_number in range(1, total_scenes + 1):
+            candidate = job_dir / f"scene_{scene_number:02d}.mp4"
+            if candidate.exists() and candidate.stat().st_size > 1024:
+                found.append(str(candidate))
+        return found
+
     for idx, sc in enumerate(scenes, start=1):
+        if automatic_batch_size and rendered_in_batch >= automatic_batch_size:
+            automatic_batch_number += 1
+            delay = random.uniform(2.0, 4.0)
+            log_event(
+                job_id,
+                f"⏸️ Batch background {automatic_batch_number} selesai ({automatic_batch_size} scene). "
+                f"Menunggu {delay:.1f} detik sebelum scan hasil dan melanjutkan...",
+            )
+            await asyncio.sleep(delay)
+            scanned_paths = scan_rendered_batch()
+            completed_scene_paths = list(dict.fromkeys(completed_scene_paths + scanned_paths))
+            log_event(
+                job_id,
+                f"🔎 Scan batch selesai: {len(scanned_paths)}/{total_scenes} file scene valid ditemukan. "
+                f"Melanjutkan batch berikutnya di background.",
+            )
+            rendered_in_batch = 0
+            job_state["rendered_in_batch"] = 0
+            job_state["last_batch_scan_count"] = len(scanned_paths)
+            _save_history()
+
         if job_state.get("cancelled"):
             log_event(job_id, "🛑 Eksekusi job dihentikan oleh pengguna.", level="warning")
             job_state["status"] = "cancelled"
@@ -1290,6 +1338,7 @@ async def execute_storyboard_job(
         snap_instances = [
             i for i in bridge.instance_snapshot()
             if i["connected"] and i.get("ready", True)
+            and not job_state.get("profile_failures", {}).get(i.get("instance_id"), {}).get("quota_exhausted")
         ]
         snap_instances.sort(key=lambda item: item.get("instance_id") != project_instance_id)
         if not snap_instances:
@@ -1747,7 +1796,23 @@ async def execute_storyboard_job(
                         policy_rejection = str(ex)
                         log_event(job_id, f"🚫 [Adegan {idx}/{total_scenes}] {ex}", level="error", profile=target_name)
                         break
-                    log_event(job_id, f"⚠️ [{target_name}] Kendala/Kuota: {ex}. Otomatis beralih mencoba profil Chrome berikutnya...", level="warning", profile=target_name)
+                    if is_flow_quota_error(ex):
+                        job_state.setdefault("profile_failures", {})[target_instance_id] = {
+                            "name": target_name,
+                            "quota_exhausted": True,
+                            "error": str(ex),
+                            "scene": idx,
+                        }
+                        _save_history()
+                        log_event(
+                            job_id,
+                            f"🔁 [{target_name}] Kuota/limit Flow habis. Profil ini dilewati untuk scene berikutnya; "
+                            "mengimpor ulang character sheet lokal ke profil berikutnya...",
+                            level="warning",
+                            profile=target_name,
+                        )
+                    else:
+                        log_event(job_id, f"⚠️ [{target_name}] Kendala/Kuota: {ex}. Otomatis beralih mencoba profil Chrome berikutnya...", level="warning", profile=target_name)
 
             if scene_success or not policy_rejection or job_state.get("cancelled"):
                 break

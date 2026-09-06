@@ -569,6 +569,11 @@ function storyboardRevisionPrompt(storyboard) {
   const sceneCount = Array.isArray(storyboard?.scenes) ? storyboard.scenes.length : 0;
   const language = storyboard?.target_lang || 'sesuai bahasa pada JSON';
   const country = storyboard?.target_country || 'sesuai negara pada JSON';
+  const identityText = JSON.stringify(storyboard || {}).toLowerCase();
+  const explicitFranchiseIdentity = /goku|naruto|dragon\s*ball|dragonball|kamehameha|rasengan/.test(identityText);
+  const identityRule = explicitFranchiseIdentity
+    ? '- IDENTITAS EKSPLISIT WAJIB: pertahankan Goku, Naruto, teknik, kostum, dan ciri visual yang disebut pengguna. DILARANG mengganti menjadi Arya, Bagas, karakter lokal, atau karakter generik. Negara target hanya mengatur bahasa/konteks, bukan identitas tokoh.\n'
+    : '';
   return `Anda adalah editor storyboard film profesional. Perbaiki storyboard JSON di bawah agar lebih kuat, detail, sinematik, konsisten, dan siap dipakai di Google Flow.
 
 ATURAN MUTLAK:
@@ -577,7 +582,7 @@ ATURAN MUTLAK:
 - Pertahankan durasi setiap scene. Nilai duration hanya boleh 4, 6, 8, atau 10.
 - Pertahankan ID, seed, identitas, wajah, pakaian, dan visual_signature karakter agar konsisten.
 - Semua dialogue, narration_id, text_overlay, judul film, dan judul scene wajib menggunakan bahasa ${language}.
-- Sesuaikan nama, budaya, wajah, pakaian, dan lingkungan dengan target negara ${country}, kecuali identitas cerita memang meminta lain.
+${identityRule}- Sesuaikan budaya dan lingkungan dengan target negara ${country}; jangan mengubah identitas, nama, kostum, wajah, atau teknik karakter yang memang diminta langsung oleh premis.
 - prompt_for_flow wajib berupa prompt video sinematik terperinci dalam bahasa Inggris dan konsisten dengan visual_style, visual_vibe, lighting_style, color_palette, aspect_ratio, serta kontinuitas scene.
 - Jangan menghapus field yang sudah ada. Boleh memperbaiki film_title, genre_style, art_direction, consistent_characters, action_summary, shot_type, camera_movement, lighting_mood, dialogue, start_state, end_state, prompt_for_flow, text_overlay, dan narasi.
 - characters_in_scene dan speaker_id hanya boleh memakai ID karakter yang terdaftar di characters.
@@ -1476,10 +1481,22 @@ function initStatusPolling() {
 let fleetCreditsMap = {};
 const FLOW_CREDITS_PER_VIDEO = 15;
 
-function estimateFlowVideosRemaining(creditsValue) {
-  const match = String(creditsValue ?? '').replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
+function normalizeFlowCredits(creditsValue) {
+  const raw = String(creditsValue ?? '').trim();
+  const match = raw.match(/[\d.,]+/);
   if (!match) return null;
-  const credits = Number(match[1]);
+  const token = match[0];
+  // Legacy extension versions converted Indonesian 1.050 into numeric 1.05.
+  if (/^\d+\.\d{1,3}$/.test(token) && Number(token) < 10) return Number(token) * 1000;
+  const normalized = token.includes('.') && /^\d{1,3}(?:\.\d{3})+$/.test(token)
+    ? token.replace(/\./g, '')
+    : token.replace(/,/g, '');
+  const value = Number(normalized);
+  return Number.isFinite(value) ? value : null;
+}
+
+function estimateFlowVideosRemaining(creditsValue) {
+  const credits = normalizeFlowCredits(creditsValue);
   return Number.isFinite(credits) ? Math.max(0, Math.floor(credits / FLOW_CREDITS_PER_VIDEO)) : null;
 }
 
@@ -1548,8 +1565,9 @@ async function fetchFleetStatus() {
 
       if (credData) {
         if (credData.success) {
-          credText = `⚡ ${credData.credits}`;
-          const remainingVideos = estimateFlowVideosRemaining(credData.credits);
+          const normalizedCredits = normalizeFlowCredits(credData.credits);
+          credText = `⚡ ${normalizedCredits ?? credData.credits} Kredit`;
+          const remainingVideos = estimateFlowVideosRemaining(normalizedCredits);
           if (remainingVideos !== null) {
             videoRemainingText = `≈ ${remainingVideos} video (15 kredit/video)`;
           }
@@ -1567,7 +1585,7 @@ async function fetchFleetStatus() {
       return `
         <div class="profile-card" style="position: relative; background: rgba(12, 18, 36, 0.85); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px;">
           <div class="profile-header" style="display: flex; justify-content: space-between; align-items: center;">
-            <span class="profile-title" style="font-weight: 800; font-size: 15px; color: #ffffff;">💻 ${p.name || p.instance_id}</span>
+            <span class="profile-title" style="font-weight: 800; font-size: 15px; color: #ffffff;">💻 ${escapeHtml((p.name || p.instance_id || 'Chrome').replace(/\s+Profile$/i, ''))}</span>
             <span class="badge-status ${isReady ? 'badge-ready' : 'badge-noauth'}">
               ${isReady ? 'Ready & Logged In' : (p.readiness_error || 'Need Flow Window/Login')}
             </span>
@@ -1578,7 +1596,7 @@ async function fetchFleetStatus() {
           </div>
           <div style="background: ${credBadgeColor}; border: 1px solid ${credBorder}; border-radius: 10px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
             <span style="font-size: 12px; font-weight: 700; color: #ffffff;">💳 Sisa Kuota Flow:</span>
-            <span style="font-size: 13px; font-weight: 800; color: ${credTextColor}; text-align:right;" id="cred-${p.instance_id}">${credText}${videoRemainingText ? `<small style="display:block; margin-top:3px; font-size:10px; font-weight:700; color:${credTextColor}; opacity:.9;">${videoRemainingText}</small>` : ''}</span>
+            <span style="font-size: 13px; font-weight: 800; color: ${credTextColor}; text-align:right; white-space:nowrap;" id="cred-${p.instance_id}">${credText}${videoRemainingText ? `<small style="display:block; margin-top:3px; font-size:9px; line-height:1.1; font-weight:700; color:${credTextColor}; opacity:.9; white-space:nowrap;">${videoRemainingText}</small>` : ''}</span>
           </div>
         </div>
       `;
@@ -1913,9 +1931,13 @@ function initStoryboardForm() {
   const flowSceneSlotHint = document.getElementById('flowSceneSlotHint');
   const storyPartSizeInput = document.getElementById('storyPartSizeInput');
   const storyPartSizeHint = document.getElementById('storyPartSizeHint');
+  let storyPartSizeManuallyEdited = false;
 
   function updateTotalDuration() {
     const scenes = parseInt(sceneInput.value) || 1;
+    if (!storyPartSizeManuallyEdited && storyPartSizeInput && scenes < 15) {
+      storyPartSizeInput.value = scenes;
+    }
     const flowCredits = scenes * 15;
     const isAuto = durationSelect.value === 'auto';
     // In Auto mode each scene picks its own 4/6/8/10s, so only a range can be shown.
@@ -1966,7 +1988,16 @@ function initStoryboardForm() {
   if (sceneInput) sceneInput.addEventListener('input', updateTotalDuration);
   if (durationSelect) durationSelect.addEventListener('change', updateTotalDuration);
   if (flowSceneSlotInput) flowSceneSlotInput.addEventListener('input', updateTotalDuration);
-  if (storyPartSizeInput) storyPartSizeInput.addEventListener('input', updateTotalDuration);
+  if (storyPartSizeInput) storyPartSizeInput.addEventListener('input', () => {
+    storyPartSizeManuallyEdited = true;
+    updateTotalDuration();
+  });
+
+  // A fresh form should use one part when the requested story is shorter than
+  // the old 15-scene default.
+  if (storyPartSizeInput && parseInt(storyPartSizeInput.value, 10) === 15 && parseInt(sceneInput?.value, 10) < 15) {
+    storyPartSizeInput.value = sceneInput.value;
+  }
 
   const multiAngleChk = document.getElementById('chkMultiAngleShotFlow');
   if (multiAngleChk) {
@@ -1995,6 +2026,179 @@ function initStoryboardForm() {
 
   const genreCatalog = document.getElementById('genreCatalogSelect');
   const btnRandomGenre = document.getElementById('btnRandomGenrePreset');
+  const customGenreStorageKey = 'sinematica_custom_genre_catalogs';
+  const genreOverrideStorageKey = 'sinematica_genre_catalog_overrides';
+  const nicheStorageKey = 'sinematica_custom_niches';
+  const nicheSelectIds = ['newGenreNicheInput', 'editGenreNicheInput'];
+  const loadCustomNiches = () => {
+    let niches = [];
+    try { niches = JSON.parse(localStorage.getItem(nicheStorageKey) || '[]'); } catch (_) { niches = []; }
+    nicheSelectIds.forEach(id => {
+      const select = document.getElementById(id);
+      if (!select) return;
+      [...select.querySelectorAll('option[data-custom-niche]')].forEach(option => option.remove());
+      const addNew = select.querySelector('option[value="__new_niche__"]');
+      niches.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.id;
+        option.textContent = `🧩 ${item.name}`;
+        option.title = item.description || '';
+        option.dataset.customNiche = 'true';
+        if (addNew) select.insertBefore(option, addNew); else select.appendChild(option);
+      });
+    });
+  };
+  loadCustomNiches();
+  const openNewNicheModal = (select) => {
+    if (select) select.value = select.dataset.previousNiche || 'drama';
+    document.getElementById('newNicheNameInput').value = '';
+    document.getElementById('newNicheDescriptionInput').value = '';
+    document.getElementById('newNicheModal')?.classList.add('active');
+    setTimeout(() => document.getElementById('newNicheNameInput')?.focus(), 80);
+  };
+  nicheSelectIds.forEach(id => document.getElementById(id)?.addEventListener('change', event => {
+    const select = event.target;
+    if (select.value !== '__new_niche__') { select.dataset.previousNiche = select.value; return; }
+    openNewNicheModal(select);
+  }));
+  document.getElementById('newNicheCancelBtn')?.addEventListener('click', () => document.getElementById('newNicheModal')?.classList.remove('active'));
+  document.getElementById('newNicheSaveBtn')?.addEventListener('click', () => {
+    const name = document.getElementById('newNicheNameInput')?.value.trim();
+    const description = document.getElementById('newNicheDescriptionInput')?.value.trim();
+    if (!name) { showToast('Nama niche wajib diisi.', 'warning'); return; }
+    let niches = [];
+    try { niches = JSON.parse(localStorage.getItem(nicheStorageKey) || '[]'); } catch (_) { niches = []; }
+    const id = `custom_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}_${Date.now()}`;
+    niches.push({ id, name, description, createdAt: new Date().toISOString() });
+    localStorage.setItem(nicheStorageKey, JSON.stringify(niches));
+    loadCustomNiches();
+    nicheSelectIds.forEach(selectId => {
+      const select = document.getElementById(selectId);
+      if (select) { select.value = id; select.dataset.previousNiche = id; }
+    });
+    document.getElementById('newNicheModal')?.classList.remove('active');
+    showToast(`Niche “${name}” berhasil dibuat.`, 'success');
+  });
+  const readGenreOverrides = () => {
+    try { return JSON.parse(localStorage.getItem(genreOverrideStorageKey) || '{}'); } catch (_) { return {}; }
+  };
+  const applyGenreOverrides = () => {
+    if (!genreCatalog) return;
+    const overrides = readGenreOverrides();
+    [...genreCatalog.querySelectorAll('option')].forEach(option => {
+      const item = overrides[option.value];
+      if (!item) return;
+      option.dataset.originalValue = option.dataset.originalValue || option.value;
+      option.value = item.prompt || option.value;
+      option.textContent = `✏️ ${item.title || option.textContent.replace(/^✏️\s*/, '')}`;
+      option.dataset.edited = 'true';
+    });
+  };
+  applyGenreOverrides();
+  const loadCustomGenres = () => {
+    if (!genreCatalog) return;
+    let items = [];
+    try { items = JSON.parse(localStorage.getItem(customGenreStorageKey) || '[]'); } catch (_) { items = []; }
+    const oldGroup = genreCatalog.querySelector('optgroup[data-custom-genres]');
+    if (oldGroup) oldGroup.remove();
+    if (!items.length) return;
+    const group = document.createElement('optgroup');
+    group.label = '✦ Katalog Genre Saya';
+    group.dataset.customGenres = 'true';
+    items.forEach(item => {
+      const option = document.createElement('option');
+      option.value = item.prompt;
+      option.textContent = `✦ ${item.title}`;
+      option.dataset.custom = 'true';
+      option.dataset.niche = item.niche || 'drama';
+      group.appendChild(option);
+    });
+    genreCatalog.appendChild(group);
+  };
+  loadCustomGenres();
+  const closeEditGenreModal = () => document.getElementById('editGenreModal')?.classList.remove('active');
+  document.getElementById('btnEditGenre')?.addEventListener('click', () => {
+    const option = genreCatalog?.selectedOptions?.[0];
+    if (!option || !option.value || option.value === '__auto_ai__') {
+      showToast('Pilih katalog genre yang ingin diedit terlebih dahulu.', 'warning');
+      return;
+    }
+    const isCustom = option.dataset.custom === 'true';
+    let title = option.textContent.replace(/^[^\wÀ-ž]+\s*/, '').trim();
+    let prompt = option.value;
+    let niche = option.dataset.niche || 'drama';
+    let customItems = [];
+    try { customItems = JSON.parse(localStorage.getItem(customGenreStorageKey) || '[]'); } catch (_) { customItems = []; }
+    if (isCustom) {
+      const item = customItems.find(entry => entry.prompt === option.value);
+      if (item) { title = item.title; prompt = item.prompt; niche = item.niche || niche; }
+    } else {
+      const overrides = readGenreOverrides();
+      const originalKey = option.dataset.originalValue || option.value;
+      const item = overrides[originalKey];
+      if (item) { title = item.title; prompt = item.prompt; niche = item.niche || niche; }
+    }
+    document.getElementById('editGenreTitleInput').value = title;
+    document.getElementById('editGenrePromptInput').value = prompt;
+    const editNiche = document.getElementById('editGenreNicheInput');
+    if (editNiche) {
+      editNiche.innerHTML = document.getElementById('newGenreNicheInput')?.innerHTML || '';
+      editNiche.value = niche;
+    }
+    document.getElementById('editGenreModal')?.classList.add('active');
+  });
+  document.getElementById('editGenreCancelBtn')?.addEventListener('click', closeEditGenreModal);
+  document.getElementById('editGenreSaveBtn')?.addEventListener('click', () => {
+    const option = genreCatalog?.selectedOptions?.[0];
+    const title = document.getElementById('editGenreTitleInput')?.value.trim();
+    const prompt = document.getElementById('editGenrePromptInput')?.value.trim();
+    const niche = document.getElementById('editGenreNicheInput')?.value || 'drama';
+    if (!option || !title || !prompt) { showToast('Judul dan prompt katalog wajib diisi.', 'warning'); return; }
+    if (option.dataset.custom === 'true') {
+      let items = [];
+      try { items = JSON.parse(localStorage.getItem(customGenreStorageKey) || '[]'); } catch (_) { items = []; }
+      const item = items.find(entry => entry.prompt === option.value);
+      if (item) { item.title = title; item.prompt = prompt; item.niche = niche; item.updatedAt = new Date().toISOString(); }
+      localStorage.setItem(customGenreStorageKey, JSON.stringify(items));
+      loadCustomGenres();
+    } else {
+      const overrides = readGenreOverrides();
+      const originalKey = option.dataset.originalValue || option.value;
+      overrides[originalKey] = { title, prompt, niche, updatedAt: new Date().toISOString() };
+      localStorage.setItem(genreOverrideStorageKey, JSON.stringify(overrides));
+      applyGenreOverrides();
+    }
+    const matching = [...genreCatalog.options].find(item => item.value === prompt);
+    if (matching) { matching.dataset.niche = niche; genreCatalog.value = prompt; genreCatalog.dispatchEvent(new Event('change')); }
+    closeEditGenreModal();
+    showToast(`Katalog “${title}” berhasil di-update.`, 'success');
+  });
+  document.getElementById('btnNewGenre')?.addEventListener('click', () => {
+    const modal = document.getElementById('newGenreModal');
+    if (!modal) return;
+    document.getElementById('newGenreTitleInput').value = '';
+    document.getElementById('newGenrePromptInput').value = '';
+    document.getElementById('newGenreNicheInput').value = 'action_anime';
+    modal.classList.add('active');
+    setTimeout(() => document.getElementById('newGenreTitleInput')?.focus(), 100);
+  });
+  const closeNewGenreModal = () => document.getElementById('newGenreModal')?.classList.remove('active');
+  document.getElementById('newGenreCancelBtn')?.addEventListener('click', closeNewGenreModal);
+  document.getElementById('newGenreSaveBtn')?.addEventListener('click', () => {
+    const title = document.getElementById('newGenreTitleInput')?.value.trim();
+    const prompt = document.getElementById('newGenrePromptInput')?.value.trim();
+    const niche = document.getElementById('newGenreNicheInput')?.value || 'drama';
+    if (!title || !prompt) { showToast('Judul katalog dan prompt wajib diisi.', 'warning'); return; }
+    let items = [];
+    try { items = JSON.parse(localStorage.getItem(customGenreStorageKey) || '[]'); } catch (_) { items = []; }
+    items.push({ title, prompt, niche, createdAt: new Date().toISOString() });
+    localStorage.setItem(customGenreStorageKey, JSON.stringify(items));
+    loadCustomGenres();
+    const option = [...genreCatalog.options].find(item => item.dataset.custom === 'true' && item.value === prompt);
+    if (option) { genreCatalog.value = prompt; genreCatalog.dispatchEvent(new Event('change')); }
+    closeNewGenreModal();
+    showToast(`Katalog “${title}” berhasil disimpan.`, 'success');
+  });
   const targetCountryInput = document.getElementById('targetCountryInput');
   const targetLanguageInput = document.getElementById('targetLanguageInput');
   const dracinThemeSelect = document.getElementById('dracinThemeSelect');
@@ -2062,8 +2266,6 @@ function initStoryboardForm() {
       if (val) {
         const premiseInput = document.getElementById('premiseInput') || document.getElementById('themeInput');
         if (premiseInput) {
-          premiseInput.value = val;
-
           const selectedOpt = genreCatalog.options[genreCatalog.selectedIndex];
           const isUgcPreset = selectedOpt && selectedOpt.getAttribute('data-ugc') === 'true';
           const isMicroPreset = selectedOpt && selectedOpt.getAttribute('data-micro') === 'true';
@@ -2072,6 +2274,15 @@ function initStoryboardForm() {
           const learningDomain = selectedOpt ? selectedOpt.getAttribute('data-learning-domain') : '';
           const countryAttr = selectedOpt ? selectedOpt.getAttribute('data-country') : '';
           const presetVisualStyle = selectedOpt ? selectedOpt.getAttribute('data-visual-style') : '';
+          const isBattlePreset = selectedOpt?.getAttribute('data-battle') === 'true'
+            || /battle|fight|combat|duel|pertarungan|serangan|ninja|superhero/i.test(val);
+          const styleHint = presetVisualStyle === 'anime_2d' || isBattlePreset
+            ? 'Gunakan gaya animasi anime 2D/cel-shaded dengan siluet, gerak, efek, dan desain karakter konsisten; jangan live-action.'
+            : presetVisualStyle === 'comic_book'
+              ? 'Gunakan gaya comic-book/graphic-novel dengan line art tegas, panel-like composition, warna terkontrol, dan impact visual.'
+              : 'Pilih gaya visual yang sesuai genre, tetap sinematik, mudah difilmkan, dan konsisten antar-scene.';
+          const expansion = `\n\nPRODUCTION BRIEF EXPANSION (WAJIB DIKEMBANGKAN AI):\n- Bentuk premis ini menjadi alur sebab-akibat lengkap dengan hook, tujuan tokoh, konflik utama, eskalasi, klimaks, konsekuensi, dan payoff.\n- Tetapkan 2–4 karakter dengan peran, motivasi, hubungan, ciri visual, properti penting, dan perubahan emosi yang terlihat.\n- Setiap scene harus memiliki aksi fisik konkret, blocking, lokasi, waktu, transisi, dan final frame yang menyambung ke scene berikutnya.\n- Rancang variasi shot, gerak kamera, pencahayaan, ambience, foley, dialog natural, serta kontinuitas properti; jangan mengulang template atau hanya mengganti nama.\n- ${styleHint}\n- Jika premis terlalu pendek, kembangkan detail baru secara orisinal tanpa mengubah inti tema atau meniru franchise tertentu.`;
+          premiseInput.value = val + expansion;
 
           if (countryAttr && targetCountryInput) {
             targetCountryInput.value = countryAttr;
@@ -2228,6 +2439,8 @@ function initStoryboardForm() {
     const selectedUniverse = storyUniverseSelect?.value || '';
     const selectedConflict = storyConflictSelect?.value || '';
     const selectedEmotion = document.getElementById('storyEmotionSelect')?.value || '';
+    const selectedCatalogOption = document.getElementById('genreCatalogSelect')?.selectedOptions?.[0];
+    const selectedCatalogNiche = selectedCatalogOption?.dataset?.niche || '';
     const universeDirection = [selectedUniverse && `Universe: ${selectedUniverse}`, selectedConflict && `konflik: ${selectedConflict}`, selectedEmotion && `emosi utama: ${selectedEmotion}`].filter(Boolean).join('; ');
     const creativeBrief = {
       background: document.getElementById('briefBackgroundInput')?.value.trim() || '',
@@ -2235,7 +2448,8 @@ function initStoryboardForm() {
       audience: document.getElementById('briefAudienceInput')?.value.trim() || selectedAgeAudience,
       product_value: document.getElementById('briefProductValueInput')?.value.trim() || '',
       execution: [document.getElementById('briefExecutionInput')?.value.trim() || '', universeDirection].filter(Boolean).join('\n'),
-      constraints: document.getElementById('briefConstraintsInput')?.value.trim() || ''
+      constraints: document.getElementById('briefConstraintsInput')?.value.trim() || '',
+      niche_category: selectedCatalogNiche
     };
 
     if (!theme) {
@@ -2694,14 +2908,14 @@ function renderStoryboardResult(storyboard) {
           <input type="text" id="editFilmTitle" value="${escapeHtml(storyboard.film_title || 'Film Sinematik')}" style="width: 100%; font-size: 18px; font-weight: 800; color: #ffffff; background: rgba(4, 7, 16, 0.85); border: 1px solid var(--neon-cyan); border-radius: 10px; padding: 10px 16px; font-family: var(--font-heading); box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);" />
         </div>
 
-        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: nowrap; max-width: 100%; overflow-x: auto; padding-bottom: 2px;">
           <span style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 700;">🌱 Seed: ${storyboard.character_seed || 'Auto'}</span>
           <span title="Rasio ini yang akan dipakai saat Kirim & Eksekusi ke Flow" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 700;">${storyboard.aspect_ratio === 'portrait' ? '📱 Portrait 9:16' : '🖥️ Landscape 16:9'}</span>
           ${storyParts ? `<span style="background:rgba(167,139,250,.14);color:#ddd6fe;border:1px solid rgba(167,139,250,.4);padding:8px 14px;border-radius:20px;font-size:12px;font-weight:800;">🧩 Part ${storyParts.part_number || 1} · ${scenes.length}/${totalStoryScenes} Scene</span>` : ''}
           ${storyParts ? `<button type="button" class="btn-success" id="btnGenerateNextStoryPart" style="padding:9px 16px;font-size:12px;font-weight:800;border-radius:10px;height:40px;cursor:pointer;border:none;">${hasNextStoryPart ? '➕ Generate Part Berikutnya' : '➕ Tambah Part Baru'}</button>` : ''}
           <button type="button" class="btn-secondary" id="btnFullRegenerate" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: var(--neon-purple); color: #e9d5ff; border-radius: 10px; height: 40px; cursor: pointer;">🎲 Regenerate Storyboard</button>
           <button type="button" class="btn-secondary" id="btnCopyAllPrompts" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; height: 40px; cursor: pointer;">📋 Copy untuk AI</button>
-          <button type="button" class="btn-secondary" id="btnPasteReplaceStoryboard" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: #34d399; color: #6ee7b7; border-radius: 10px; height: 40px; cursor: pointer;">📥 Paste & Replace</button>
+          <button type="button" class="btn-secondary" id="btnPasteReplaceStoryboard" style="padding: 9px 16px; font-size: 12px; font-weight: 700; border-color: #34d399; color: #6ee7b7; border-radius: 10px; height: 40px; cursor: pointer;">📥 Paste</button>
         </div>
       </div>
 
@@ -2807,12 +3021,17 @@ function renderStoryboardResult(storyboard) {
           <div style="${SB_LABEL_CELL}">🎞️ SHOT FLOW</div>
           <div style="${SB_VALUE_CELL}">
             <div style="font-size: 11px; color: #a5f3fc; line-height: 1.6; padding: 4px 0;">
-              ${Array.isArray(sc.shot_flow) && sc.shot_flow.length ? sc.shot_flow.map((sf, sfIdx) => `
+              ${Array.isArray(sc.shot_flow) && sc.shot_flow.length ? sc.shot_flow.map((sf, sfIdx) => {
+                const shot = typeof sf === 'string' ? { description: sf } : (sf || {});
+                const shotTime = shot.time || shot.timestamp || shot.duration || `S${sfIdx+1}`;
+                const shotAngle = shot.angle || shot.shot || shot.shot_type || shot.camera || 'Dynamic coverage';
+                const shotDescription = shot.description || shot.action || shot.visual || shot.beat || shot.prompt || 'Visible action beat';
+                return `
                 <div style="margin-bottom: 3px;">
-                  <span style="color: var(--neon-cyan); font-weight: 800; font-family: monospace;">[${escapeHtml(sf.time || `S${sfIdx+1}`)}]</span>
-                  <b style="color: #fde68a;">${escapeHtml(sf.angle || '')}:</b> ${escapeHtml(sf.description || '')}
+                  <span style="color: var(--neon-cyan); font-weight: 800; font-family: monospace;">[${escapeHtml(shotTime)}]</span>
+                  <b style="color: #fde68a;">${escapeHtml(shotAngle)}:</b> ${escapeHtml(shotDescription)}
                 </div>
-              `).join('') : '<span style="color:var(--text-muted); font-style:italic;">Otomatis disusun sebagai 4–6 transisi sudut kamera bertimestamp saat eksekusi</span>'}
+              `; }).join('') : '<span style="color:var(--text-muted); font-style:italic;">Otomatis disusun sebagai 3–5 transisi sudut kamera bertimestamp</span>'}
             </div>
           </div>
 
@@ -3233,7 +3452,7 @@ async function pollJobStatus(jobId) {
             ${sc.status.toUpperCase()} (${sc.profile_used || 'Worker'})
           </span>
         </div>
-        <p style="font-size: 13px;">${sc.prompt}</p>
+        <div class="execution-scene-prompt" title="Scroll untuk membaca prompt lengkap">${escapeHtml(sc.prompt || '')}</div>
         ${sc.relative_url ? `
         <div style="display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.35);">
           <span style="font-size: 14px;">✅</span>
