@@ -179,6 +179,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         ready=msg.get("ready", True),
                         readiness_error=msg.get("readiness_error"),
                         version=msg.get("version"),
+                        session_ready=msg.get("session_ready", False),
                     )
                     if "flow_key" in msg:
                         bridge.record_instance_token(instance_id, msg.get("flow_key"))

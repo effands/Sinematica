@@ -66,10 +66,10 @@ ANTI-DRIFT & NEGATIVE PROMPT:
 Do NOT change the person's identity, alter facial structure, beautify or airbrush the face, smooth skin unnaturally, change skin tone, redesign facial features, change body proportions, create different people, repeat identical camera angles, stylize into cartoon or anime, introduce inconsistent wardrobe or changing accessories, recoloured clothing, cluttered layout, visible text, title bars, captions, name tags, seed numbers, labels, watermark, blurry textures, AI artifacts, extra limbs, distorted anatomy."""
 
 
-DEFAULT_SCENE_STORYBOARD_TEMPLATE = """SCENE STORYBOARD CONTACT SHEET (4-6 MULTI-ANGLE SHOT FLOW)
+DEFAULT_SCENE_STORYBOARD_TEMPLATE = """SCENE STORYBOARD CONTACT SHEET (3-5 MULTI-ANGLE SHOT FLOW)
 
 Professional cinematic film pre-visualization contact sheet for ONE scene (0–10s), laid out as a
-clean editorial grid of 4 to 6 storyboard panels showing the precise camera angle progression:
+clean editorial grid of 3 to 5 storyboard panels showing the precise camera angle progression:
 
 Create visual panels only. Do not render any title, scene number, duration, caption, label, typography, or readable text.
 Scene number for planning only: {scene_number}. Scene title for planning only: {scene_title}. Duration for planning only: {scene_duration} seconds.

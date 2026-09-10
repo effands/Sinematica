@@ -1,6 +1,7 @@
 """Sinematica Backend — Video Gallery & Cinematic Sequencer Router with Complete CRUD Operations."""
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from pathlib import Path
@@ -11,8 +12,7 @@ from .. import settings
 from ..jobs_executor import (
     list_jobs,
     get_job_status,
-    delete_job,
-    delete_multiple_jobs,
+    hide_gallery_job,
     update_job,
     create_render_job,
     mark_render_job_completed,
@@ -61,6 +61,8 @@ def get_gallery_items():
     gallery_data = []
 
     for job in jobs:
+        if job.get("gallery_hidden"):
+            continue
         job_id = job.get("job_id")
         job_dir = settings.JOBS_DIR / job_id
 
@@ -77,6 +79,11 @@ def get_gallery_items():
         cinematic_path = job_dir / "cinematic_film.mp4"
         if cinematic_path.exists():
             cinematic_film = f"/storage/jobs/{job_id}/cinematic_film.mp4"
+
+        # Jangan tampilkan kartu job kosong setelah klip episode dihapus.
+        # Film hasil render akhir tetap membuat job tersebut tampil.
+        if not clips and not cinematic_film:
+            continue
 
         import time
         created_ts = job.get("created_at") or time.time()
@@ -106,20 +113,33 @@ def update_gallery_item(job_id: str, req: UpdateJobRequest):
     return {"success": True, "message": f"Job {job_id} berhasil diperbarui."}
 
 
+@router.get("/{job_id}/download")
+def download_cinematic_film(job_id: str):
+    """Download the locally rendered MP4 with an explicit video response/name."""
+    film_path = settings.JOBS_DIR / job_id / "cinematic_film.mp4"
+    if not film_path.is_file():
+        raise HTTPException(status_code=404, detail="Video hasil render tidak ditemukan.")
+    return FileResponse(
+        path=str(film_path),
+        media_type="video/mp4",
+        filename="cinematic_film.mp4",
+    )
+
+
 @router.delete("/{job_id}")
 def delete_single_job(job_id: str):
-    """Delete a single job item and its associated files."""
-    success = delete_job(job_id)
+    """Hide a Gallery item while preserving rendered files."""
+    success = hide_gallery_job(job_id)
     if not success:
         raise HTTPException(status_code=404, detail="Job tidak ditemukan.")
-    return {"success": True, "message": f"Job {job_id} berhasil dihapus."}
+    return {"success": True, "message": f"Job {job_id} dihapus dari Gallery. Video hasil render tetap disimpan di Explorer/storage."}
 
 
 @router.post("/batch_delete")
 def batch_delete_jobs(req: BatchDeleteRequest):
     """Delete multiple selected job items in bulk."""
-    count = delete_multiple_jobs(req.job_ids)
-    return {"success": True, "deleted_count": count, "message": f"{count} job berhasil dihapus."}
+    count = sum(1 for jid in req.job_ids if hide_gallery_job(jid))
+    return {"success": True, "deleted_count": count, "message": f"{count} item dihapus dari Gallery. Video hasil render tetap disimpan di Explorer/storage."}
 
 
 @router.post("/render_selection")

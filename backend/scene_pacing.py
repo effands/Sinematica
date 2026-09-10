@@ -37,8 +37,14 @@ def _extract_json(raw: str) -> Dict[str, Any]:
 
 def _has_required_timeline(prompt: str, dialogue_required: bool, markers, canonical_lines=None) -> bool:
     lowered = (prompt or "").lower()
-    if not all(marker in lowered for marker in markers):
-        return False
+    # Providers occasionally normalize a requested 4/5-beat schedule to a
+    # readable 3-beat schedule. Accept any valid 3–5 timeline rather than
+    # discarding an otherwise usable rewrite and burning another request.
+    timeline_hits = sum(1 for marker in markers if marker in lowered)
+    if timeline_hits < 3:
+        generic_hits = len(re.findall(r"\b\d+(?:\.\d+)?\s*(?:-|–|to)\s*\d+(?:\.\d+)?\s*(?:seconds?|s)\b", lowered))
+        if generic_hits < 3:
+            return False
     if "opening state:" not in lowered or "final continuity frame:" not in lowered:
         return False
     if dialogue_required:
@@ -98,8 +104,9 @@ teleporting characters to a distant place.
 {{"prompt_for_flow":"..."}}
 
 Hard requirements:
-- Duration remains exactly 10 seconds, structured as {count_word} SHOTS / mini-beats of ONE continuous event.
-  These are timed coverage beats, not mandatory cuts: keep critical mechanism contact in one uninterrupted view.
+- Duration remains exactly 10 seconds, structured as {count_word} CAMERA BEATS of ONE continuous event.
+  These are Omni Flash multi-camera coverage beats, not mandatory cuts: keep critical mechanism contact in one uninterrupted view.
+  THREE SHOTS is valid when the scene is simple; otherwise use FOUR or FIVE SHOTS/BEATS so the count is not globally locked to three.
 - Use these literal timeline markers: {', '.join(f'`{m}:`' for m in markers)}.
 - Name the framing explicitly. Change angle only when motivated and physically compatible with the action.
 - Use one main action and at most two supporting actions over the clip. Allow natural listening and response
@@ -127,6 +134,10 @@ Hard requirements:
   cities, day/night, or story time inside this 10-second generation.
 - Character action/dialogue is the main content. Camera, lighting, transitions, particles, facial holds,
   and visual effects are supporting details only and may not occupy a beat.
+- COMPACT 10-SECOND DRAMA: put the hook/problem in the first 0–2 seconds, a decisive confrontation,
+  reveal, reversal, or counter-action in the middle, and a visible consequence/payoff/cliffhanger by 8–10 seconds.
+  Cut greetings, repeated reactions, backstory, and slow travel. Every clip must deliver a dramatic micro-turn
+  while still continuing the larger story.
 - No frozen tableaux, decorative montage or gratuitous slow motion. A meaningful pause or listening reaction is valid.
 - {dialogue_instruction}
 - {tone}
@@ -176,12 +187,13 @@ def densify_flow_prompt(prompt: str, scene: Dict[str, Any], duration: int) -> st
         "OPENING STATE: Preserve the exact incoming character positions, body orientation, eyelines, active "
         "hands, and held-prop orientation; if any of these are unspecified, infer one physically coherent "
         "arrangement and keep it unchanged until visible movement changes it. "
-        f"MANDATORY DENSE 10-SECOND {shot_count}-SHOT SEQUENCE: {beats}. The final shot must deliver a "
+        f"MANDATORY DENSE 10-SECOND {shot_count}-BEAT SEQUENCE (dynamic 3–5 beats per scene): {beats}. The final shot must deliver a "
         "reveal, decision, impact, or motivated reaction. Keep critical contact in one continuous view; "
         f"all {shot_count} beats show ONE continuous event in the SAME location and SAME time window; they are "
         "camera-angle changes, not separate story scenes. Preserve identical faces, wardrobe, props, location, "
         "screen direction, and cause-and-effect. "
-        "Use one main action and at most two supporting actions per clip; allow motivated listening, breaths "
+        "Use one main action and at most two supporting actions per clip; for drama, hook immediately, force a "
+        "mid-clip turn, and land a consequence before the final frame; allow motivated listening, breaths "
         "and pauses. No frozen posing or unnecessary gestures. Define story-critical prop parts unambiguously and show "
         "where any engraving, hinge, handle, or mark is located. Keep eyelines attached to a named person or "
         "object; never use an ambiguous 'look forward' and never look into camera unless explicitly authored. "

@@ -208,12 +208,9 @@ class TextGenerationManager:
         cfg = self.settings_loader()
         default = cfg.get("default_text_provider", "gemini")
         order = provider_order or provider_order_from_settings(cfg, default)
-        # 9Router is itself the user's routing layer. Do not silently fan out
-        # to paid providers after it fails, and do not spend a second request
-        # retrying malformed JSON through the same router.
-        router_only = default == "9router" and provider_order is None
-        if router_only:
-            order = ["9router"]
+        # 9Router remains first when selected as default, but a blank or
+        # malformed response must not make storyboard generation fail while
+        # other configured providers are available.
         last_error = None
         for provider in order:
             if provider == "web2api":

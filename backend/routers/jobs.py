@@ -23,10 +23,14 @@ class JobCreateRequest(BaseModel):
     force_uniform_duration: bool = False
     # Maximum number of new scene videos for this run. None means render all pending scenes.
     render_scene_limit: Optional[int] = Field(default=None, ge=1)
+    render_scene_start: Optional[int] = Field(default=None, ge=1)
+    render_scene_end: Optional[int] = Field(default=None, ge=1)
 
 
 class JobResumeRequest(BaseModel):
     render_scene_limit: Optional[int] = Field(default=None, ge=1)
+    render_scene_start: Optional[int] = Field(default=None, ge=1)
+    render_scene_end: Optional[int] = Field(default=None, ge=1)
 
 
 @router.post("/create")
@@ -44,6 +48,8 @@ async def create_job(req: JobCreateRequest):
             flow_project_id=req.flow_project_id,
             force_uniform_duration=req.force_uniform_duration,
             render_scene_limit=req.render_scene_limit,
+            render_scene_start=req.render_scene_start,
+            render_scene_end=req.render_scene_end,
         )
     )
 
@@ -69,7 +75,7 @@ def cancel_running_job(job_id: str):
 
 @router.post("/{job_id}/resume")
 async def resume_existing_job(job_id: str, req: Optional[JobResumeRequest] = None):
-    success = resume_job(job_id, req.render_scene_limit if req else None)
+    success = resume_job(job_id, req.render_scene_limit if req else None, req.render_scene_start if req else None, req.render_scene_end if req else None)
     if not success:
         raise HTTPException(status_code=400, detail="Job tidak dapat dilanjutkan. Pastikan data storyboard tersimpan dan job valid.")
     return {"success": True, "message": f"Job {job_id} berhasil dilanjutkan dari adegan yang belum selesai."}

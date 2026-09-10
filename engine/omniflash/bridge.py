@@ -94,7 +94,7 @@ class ExtensionBridge:
 
     def register_instance(
         self, instance_id: str, ws, instance_name: str = None, project_id: str = None,
-        ready: bool = True, readiness_error: str = None, version: str = None,
+        ready: bool = True, readiness_error: str = None, version: str = None, session_ready: bool = False,
     ):
         instance_id = str(instance_id or "").strip()
         if not instance_id:
@@ -105,6 +105,7 @@ class ExtensionBridge:
             "ws": ws,
             "name": (instance_name or previous.get("name") or f"Profile {instance_id[:6]}").strip(),
             "flow_key": previous.get("flow_key"),
+            "session_ready": bool(session_ready) or previous.get("session_ready", False),
             "project_id": project_id or previous.get("project_id"),
             "ready": bool(ready),
             "readiness_error": readiness_error,
@@ -197,7 +198,7 @@ class ExtensionBridge:
                 "instance_id": iid,
                 "name": entry.get("name"),
                 "connected": entry.get("ws") is not None and _is_ws_connected(entry["ws"]),
-                "logged_in": bool(entry.get("flow_key")),
+                "logged_in": bool(entry.get("flow_key") or entry.get("session_ready")),
                 "project_id": entry.get("project_id"),
                 "ready": bool(entry.get("ready", True)),
                 "readiness_error": entry.get("readiness_error"),

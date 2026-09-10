@@ -51,6 +51,7 @@ def _inject_actors_info(actor_ids: str, character_info: str, saved_paths: List[s
 
 class AutoSuggestRequest(BaseModel):
     theme: str
+    enhance_existing: Optional[bool] = False
     microdrama_mode: Optional[bool] = False
     children_mode: Optional[bool] = False
     series_mode: Optional[bool] = False
@@ -315,7 +316,7 @@ def suggest_concept(req: AutoSuggestRequest):
     if not theme:
         return auto_concept_get(microdrama_mode=req.microdrama_mode or False, children_mode=req.children_mode or False, series_mode=req.series_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "", target_lang=req.target_lang or "")
     try:
-        suggestion = auto_suggest_details(theme, microdrama_mode=req.microdrama_mode or False, children_mode=req.children_mode or False, series_mode=req.series_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "", target_lang=req.target_lang or "")
+        suggestion = auto_suggest_details(theme, microdrama_mode=req.microdrama_mode or False, children_mode=req.children_mode or False, series_mode=req.series_mode or False, target_country=req.target_country or "", dracin_theme=req.dracin_theme or "", target_lang=req.target_lang or "", enhance_existing=req.enhance_existing or False)
         return {"success": True, "concept": suggestion.get("suggested_premise", theme), "suggestion": suggestion}
     except Exception as ex:
         log.error("Error auto-suggesting concept: %s", ex)

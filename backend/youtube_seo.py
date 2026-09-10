@@ -241,6 +241,12 @@ def normalize_youtube_seo_kit(data: Optional[Dict[str, Any]], film_title: str = 
             chapters_str = "\n".join(chapters_list)
 
     desc = str(raw.get("description") or raw.get("video_description") or raw.get("desc") or "").strip()
+    # Internal execution context must never leak into public YouTube copy.
+    # Providers sometimes echo phrases such as "Menyelesaikan Job <id>" from
+    # the storyboard payload instead of writing a viewer-facing synopsis.
+    desc = re.sub(r"\bMenyelesaikan\s+Job\s+[A-Za-z0-9_-]+\s*", "", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"\b(?:Job|job[_ -]?id)\s+[A-Za-z0-9_-]+\b", "", desc)
+    desc = re.sub(r"\s{2,}", " ", desc).strip()
     if not desc:
         desc = (
             f"{title_clean} menghadirkan {premise_clean}.\n"

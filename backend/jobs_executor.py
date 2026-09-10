@@ -122,7 +122,12 @@ def get_job_logs(job_id: str) -> List[Dict[str, Any]]:
 
 
 def get_job_status(job_id: str) -> Optional[Dict[str, Any]]:
-    return _active_jobs.get(job_id)
+    job = _active_jobs.get(job_id)
+    if job is not None:
+        return job
+    if isinstance(job_id, str) and job_id.startswith("job__"):
+        return _active_jobs.get("job_" + job_id[5:])
+    return None
 
 
 def list_jobs() -> List[Dict[str, Any]]:
@@ -234,6 +239,21 @@ def delete_job(job_id: str) -> bool:
     _job_logs.pop(job_id, None)
     _save_history()
     return existed
+
+
+def hide_gallery_job(job_id: str) -> bool:
+    """Hide a job from Gallery without deleting any rendered files."""
+    job = _active_jobs.get(job_id)
+    job_dir = settings.JOBS_DIR / job_id
+    if not job_dir.is_dir():
+        return False
+    if job:
+        job["gallery_hidden"] = True
+        _save_history()
+    return True
+
+
+delete_job_clips = hide_gallery_job
 
 
 def delete_multiple_jobs(job_ids: List[str]) -> int:
@@ -632,7 +652,8 @@ def fictionalize_character_names(prompt: str, character_names: List[str]) -> str
 
 def choose_instance_for_project(instances: List[Dict[str, Any]], project_id: Optional[str]) -> Optional[str]:
     """Choose the connected Chrome identity that actually owns the requested Flow project."""
-    connected = [item for item in instances if item.get("connected") and item.get('ready', True)]
+    connected = [item for item in instances
+                 if item.get("connected") and item.get('ready', True) and item.get('logged_in', True)]
     if not connected:
         return None
     connected.sort(
@@ -667,7 +688,7 @@ def build_sheet_manifest(sheet_chars: List[Dict[str, Any]]) -> str:
 
 
 def build_composition_addendum(scene: Dict[str, Any]) -> str:
-    """Fold the storyboard's 4-6 multi-angle shot flow into the video prompt as text.
+    """Fold the storyboard's 3-5 multi-angle shot flow into the video prompt as text.
 
     Flow's video endpoint accepts real reference images, but its image endpoint gives us no
     way to pin a storyboard panel to the character sheets. So the composition guidance the
@@ -695,10 +716,10 @@ def build_composition_addendum(scene: Dict[str, Any]) -> str:
             elif isinstance(sf, str) and sf.strip():
                 flow_lines.append(sf.strip())
         if flow_lines:
-            bits.append("Cinematic 4-6 multi-angle camera cut progression across the clip: " + " -> ".join(flow_lines) + ".")
+            bits.append("Cinematic 3-5 multi-angle camera beat progression across the clip: " + " -> ".join(flow_lines) + ".")
     else:
         bits.append(
-            "Stage it as a dynamic 4 to 6 multi-angle camera cut progression: opening low-angle close-up "
+            "Stage it as a dynamic 3 to 5 multi-angle camera beat progression: opening low-angle close-up "
             "establishing physical action, cutting to medium-wide environment interaction, over-the-shoulder focus, "
             "and resolving into a wide framing. Keep every character exactly as shown in the attached character sheets — "
             "same faces, colours, proportions and outfits throughout."
@@ -793,13 +814,18 @@ async def execute_storyboard_job(
     flow_project_id: Optional[str] = None,
     force_uniform_duration: bool = False,
     render_scene_limit: Optional[int] = None,
+    render_scene_start: Optional[int] = None,
+    render_scene_end: Optional[int] = None,
 ):
     """Execute video generation for each scene across available Chrome profiles."""
     bridge = get_bridge()
     job_dir = settings.JOBS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    scenes = storyboard.get("scenes", [])
+    all_scenes = storyboard.get("scenes", [])
+    scenes = [s for i, s in enumerate(all_scenes, 1)
+              if (render_scene_start is None or int(s.get("scene_number") or i) >= render_scene_start)
+              and (render_scene_end is None or int(s.get("scene_number") or i) <= render_scene_end)]
     asset_cache = FilmAssetCache(settings.STORAGE_DIR / 'film_assets', ensure_film_asset_id(storyboard))
     total_scenes = len(scenes)
 
@@ -853,6 +879,9 @@ async def execute_storyboard_job(
         "profile_failures": {},
     }
     _active_jobs[job_id] = job_state
+    # Persist the complete storyboard immediately so a backend restart before
+    # the first scene/error checkpoint can still resume this job.
+    _save_history()
 
     planned_durations = [
         duration if force_uniform_duration else resolve_scene_duration(sc, duration) for sc in scenes
@@ -879,7 +908,7 @@ async def execute_storyboard_job(
     if not project_id:
         snap = bridge.instance_snapshot()
         candidates = sorted(
-            [i for i in snap if i.get("project_id")],
+            [i for i in snap if i.get("project_id") and i.get("connected") and i.get("ready", True) and i.get("logged_in", True)],
             key=lambda x: (str(x.get("version") or "") >= "1.3.9", x.get("ready", True)),
             reverse=True,
         )
@@ -889,12 +918,17 @@ async def execute_storyboard_job(
     if not project_id:
         log_event(job_id, "⚠️ Flow Project ID belum diisi di Settings. Menggunakan default session project...", level="warning")
     else:
-        log_event(job_id, f"🌐 [0%] Flow Project ID terdeteksi: {project_id[:16]}...")
+        log_event(job_id, f"🌐 [0%] Flow Project ID kandidat: {project_id}")
 
     project_instance_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
     selected_profile = next((item for item in bridge.instance_snapshot()
                              if item.get('instance_id') == project_instance_id), {})
     project_id = selected_profile.get('project_id') or project_id
+    log_event(
+        job_id,
+        f"🎯 [0%] Flow Project ID yang dipakai: {project_id or '(default session project)'}"
+        f" | Profil: {selected_profile.get('name') or selected_profile.get('instance_id') or '(otomatis)'}",
+    )
 
     # Step 1: Upload Reference Image, or Generate one Anchor Seed Image PER Character in Flow
     ref_media_id = None
@@ -958,7 +992,12 @@ async def execute_storyboard_job(
     else:
 
         from omniflash.generators import generate_character_image
-        first_target_id = choose_instance_for_project(bridge.instance_snapshot(), project_id)
+        seed_instances = [item for item in bridge.instance_snapshot()
+                          if item.get('connected') and item.get('ready', True) and item.get('logged_in', True)]
+        seed_instances.sort(key=lambda item: item.get('instance_id') != choose_instance_for_project(seed_instances, project_id))
+        first_target_id = seed_instances[0].get('instance_id') if seed_instances else None
+        if not first_target_id:
+            raise RuntimeError('Tidak ada profil Chrome Flow yang aktif untuk membuat character sheet.')
 
         log_event(job_id, f"🎨 [5%] Memeriksa master cache {len(characters)} karakter; hanya sheet yang belum ada akan dibuat.")
         for c_idx, char in enumerate(characters, start=1):
@@ -1017,9 +1056,20 @@ async def execute_storyboard_job(
             suppress_references = False
             request_seed = char_seed
             for try_cnt in range(1, 5):
+                # Rotate through every currently connected Flow profile instead of
+                # retrying an expired OAuth session on the same profile.
+                live_seed_instances = [item for item in bridge.instance_snapshot()
+                                       if item.get('connected') and item.get('ready', True) and item.get('logged_in', True)]
+                if live_seed_instances:
+                    seed_target = live_seed_instances[(try_cnt - 1) % len(live_seed_instances)]
+                    seed_instance_id = seed_target.get('instance_id')
+                    seed_project_id = seed_target.get('project_id') or project_id
+                else:
+                    seed_instance_id = first_target_id
+                    seed_project_id = project_id
                 try:
                     reference_media_ids = await upload_character_references(
-                        bridge, owned_reference_paths, project_id, first_target_id
+                        bridge, owned_reference_paths, seed_project_id, seed_instance_id
                     ) if owned_reference_paths and not suppress_references else []
                     if owned_reference_paths and not suppress_references and len(reference_media_ids) != len(owned_reference_paths):
                         raise RuntimeError(
@@ -1037,8 +1087,8 @@ async def execute_storyboard_job(
                         bridge,
                         prompt=(char_prompt + build_visual_style_guard(visual_style, is_children)
                                 + build_finishing_look_guard(storyboard)),
-                        aspect="portrait", project_id=project_id,
-                        instance_id=first_target_id,
+                        aspect="portrait", project_id=seed_project_id,
+                        instance_id=seed_instance_id,
                         reference_media_ids=reference_media_ids or None,
                     )
                     if reference_media_ids and not img_res.get("reference_applied"):
@@ -1049,7 +1099,7 @@ async def execute_storyboard_job(
                     if media_id:
                         asset_cache.record(asset_key, status='download_pending', name=char_name,
                                            media_id=media_id, image_url=img_res.get('image_url'),
-                                           project_id=project_id, instance_id=first_target_id)
+                                           project_id=seed_project_id, instance_id=seed_instance_id)
                         cached_sheet = await recover_character_master(asset_cache, asset_key, bridge, job_dir)
                         for alias in (char_id, str(char_id), char_name, char_name.lower()):
                             character_image_paths[alias] = cached_sheet
@@ -1079,10 +1129,24 @@ async def execute_storyboard_job(
                         return
                     if "recaptcha" in str(ex).lower() or "unusual_activity" in str(ex).lower():
                         error_message = (
-                            "Google Flow menolak verifikasi reCAPTCHA (aktivitas tidak biasa). "
-                            "Job dihentikan cepat agar tidak membuang retry/kuota. Buka Flow manual pada profil yang sama, "
-                            "selesaikan verifikasi bila muncul, tunggu beberapa menit, lalu Resume job."
+                            "Google Flow menolak verifikasi reCAPTCHA (aktivitas tidak biasa) pada profil yang dipakai. "
+                            "Semua profil Flow aktif sudah dicoba; buka Flow manual, selesaikan verifikasi bila muncul, "
+                            "tunggu beberapa menit, lalu Resume job."
                         )
+                        alternate_count = sum(
+                            1 for item in bridge.instance_snapshot()
+                            if item.get('connected') and item.get('ready', True)
+                            and item.get('logged_in', True)
+                            and item.get('instance_id') != seed_instance_id
+                        )
+                        if try_cnt < 4 and alternate_count:
+                            log_event(
+                                job_id,
+                                f"🔁 reCAPTCHA ditolak pada profil {seed_instance_id}; "
+                                "otomatis mencoba akun Flow aktif berikutnya.",
+                                level="warning",
+                            )
+                            continue
                         job_state["status"] = "waiting_for_login"
                         job_state["error"] = error_message
                         log_event(job_id, f"🛡️ {error_message}", level="error")
@@ -1092,8 +1156,25 @@ async def execute_storyboard_job(
                         error_message = (
                             "Sesi OAuth Google Flow kedaluwarsa. Token lama sudah ditolak Google; "
                             "buka Flow, lakukan satu generate manual agar extension menangkap token baru, "
-                            "reload extension v1.4.1, lalu Resume job."
+                            "reload extension v1.4.4, lalu Resume job. "
+                            f"Flow Project ID yang dipakai: {seed_project_id or project_id or '(default session project)'}."
                         )
+                        # OAuth failure is profile-specific. Give the next connected
+                        # Flow profile a chance before pausing the whole job.
+                        alternate_count = sum(
+                            1 for item in bridge.instance_snapshot()
+                            if item.get('connected') and item.get('ready', True)
+                            and item.get('logged_in', True)
+                            and item.get('instance_id') != seed_instance_id
+                        )
+                        if try_cnt < 4 and alternate_count:
+                            log_event(
+                                job_id,
+                                f"🔁 OAuth gagal pada profil {seed_instance_id} / project {seed_project_id}; "
+                                "otomatis mencoba profil Flow berikutnya.",
+                                level="warning",
+                            )
+                            continue
                         job_state["status"] = "waiting_for_login"
                         job_state["error"] = error_message
                         log_event(job_id, f"🔐 {error_message}", level="error")
@@ -1337,7 +1418,7 @@ async def execute_storyboard_job(
 
         snap_instances = [
             i for i in bridge.instance_snapshot()
-            if i["connected"] and i.get("ready", True)
+            if i["connected"] and i.get("ready", True) and i.get("logged_in", True)
             and not job_state.get("profile_failures", {}).get(i.get("instance_id"), {}).get("quota_exhausted")
         ]
         snap_instances.sort(key=lambda item: item.get("instance_id") != project_instance_id)
@@ -1824,7 +1905,8 @@ async def execute_storyboard_job(
             policy_attempt += 1
             drop_all_scene_references = should_drop_character_references(
                 policy_rejection, policy_attempt, max_policy_rewrites
-            ) or (policy_attempt >= 3 and is_unsafe_generation_error(policy_rejection))
+            ) or (policy_attempt >= 1 and "PUBLIC_ERROR_PROMINENT_PEOPLE_FILTER_FAILED" in policy_rejection) \
+              or (policy_attempt >= 3 and is_unsafe_generation_error(policy_rejection))
             log_event(job_id, f"🧠 [Adegan {idx}/{total_scenes}] Prompt/gambar ditolak filter. Meminta provider AI meracik sinonim prompt yang aman & dramatis (percobaan {policy_attempt}/{max_policy_rewrites})...")
 
             from .gemini_storyboard import sanitize_prompt_for_policy
@@ -1938,9 +2020,10 @@ async def execute_storyboard_job(
     _save_history()
 
 
-def resume_job(job_id: str, render_scene_limit: Optional[int] = None) -> bool:
+def resume_job(job_id: str, render_scene_limit: Optional[int] = None, render_scene_start: Optional[int] = None, render_scene_end: Optional[int] = None) -> bool:
     """Resume execution of an existing job from where it left off, reusing finished scenes and character sheets."""
-    job = get_job_status(job_id)
+    canonical_job_id = "job_" + job_id[5:] if isinstance(job_id, str) and job_id.startswith("job__") else job_id
+    job = get_job_status(canonical_job_id)
     if not job:
         return False
     storyboard = job.get("storyboard") or job.get("seo_storyboard")
@@ -1952,14 +2035,16 @@ def resume_job(job_id: str, render_scene_limit: Optional[int] = None) -> bool:
     # None deliberately means "all remaining scenes". Always replace the previous
     # batch limit so clearing the UI field does not accidentally reuse an old quota.
     job["render_scene_limit"] = render_scene_limit
-    _active_jobs[job_id] = job
+    job["render_scene_start"] = render_scene_start
+    job["render_scene_end"] = render_scene_end
+    _active_jobs[canonical_job_id] = job
     _save_history()
 
-    log_event(job_id, f"🔄 [USER] Melanjutkan eksekusi job '{job.get('title')}' dari adegan yang belum selesai...")
+    log_event(canonical_job_id, f"🔄 [USER] Melanjutkan eksekusi job '{job.get('title')}' dari adegan yang belum selesai...")
 
     asyncio.create_task(
         execute_storyboard_job(
-            job_id=job_id,
+            job_id=canonical_job_id,
             storyboard=storyboard,
             theme_image_path=job.get("theme_image_path"),
             aspect_ratio=job.get("aspect_ratio", "landscape"),
@@ -1967,6 +2052,8 @@ def resume_job(job_id: str, render_scene_limit: Optional[int] = None) -> bool:
             flow_project_id=job.get("flow_project_id"),
             force_uniform_duration=job.get("force_uniform_duration", False),
             render_scene_limit=job.get("render_scene_limit"),
+            render_scene_start=job.get("render_scene_start"),
+            render_scene_end=job.get("render_scene_end"),
         )
     )
     return True

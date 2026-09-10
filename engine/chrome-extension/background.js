@@ -17,6 +17,7 @@ let instanceId = null;
 let instanceName = "Chrome Profile";
 let currentProjectId = null;
 let lastKnownCredits = null;
+let flowSessionReady = false;
 
 let reconnectTimer = null;
 let reconnectAttempts = 0;
@@ -106,7 +107,14 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
       notifyTokenCaptured();
     }
   },
-  { urls: ['https://aisandbox-pa.googleapis.com/*', 'https://aisandbox-pa.sandbox.googleapis.com/*', 'https://labs.google/*', 'https://flow.google.com/*'] },
+  { urls: [
+    'https://aisandbox-pa.googleapis.com/*',
+    'https://aisandbox-pa.sandbox.googleapis.com/*',
+    'https://*.googleapis.com/*',
+    'https://*.google.com/*',
+    'https://labs.google/*',
+    'https://flow.google.com/*'
+  ] },
   ['requestHeaders', 'extraHeaders'],
 );
 
@@ -170,7 +178,14 @@ function flushPendingFlowSample() {
 
 async function _detectProjectIdFromTabs(preferredTabId = null) {
   try {
-    const tabs = await FlowTab.queryFlowTabs(chrome);
+    let tabs = [];
+    // Prefer the actual active tab in the last-focused window. This prevents a
+    // restored/background Flow tab from supplying a stale project ID.
+    try {
+      const activeTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      tabs = (activeTabs || []).filter(tab => FlowTab.isFlowUrl(tab.url || tab.pendingUrl));
+    } catch (_) {}
+    if (!tabs.length) tabs = await FlowTab.queryFlowTabs(chrome);
     if (tabs && tabs.length) {
       // chrome.tabs.query does not guarantee useful ordering. Always bind the
       // project to the tab selected for this request; otherwise an old Flow tab
@@ -206,6 +221,15 @@ async function _detectProjectIdFromTabs(preferredTabId = null) {
 function init() {
   _detectProjectIdFromTabs();
   connectWebSocket();
+  // A Flow tab can already be open before the extension worker starts. In that
+  // case no navigation/request event is emitted after registration, leaving a
+  // valid profile stuck at FLOW_LOGIN_REQUIRED. Probe each profile periodically
+  // until its own session token is recovered.
+  setInterval(() => {
+    if (!flowKey) {
+      _detectProjectIdFromTabs().then(() => notifyRegistration()).catch(() => {});
+    }
+  }, 10000);
   // Chrome clamps anything under 1 minute and logs a warning, so stay at the documented minimum.
   chrome.alarms.create('keepAlive', { periodInMinutes: 1 });
 }
@@ -508,18 +532,31 @@ async function notifyRegistration() {
   }
   const readiness = readinessError
     ? { ready: false, error: readinessError }
-    : FlowTab.readinessState({ tab: flowTab, flowKey, projectId: currentProjectId });
+    : FlowTab.readinessState({ tab: flowTab, flowKey: flowKey || (await hasFlowSessionCookie()), projectId: currentProjectId });
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({
     type: 'register',
     instance_id: instanceId,
     name: instanceName,
     flow_key: flowKey,
+    session_ready: flowSessionReady,
     project_id: currentProjectId,
     ready: readiness.ready,
     readiness_error: readiness.error,
     version: chrome.runtime.getManifest().version,
   }));
+}
+
+async function hasFlowSessionCookie() {
+  try {
+    const names = ['SID', '__Secure-1PSID', '__Secure-3PSID', 'SAPISID', '__Secure-1PAPISID'];
+    for (const name of names) {
+      const cookie = await chrome.cookies.get({ url: 'https://flow.google.com/', name });
+      if (cookie?.value) { flowSessionReady = true; return true; }
+    }
+  } catch (_) {}
+  flowSessionReady = false;
+  return false;
 }
 
 function notifyTokenCaptured() {
@@ -565,6 +602,19 @@ async function _probeTokenFromTab(tabId) {
       console.log('[Sinematica Agent] Recovered OAuth session from Flow tab.');
       notifyTokenCaptured();
       return flowKey;
+    }
+    // MV3 isolated content scripts can see a different storage context than
+    // MAIN-world injection. Ask the content script as a second per-profile
+    // recovery path before declaring this Chrome profile unauthenticated.
+    if (!flowKey) {
+      const pageAuth = await chrome.tabs.sendMessage(tabId, { type: 'GET_PAGE_AUTH_TOKEN' }).catch(() => null);
+      const recoveredPageToken = pageAuth?.flow_key;
+      if (recoveredPageToken && !flowKey) {
+        flowKey = recoveredPageToken;
+        chrome.storage.local.set({ flowKey });
+        notifyTokenCaptured();
+        return flowKey;
+      }
     }
   } catch (_) {}
   // A logged-in Flow page need not keep its access token in Web Storage or
@@ -763,7 +813,11 @@ async function handleApiRequest(msg) {
   }
 
   try {
-    const activeBearerKey = flow_key || flowKey;
+    // A profile may report session_ready while its cached flowKey is empty or
+    // stale. Recover the OAuth token from this profile's actual Flow tab before
+    // sending the request; otherwise Google sees only the public API key.
+    const recoveredBearerKey = await _probeTokenFromTab(targetTab.id);
+    const activeBearerKey = recoveredBearerKey || flow_key || flowKey;
     const isOwnImageRequest = endpoint.includes('batchGenerateImages');
     if (isOwnImageRequest) selfRequestsInFlight++;
 

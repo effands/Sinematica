@@ -22,7 +22,7 @@
     try {
       const parsed = new URL(String(url || ''));
       if (parsed.protocol !== 'https:') return false;
-      if (parsed.hostname === 'flow.google.com') return true;
+      if (parsed.hostname === 'flow.google.com' || parsed.hostname === 'www.flow.google.com') return true;
       return parsed.hostname === 'labs.google'
         && /^\/fx\/(?:[a-z0-9_-]+\/)*(?:tools\/)?flow(?:\/|$)/i.test(parsed.pathname);
     } catch (_) {
@@ -41,7 +41,12 @@
   }
 
   async function queryFlowTabs(chromeApi) {
-    const tabs = await chromeApi.tabs.query({ url: FLOW_TAB_PATTERNS });
+    // Restored/session tabs can be missed by Chrome's URL-filtered query.
+    let tabs = [];
+    try { tabs = await chromeApi.tabs.query({ url: FLOW_TAB_PATTERNS }); } catch (_) {}
+    if (!tabs || !tabs.length) {
+      try { tabs = await chromeApi.tabs.query({}); } catch (_) { tabs = []; }
+    }
     return (tabs || []).filter(item => isFlowUrl(item.url || item.pendingUrl));
   }
 

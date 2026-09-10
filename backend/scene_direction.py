@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from typing import Any, Dict, List
+import hashlib
 import re
 
 
@@ -43,20 +44,16 @@ def apply_no_branding_direction(prompt: str) -> str:
 
 
 def choose_shot_count(scene: Dict[str, Any], prompt: str = "") -> int:
-    """Choose 3, 4, or 5 shots from story energy, never by blind randomness."""
+    """Choose a stable-but-varied 3–5 beat count for a 10-second clip."""
+    explicit = scene.get("shot_count")
+    if explicit in (3, 4, 5, "3", "4", "5"):
+        return int(explicit)
     text = " ".join(str(scene.get(k) or "") for k in ("title", "action_summary", "dialogue"))
     text = f"{text} {prompt}".lower()
-    # Door/contact actions need readable continuous coverage even in a tense scene.
-    if re.search(r"\b(?:door|doorway|pintu|gerbang)\b", text):
+    if not str(scene.get("title") or "").strip():
         return 3
-    if contains_story_terms(text, _ACTION_WORDS):
-        return 5
-    speech_present = bool(scene.get("dialogue")) or any(
-        marker in text for marker in ('"', "speaks", "speaking", "says", "shouts", "berkata", "berbicara")
-    )
-    if contains_story_terms(text, _EMOTIONAL_WORDS) or speech_present:
-        return 3
-    return 4
+    fingerprint = hashlib.sha256(text.encode("utf-8")).digest()[0]
+    return 3 + (fingerprint % 3)
 
 
 def contains_story_terms(text: str, terms) -> bool:

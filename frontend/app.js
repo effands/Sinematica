@@ -531,7 +531,8 @@ function parseImportedStoryboard(raw) {
     throw new Error('Root JSON harus berupa object storyboard.');
   }
   if (!String(storyboard.film_title || '').trim()) throw new Error('Field film_title wajib diisi.');
-  if (!Array.isArray(storyboard.characters) || !storyboard.characters.length) {
+  const pureAsmr = /\b(?:pure\s+asmr|asmr|rain ambience|fireplace|river stream|nature ambience)\b/i.test(`${storyboard.film_title || ''} ${storyboard.premise || ''} ${storyboard.genre_style || ''}`);
+  if (!Array.isArray(storyboard.characters) || (!storyboard.characters.length && !pureAsmr)) {
     throw new Error('Field characters wajib berupa array dan minimal berisi satu karakter.');
   }
   if (!Array.isArray(storyboard.scenes) || !storyboard.scenes.length) {
@@ -826,8 +827,43 @@ function hideCuteAiLoading() {
 }
 
 function seoStorageKey(jobId) {
-  // v6 invalidates SEO covers generated with a ratio that did not follow the source video.
-  return `sinematica_seo_kit_v6_${jobId}`;
+  // v8 invalidates thumbnail prompts that drifted away from the source medium.
+  return `sinematica_seo_kit_v9_${jobId}`;
+}
+
+function sanitizePublicDescription(value) {
+  return String(value || '')
+    .replace(/\bMenyelesaikan\s+Job\s+[A-Za-z0-9_-]+\s*/gi, '')
+    .replace(/\b(?:Job|job[_ -]?id)\s+[A-Za-z0-9_-]+\b/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function buildThumbnailVariants(kit, round = 0) {
+  const base = String(kit.thumbnail_prompt || '').trim();
+  const directionSets = [[
+    'Variant 1 — hero close-up, strongest facial emotion, dramatic rim light, clear focal point.',
+    'Variant 2 — dynamic action moment, diagonal composition, motion energy, strong foreground depth.',
+    'Variant 3 — conflict/reaction composition, two-subject contrast, readable visual tension, bold color separation.',
+    'Variant 4 — mystery and curiosity composition, unusual camera angle, cinematic lighting, strongest click-through hook.'
+  ], [
+    'Variant 1 — over-the-shoulder confrontation, expressive eyes, layered depth, intense but readable lighting.',
+    'Variant 2 — wide environmental standoff, clear power imbalance, cinematic perspective, bold silhouette separation.',
+    'Variant 3 — decisive reveal moment, foreground subject and shocked reaction, controlled highlights, high curiosity.',
+    'Variant 4 — low-angle character entrance, atmospheric haze, red accent light, clean space for short title text.'
+  ], [
+    'Variant 1 — split visual tension, opposing faces, sharp lighting contrast, original composition with one focal point.',
+    'Variant 2 — kinetic diagonal framing, frozen action beat, strong hands and posture, no clutter.',
+    'Variant 3 — secret discovery close-up, meaningful prop, shadow shape, suspenseful cinematic color grade.',
+    'Variant 4 — intimate reaction portrait, restrained background, emotional stakes instantly readable, premium poster finish.'
+  ], [
+    'Variant 1 — ensemble power triangle, three distinct expressions, balanced negative space, dramatic backlight.',
+    'Variant 2 — doorway reveal, deep perspective, character silhouette against practical light, strong narrative hook.',
+    'Variant 3 — aftermath composition, visible consequence without graphic violence, tense faces, crisp subject isolation.',
+    'Variant 4 — elevated camera angle over a charged meeting, rich atmosphere, bold focal contrast, thumbnail clarity.'
+  ]];
+  const directions = directionSets[round % directionSets.length];
+  return directions.map(direction => `${base}\n\n${direction} Keep the same story, characters, title context, aspect ratio, and visual identity. Create an original thumbnail composition, no duplicate layout, no watermark.`);
 }
 
 function bindSeoCopyActions(body, kit) {
@@ -854,26 +890,41 @@ function bindSeoCopyActions(body, kit) {
       copyWithToast(title, 'Judul SEO berhasil tercopy!');
     });
   });
+  let promptRegenerationRound = 0;
+  let thumbnailPrompts = buildThumbnailVariants(kit, promptRegenerationRound);
+  body.querySelector('#btnRegenerateThumbPrompts')?.addEventListener('click', () => {
+    promptRegenerationRound = (promptRegenerationRound + 1) % 4;
+    thumbnailPrompts = buildThumbnailVariants(kit, promptRegenerationRound);
+    body.querySelectorAll('.seo-thumb-prompt').forEach((el, index) => { el.textContent = thumbnailPrompts[index]; });
+    body.querySelectorAll('.seo-thumb-image-result').forEach(el => { el.innerHTML = ''; });
+    showToast(`4 prompt cover alternatif berhasil dibuat (putaran ${promptRegenerationRound + 1}/4).`, 'success');
+  });
+  body.querySelectorAll('.btn-copy-thumb-prompt').forEach(btn => btn.addEventListener('click', () => {
+    const index = Number(btn.dataset.index || 0);
+    copyWithToast(thumbnailPrompts[index], `Prompt thumbnail varian ${index + 1} berhasil tercopy!`);
+  }));
+  // Backward compatibility for SEO markup cached by older frontend versions.
   body.querySelector('#btnCopyThumbPrompt')?.addEventListener('click', () =>
-    copyWithToast(kit.thumbnail_prompt, 'Prompt thumbnail berhasil tercopy!'));
+    copyWithToast(thumbnailPrompts[0], 'Prompt thumbnail berhasil tercopy!'));
   body.querySelector('#btnCopyTags')?.addEventListener('click', () =>
     copyWithToast(kit.tags_csv, 'Tag kata kunci berhasil tercopy!'));
   body.querySelector('#btnCopyHashtags')?.addEventListener('click', () =>
     copyWithToast((kit.hashtags || []).join(' '), 'Hashtag relevan berhasil tercopy!'));
 
-  const genThumbBtn = body.querySelector('#btnGenerateThumbFlow');
-  if (genThumbBtn) {
+  body.querySelectorAll('.btn-generate-thumb-flow').forEach(genThumbBtn => {
     genThumbBtn.addEventListener('click', async () => {
-      const resultContainer = body.querySelector('#seoThumbImageResult');
+      const index = Number(genThumbBtn.dataset.index || 0);
+      const prompt = thumbnailPrompts[index];
+      const resultContainer = body.querySelector(`.seo-thumb-image-result[data-index="${index}"]`);
       genThumbBtn.disabled = true;
-      genThumbBtn.textContent = '⏳ Mengirim ke Google Flow...';
+      genThumbBtn.textContent = '⏳ Generate...';
       if (resultContainer) resultContainer.innerHTML = '<p style="color:var(--neon-cyan);font-size:12px;margin-top:8px;">🚀 Mengirim prompt cover ke Google Flow...</p>';
       try {
         const res = await fetch('/api/storyboard/generate_thumbnail', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            prompt: kit.thumbnail_prompt,
+            prompt,
             aspect_ratio: kit.thumbnail_aspect_ratio || '16:9',
           })
         });
@@ -885,11 +936,11 @@ function bindSeoCopyActions(body, kit) {
               <p style="color:#34d399; font-weight:800; font-size:13px; margin:0 0 8px 0;">✅ Cover Thumbnail Berhasil Dibuat di Google Flow!</p>
               ${data.image_url ? `<img src="${data.image_url}" style="max-width:100%; max-height:260px; border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,0.5); margin-bottom:8px;" />` : ''}
               <div>
-                ${data.image_url ? `<button type="button" id="btnDownloadGeneratedCover" class="btn-primary" style="display:inline-block; padding:6px 14px; font-size:12px; font-weight:800;">💾 Download Cover Image</button>` : ''}
+                ${data.image_url ? `<button type="button" class="btn-primary btn-download-generated-cover" style="display:inline-block; padding:6px 14px; font-size:12px; font-weight:800;">💾 Download Cover Image</button>` : ''}
               </div>
             </div>
           `;
-          const downloadBtn = resultContainer.querySelector('#btnDownloadGeneratedCover');
+          const downloadBtn = resultContainer.querySelector('.btn-download-generated-cover');
           downloadBtn?.addEventListener('click', async () => {
             downloadBtn.disabled = true;
             downloadBtn.textContent = '⏳ Menyiapkan download...';
@@ -910,7 +961,7 @@ function bindSeoCopyActions(body, kit) {
               const objectUrl = URL.createObjectURL(blob);
               const anchor = document.createElement('a');
               anchor.href = objectUrl;
-              anchor.download = 'youtube_thumbnail.png';
+              anchor.download = `youtube_thumbnail_variant_${index + 1}.png`;
               document.body.appendChild(anchor);
               anchor.click();
               anchor.remove();
@@ -928,6 +979,26 @@ function bindSeoCopyActions(body, kit) {
         if (resultContainer) resultContainer.innerHTML = `<p style="color:#f43f5e;font-size:12px;margin-top:8px;">❌ ${escapeHtml(err.message)}</p>`;
         genThumbBtn.disabled = false;
         genThumbBtn.textContent = '⚡ Coba Buat Lagi';
+      }
+    });
+  });
+  const legacyGenerateBtn = body.querySelector('#btnGenerateThumbFlow');
+  if (legacyGenerateBtn && !legacyGenerateBtn.dataset.bound) {
+    legacyGenerateBtn.dataset.bound = 'true';
+    legacyGenerateBtn.addEventListener('click', async () => {
+      legacyGenerateBtn.disabled = true;
+      legacyGenerateBtn.textContent = '⏳ Mengirim...';
+      const legacyResult = body.querySelector('#seoThumbImageResult');
+      try {
+        const res = await fetch('/api/storyboard/generate_thumbnail', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ prompt: thumbnailPrompts[0], aspect_ratio: kit.thumbnail_aspect_ratio || '16:9' }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Gagal generate thumbnail di Flow');
+        if (legacyResult) legacyResult.innerHTML = data.image_url ? `<img src="${data.image_url}" style="max-width:100%;max-height:260px;border-radius:8px;margin-top:12px;" />` : '<p>Gambar berhasil dibuat.</p>';
+        legacyGenerateBtn.textContent = '✅ Selesai';
+      } catch (error) {
+        if (legacyResult) legacyResult.innerHTML = `<p style="color:#f43f5e">❌ ${escapeHtml(error.message)}</p>`;
+        legacyGenerateBtn.disabled = false;
+        legacyGenerateBtn.textContent = '⚡ Coba Lagi';
       }
     });
   }
@@ -1010,7 +1081,7 @@ function initSeoKitModal() {
         const kit = {
           ...rawKit,
           seo_titles: rawKit.seo_titles || rawKit.titles || [],
-          description: rawKit.description || rawKit.desc || '',
+          description: sanitizePublicDescription(rawKit.description || rawKit.desc || ''),
           thumbnail_prompt: thumbVal,
           tags_csv: tagsVal,
           thumbnail_aspect_ratio: rawKit.thumbnail_aspect_ratio || (seoContext.aspect_ratio === 'portrait' ? '9:16' : '16:9')
@@ -1059,15 +1130,19 @@ function initSeoKitModal() {
             </div>
 
             <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <h4 style="color: var(--neon-cyan); font-size: 14px; margin: 0;">🖼️ Prompt Cover YouTube ${escapeHtml(kit.thumbnail_aspect_ratio)}:</h4>
-                <div style="display: flex; gap: 6px;">
-                  <button type="button" class="btn-secondary" id="btnCopyThumbPrompt" style="padding: 3px 8px; font-size: 11px;">📋 Copy Prompt</button>
-                  <button type="button" class="btn-primary" id="btnGenerateThumbFlow" style="padding: 3px 10px; font-size: 11px; font-weight: 800; background: linear-gradient(135deg, #059669, #10b981);">⚡ Buat Gambar di Flow</button>
-                </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <h4 style="color:var(--neon-cyan);font-size:14px;margin:0;">🖼️ 4 Thumbnail YouTube ${escapeHtml(kit.thumbnail_aspect_ratio)}:</h4>
+                <button type="button" class="btn-secondary" id="btnRegenerateThumbPrompts" style="padding:5px 9px;font-size:10px;">🔄 Regenerate 4 Prompt</button>
               </div>
-              <p style="font-size: 12px; color: var(--text-primary); background: rgba(0,0,0,0.5); padding: 8px; border-radius: 6px; margin: 0;" id="seoThumbText">${kit.thumbnail_prompt || '-'}</p>
-              <div id="seoThumbImageResult"></div>
+              <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;">
+                ${buildThumbnailVariants(kit).map((prompt, index) => `
+                  <div style="border:1px solid rgba(56,189,248,.25);border-radius:10px;padding:10px;background:rgba(0,0,0,.28);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><b style="color:#e9d5ff;font-size:12px;">Varian ${index + 1}</b><button type="button" class="btn-secondary btn-copy-thumb-prompt" data-index="${index}" style="padding:3px 7px;font-size:10px;">📋 Copy</button></div>
+                    <p class="seo-thumb-prompt" style="font-size:11px;line-height:1.45;color:var(--text-primary);background:rgba(0,0,0,.5);padding:8px;border-radius:6px;margin:0 0 7px;max-height:112px;overflow:auto;">${escapeHtml(prompt)}</p>
+                    <button type="button" class="btn-primary btn-generate-thumb-flow" data-index="${index}" style="width:100%;padding:5px 8px;font-size:11px;font-weight:800;background:linear-gradient(135deg,#059669,#10b981);">⚡ Generate / Regenerate</button>
+                    <div class="seo-thumb-image-result" data-index="${index}"></div>
+                  </div>`).join('')}
+              </div>
             </div>
 
             <div style="background: rgba(4, 7, 16, 0.7); border: 1px solid var(--glass-border); padding: 14px; border-radius: 10px;">
@@ -1467,7 +1542,7 @@ function initNavigation() {
 
     if (targetId === 'tab-fleet') fetchFleetStatus();
     if (targetId === 'tab-history') renderHistoryTab();
-    if (targetId === 'tab-gallery') refreshGallery();
+    if (targetId === 'tab-gallery') refreshGallery(false);
     if (targetId === 'tab-settings') loadSettingsTab();
   });
 }
@@ -1886,7 +1961,10 @@ function initStoryboardForm() {
           input.placeholder = 'Tempel script lengkap di sini: episode, lokasi, aksi, karakter, dan dialog...';
         }
         if (hint) hint.style.display = 'block';
-        if (autoButton) autoButton.disabled = true;
+        if (autoButton) {
+          autoButton.disabled = false;
+          autoButton.textContent = '🛠️ Enhance Script AI';
+        }
         const submit = document.getElementById('generateStoryboardBtn');
         if (submit) submit.innerHTML = '📄 Format Script & Buat Storyboard Render';
       } else {
@@ -1896,7 +1974,10 @@ function initStoryboardForm() {
           input.placeholder = 'Ketik tema singkat di sini (contoh: Kisah petualangan pendekar wanita di kota cyberpunk berhujan neon)...';
         }
         if (hint) hint.style.display = 'none';
-        if (autoButton) autoButton.disabled = false;
+        if (autoButton) {
+          autoButton.disabled = false;
+          autoButton.textContent = '🪄 Auto Concept AI';
+        }
         const submit = document.getElementById('generateStoryboardBtn');
         if (submit) submit.innerHTML = '✨ Generate AI Storyboard (Gemini 3.6 Flash)';
       }
@@ -1953,7 +2034,7 @@ function initStoryboardForm() {
     }
     totalLabel.title = `Estimasi kredit Google Flow: ${scenes} scene × 15 kredit = ${flowCredits} kredit`;
     if (storyPartSizeHint) {
-      const partSize = Math.max(1, Math.min(25, parseInt(storyPartSizeInput?.value, 10) || 15));
+      const partSize = Math.max(1, Math.min(8, parseInt(storyPartSizeInput?.value, 10) || 8));
       const partCount = Math.ceil(scenes / partSize);
       const lastPart = scenes % partSize || partSize;
       storyPartSizeHint.innerHTML = scenes > partSize
@@ -1993,17 +2074,16 @@ function initStoryboardForm() {
     updateTotalDuration();
   });
 
-  // A fresh form should use one part when the requested story is shorter than
-  // the old 15-scene default.
-  if (storyPartSizeInput && parseInt(storyPartSizeInput.value, 10) === 15 && parseInt(sceneInput?.value, 10) < 15) {
-    storyPartSizeInput.value = sceneInput.value;
+  if (storyPartSizeInput) {
+    storyPartSizeInput.max = '8';
+    storyPartSizeInput.value = String(Math.min(8, Math.max(1, parseInt(storyPartSizeInput.value, 10) || 8)));
   }
 
   const multiAngleChk = document.getElementById('chkMultiAngleShotFlow');
   if (multiAngleChk) {
     multiAngleChk.addEventListener('change', () => {
       if (multiAngleChk.checked) {
-        showToast('🎬 Multi-Angle Shot Flow aktif: 4–6 variasi sudut kamera dinamis per adegan', 'info', 'Sinematografi Pro');
+        showToast('🎬 Multi-Angle Shot Flow aktif: 3–5 beat sudut kamera dinamis per adegan', 'info', 'Sinematografi Pro');
       } else {
         showToast('Multi-Angle dinonaktifkan (kamera standar)', 'info');
       }
@@ -2016,7 +2096,7 @@ function initStoryboardForm() {
     Indonesia: 'Indonesia', Malaysia: 'Melayu', Singapore: 'Inggris', Thailand: 'Thailand',
     Vietnam: 'Vietnam', Philippines: 'Tagalog', Japan: 'Jepang', 'South Korea': 'Korea',
     China: 'Mandarin', Taiwan: 'Mandarin', 'Saudi Arabia': 'Arab', 'United Arab Emirates': 'Arab',
-    Qatar: 'Arab', Egypt: 'Arab', Turkey: 'Turki', Iran: 'Persia', India: 'Hindi',
+    Qatar: 'Arab', Oman: 'Arab', Jordan: 'Arab', Kuwait: 'Arab', Lebanon: 'Arab', Egypt: 'Arab', Turkey: 'Turki', Iran: 'Persia', India: 'Hindi',
     Pakistan: 'Urdu', Bangladesh: 'Bengali', 'United States': 'Inggris', 'United Kingdom': 'Inggris',
     France: 'Prancis', Germany: 'Jerman', Italy: 'Italia', Spain: 'Spanyol', Russia: 'Rusia',
     Brazil: 'Portugis', Mexico: 'Spanyol', Argentina: 'Spanyol', Canada: 'Inggris',
@@ -2213,6 +2293,16 @@ function initStoryboardForm() {
   document.getElementById('randomizeDracinThemes')?.addEventListener('click', () => randomizeDracinThemes(true));
   randomizeDracinThemes(false);
 
+  // Semua preset Dracin memakai casting visual China, sementara bahasa dialog
+  // sengaja tidak disentuh agar pengguna tetap bebas memilih bahasa narasi.
+  dracinThemeSelect?.addEventListener('change', () => {
+    const country = document.getElementById('targetCountryInput');
+    if (dracinThemeSelect.value && country) {
+      country.value = 'China';
+      country.dispatchEvent(new Event('change'));
+    }
+  });
+
   if (targetCountryInput && targetLanguageInput) {
     targetCountryInput.addEventListener('change', () => {
       const countryVal = targetCountryInput.value;
@@ -2283,6 +2373,9 @@ function initStoryboardForm() {
               : 'Pilih gaya visual yang sesuai genre, tetap sinematik, mudah difilmkan, dan konsisten antar-scene.';
           const expansion = `\n\nPRODUCTION BRIEF EXPANSION (WAJIB DIKEMBANGKAN AI):\n- Bentuk premis ini menjadi alur sebab-akibat lengkap dengan hook, tujuan tokoh, konflik utama, eskalasi, klimaks, konsekuensi, dan payoff.\n- Tetapkan 2–4 karakter dengan peran, motivasi, hubungan, ciri visual, properti penting, dan perubahan emosi yang terlihat.\n- Setiap scene harus memiliki aksi fisik konkret, blocking, lokasi, waktu, transisi, dan final frame yang menyambung ke scene berikutnya.\n- Rancang variasi shot, gerak kamera, pencahayaan, ambience, foley, dialog natural, serta kontinuitas properti; jangan mengulang template atau hanya mengganti nama.\n- ${styleHint}\n- Jika premis terlalu pendek, kembangkan detail baru secara orisinal tanpa mengubah inti tema atau meniru franchise tertentu.`;
           premiseInput.value = val + expansion;
+          if (isBattlePreset) {
+            premiseInput.value += '\n- FORMAT HOOK CEPAT WAJIB: mulai dari aksi, pertengkaran, atau konfrontasi yang sudah berlangsung pada detik pertama, tanpa pembukaan panjang; setiap scene harus punya mini-klimaks atau cliffhanger sebelum cut.';
+          }
 
           if (countryAttr && targetCountryInput) {
             targetCountryInput.value = countryAttr;
@@ -2354,11 +2447,12 @@ function initStoryboardForm() {
       const isMicrodrama = document.getElementById('chkMicrodramaMode') ? document.getElementById('chkMicrodramaMode').checked : false;
       const isChildrenAuto = document.getElementById('chkChildrenMode') ? document.getElementById('chkChildrenMode').checked : false;
       const isSeriesAuto = document.getElementById('genreCatalogSelect')?.value === '__auto_drama_series__';
+      const enhanceExistingScript = Boolean(chkScript?.checked && currentText);
 
       try {
         showCuteAiLoading(
-          isMicrodrama ? '📱 Gemini AI Meracik Microdrama...' : '🤖 Gemini AI Memuat Ide...',
-          isMicrodrama ? 'Sedang merancang formula 3-episode Microdrama / Dracin (Hook, Conflict, & Payoff)...' : 'Sedang meracik alur cerita sinematik super dramatis & konsistensi karakter...'
+          enhanceExistingScript ? '🛠️ AI Enhance Script...' : (isMicrodrama ? '📱 Gemini AI Meracik Microdrama...' : '🤖 Gemini AI Memuat Ide...'),
+          enhanceExistingScript ? 'Memperkaya kamera, blocking, suasana, dan kontinuitas tanpa mengubah alur atau dialog script...' : (isMicrodrama ? 'Sedang merancang formula 3-episode Microdrama / Dracin (Hook, Conflict, & Payoff)...' : 'Sedang meracik alur cerita sinematik super dramatis & konsistensi karakter...')
         );
 
         const targetCountryEl = document.getElementById('targetCountryInput');
@@ -2373,7 +2467,7 @@ function initStoryboardForm() {
           res = await fetch('/api/storyboard/suggest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ theme: currentText, microdrama_mode: isMicrodrama, children_mode: isChildrenAuto, series_mode: isSeriesAuto, target_country: targetCountry, target_lang: targetLanguage, dracin_theme: dracinTheme })
+            body: JSON.stringify({ theme: currentText, enhance_existing: enhanceExistingScript, microdrama_mode: isMicrodrama, children_mode: isChildrenAuto, series_mode: isSeriesAuto, target_country: targetCountry, target_lang: targetLanguage, dracin_theme: dracinTheme })
           });
         } else {
           res = await fetch(`/api/storyboard/auto_concept?microdrama_mode=${isMicrodrama}&children_mode=${isChildrenAuto}&series_mode=${isSeriesAuto}&target_country=${encodeURIComponent(targetCountry)}&target_lang=${encodeURIComponent(targetLanguage)}&dracin_theme=${encodeURIComponent(dracinTheme)}`);
@@ -2414,7 +2508,7 @@ function initStoryboardForm() {
 
     const sceneCount = sceneInput ? (parseInt(sceneInput.value) || 4) : 4;
     const partSizeInput = document.getElementById('storyPartSizeInput');
-    const requestedPartSize = Math.max(1, Math.min(25, parseInt(partSizeInput?.value, 10) || 15));
+    const requestedPartSize = Math.max(1, Math.min(8, parseInt(partSizeInput?.value, 10) || 8));
     const canContinuePart = Boolean(
       storyPartContinuationRequested && currentStoryboard?.story_parts?.has_next_part
     );
@@ -2576,6 +2670,11 @@ function initStoryboardForm() {
       const completedBeforeRequest = canContinuePart && currentStoryboard?.scenes
         ? currentStoryboard.scenes.length
         : 0;
+      // Snapshot the completed part before the async request. Do not rely on the
+      // mutable currentStoryboard reference when the response returns.
+      const previousStoryboardSnapshot = canContinuePart && currentStoryboard
+        ? { ...currentStoryboard, scenes: [...(currentStoryboard.scenes || [])] }
+        : null;
       setCuteAiSceneProgress(completedBeforeRequest, totalStoryScenes, true);
 
       showToast('Merancang alur adegan dan prompt sinematik dengan Gemini 3.6 Flash...', 'info', 'Gemini AI Studio');
@@ -2587,7 +2686,7 @@ function initStoryboardForm() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Gagal generate storyboard');
 
-      const previousStoryboard = canContinuePart ? currentStoryboard : null;
+      const previousStoryboard = previousStoryboardSnapshot;
       currentStoryboard = mergeStoryPart(previousStoryboard, data.storyboard);
       setCuteAiSceneProgress(currentStoryboard.scenes?.length || 0, totalStoryScenes, false);
       const weakAssets = (data.asset_quality_report || []).filter(item => item.status !== 'production_ready');
@@ -2631,6 +2730,17 @@ function initStoryboardForm() {
       saveStoryboardToHistory(currentStoryboard);
       renderStoryboardResult(currentStoryboard);
       if (btnSend) btnSend.disabled = false;
+      if (!canContinuePart && currentStoryboard.story_parts?.has_next_part) {
+        const nextPartButton = document.getElementById('btnGenerateNextStoryPart');
+        if (nextPartButton) {
+          showToast(`Part ${storyPartNumber} selesai. Part berikutnya akan dibuat otomatis setelah jeda.`, 'info');
+          setTimeout(() => {
+            if (currentStoryboard?.story_parts?.has_next_part && !nextPartButton.disabled) {
+              nextPartButton.click();
+            }
+          }, 2500);
+        }
+      }
       showToast(
         currentStoryboard.story_parts.has_next_part
           ? `Part ${storyPartNumber} selesai. ${currentStoryboard.scenes.length}/${totalStoryScenes} scene sudah tersusun.`
@@ -2685,6 +2795,8 @@ function initStoryboardForm() {
             aspect_ratio: aspect,
             duration: durPerScene,
             force_uniform_duration: !isAutoDur,
+            render_scene_start: (() => { const v = parseInt(document.getElementById('flowSceneStartInput')?.value, 10); return Number.isFinite(v) && v > 0 ? v : null; })(),
+            render_scene_end: (() => { const v = parseInt(document.getElementById('flowSceneEndInput')?.value, 10); return Number.isFinite(v) && v > 0 ? v : null; })(),
             render_scene_limit: (() => {
               const value = parseInt(document.getElementById('flowSceneSlotInput')?.value, 10);
               return Number.isFinite(value) && value > 0 ? value : null;
@@ -3515,7 +3627,7 @@ function initGallery() {
   const selectAllCb = document.getElementById('gallerySelectAllCheckbox');
   const deleteSelectedBtn = document.getElementById('deleteSelectedGalleryBtn');
 
-  if (refreshBtn) refreshBtn.addEventListener('click', refreshGallery);
+  if (refreshBtn) refreshBtn.addEventListener('click', () => refreshGallery(true));
 
   if (selectAllCb) {
     selectAllCb.addEventListener('change', () => {
@@ -3532,7 +3644,7 @@ function initGallery() {
 
       showCustomConfirm(
         'Hapus Pilihan Massal',
-        `Apakah Anda yakin ingin menghapus ${selected.length} job yang dipilih secara permanen?`,
+        `Hapus ${selected.length} item dari Gallery? Video hasil render tetap disimpan di Explorer/storage.`,
         `Ya, Hapus ${selected.length} Item`,
         '🗑️',
         async () => {
@@ -3543,8 +3655,9 @@ function initGallery() {
               body: JSON.stringify({ job_ids: selected })
             });
             const data = await res.json();
-            showToast(data.message || 'Job berhasil dihapus!', 'success');
-            refreshGallery();
+            showToast(data.message || 'Item dihapus dari Gallery; video tetap tersimpan.', 'success');
+            galleryLoaded = false;
+            refreshGallery(true);
           } catch (err) {
             showToast('Gagal menghapus job: ' + err.message, 'error');
           }
@@ -3655,11 +3768,16 @@ function installGalleryVideoRecovery(container) {
   });
 }
 
-async function refreshGallery() {
+let galleryLoaded = false;
+async function refreshGallery(force = false) {
+  // Video files already live in local storage. Do not rebuild all <video>
+  // elements on every visit; the explicit Refresh button can force a rescan.
+  if (galleryLoaded && !force) return;
   try {
     const res = await fetch('/api/gallery');
     if (!res.ok) return;
     const data = await res.json();
+    galleryLoaded = true;
 
     const container = document.getElementById('galleryContainer');
     const items = data.gallery || [];
@@ -3744,7 +3862,7 @@ async function refreshGallery() {
             <b style="color: var(--neon-green); font-size: 13px;">🎬 Full Cinematic Movie:</b>
             <video src="${fullMovieUrl}" data-gallery-src="${item.cinematic_film_url}" controls preload="auto" playsinline style="margin-top: 6px; width: 100%; max-height: 300px; object-fit: contain; background: #000; border-radius: 8px;"></video>
             <div style="display: flex; gap: 8px; margin-top: 10px;">
-              <a href="${fullMovieUrl}" download class="btn-primary" style="flex: 1; text-align: center; text-decoration: none; font-size: 13px;">⬇️ Download Movie MP4</a>
+            <a href="/api/gallery/${encodeURIComponent(item.job_id)}/download" download="cinematic_film.mp4" class="btn-primary" style="flex: 1; text-align: center; text-decoration: none; font-size: 13px;">⬇️ Download Movie MP4</a>
               ${item.srt_subtitles_url ? `<a href="${item.srt_subtitles_url}" download class="btn-secondary" style="text-align: center; text-decoration: none; font-size: 13px;">💬 Subtitle SRT</a>` : ''}
             </div>
             ${localStorage.getItem(seoStorageKey(item.job_id)) ? `
@@ -3864,7 +3982,8 @@ async function refreshGallery() {
               });
               const data = await res.json();
               showToast(data.message || 'Judul film berhasil diperbarui!', 'success');
-              refreshGallery();
+              galleryLoaded = false;
+              refreshGallery(true);
             } catch (err) {
               showToast('Gagal memperbarui judul film: ' + err.message, 'error');
             }
@@ -3879,16 +3998,17 @@ async function refreshGallery() {
         if (!jobId) return;
 
         showCustomConfirm(
-          'Hapus Item Galeri',
-          'Apakah Anda yakin ingin menghapus item galeri film ini secara permanen?',
+          'Hapus Klip Episode',
+          'Hapus item ini dari Gallery? Semua video hasil render tetap disimpan di Explorer/storage.',
           'Ya, Hapus',
           '🗑️',
           async () => {
             try {
               const res = await fetch(`/api/gallery/${jobId}`, { method: 'DELETE' });
               const data = await res.json();
-              showToast(data.message || 'Job berhasil dihapus!', 'success');
-              refreshGallery();
+              showToast(data.message || 'Item dihapus dari Gallery; video tetap tersimpan.', 'success');
+              galleryLoaded = false;
+              refreshGallery(true);
             } catch (err) {
               showToast('Gagal menghapus job: ' + err.message, 'error');
             }

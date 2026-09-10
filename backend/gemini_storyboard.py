@@ -149,6 +149,12 @@ _CHANGE_TERMS = (
     "strikes", "dodges", "falls", "rises", "runs", "pours", "grabs", "pulls", "pushes",
     "collides", "explodes", "charges", "creates", "opens", "closes", "hands", "takes",
 )
+_ASMR_CHANGE_TERMS = (
+    "menuang", "mengaduk", "memotong", "mencuci", "menyusun", "merapikan", "mengeringkan",
+    "melipat", "menekan", "mengukir", "menggambar", "menggosok", "menyikat", "membilas",
+    "pours", "stirs", "cuts", "washes", "arranges", "folds", "presses", "brushes", "rinses",
+    "texture changes", "before-after", "transforms", "loops back", "satisfying reveal",
+)
 _PAYOFF_TERMS = _ENDING_TERMS + (
     "jawaban", "terjawab", "hasil", "pelajaran", "perayaan", "restu", "kebenaran",
     "terbayar", "cta", "call to action", "proof", "benefit", "celebration",
@@ -289,7 +295,10 @@ def _audit_dramatic_arc(
     scenes = storyboard.get("scenes") or []
     total = len(scenes)
     is_complete_story = _is_complete_story_range(story_scene_offset, total, story_total_scene_count)
-    if children_mode or script_mode or total < 3 or not is_complete_story:
+    corpus = " ".join(_scene_story_text(scene) for scene in scenes).lower()
+    context_blob = (corpus + " " + " ".join(str(storyboard.get(key) or "") for key in ("premise", "initial_prompt", "genre_style", "niche_category", "creative_brief"))).lower()
+    is_asmr = any(token in context_blob for token in ("asmr", "satisfying", "audio blueprint", "rain ambience", "fireplace", "river stream", "nature ambience"))
+    if children_mode or script_mode or is_asmr or total < 3 or not is_complete_story:
         storyboard["dramatic_arc_audit"] = {"status": "skipped"}
         return storyboard
 
@@ -337,8 +346,21 @@ def _audit_story_engagement_quality(
     first_text = " ".join(texts[: max(1, min(total, max(1, int(total * 0.30))))])
     final_text = texts[-1]
     whole = " ".join(texts)
+    context_blob = (whole + " " + " ".join(str(storyboard.get(key) or "") for key in ("premise", "initial_prompt", "genre_style", "niche_category", "creative_brief"))).lower()
+    is_asmr = any(token in context_blob for token in ("asmr", "satisfying", "oddly satisfying", "audio blueprint", "rain ambience", "fireplace", "river stream", "nature ambience"))
 
-    active_scene_count = sum(1 for text in texts if _has_any(text, _CHANGE_TERMS))
+    if is_asmr:
+        # Pure ASMR is intentionally non-narrative: a static take and a single
+        # consistent trigger are valid, so the drama/retention audit does not apply.
+        storyboard["story_engagement_audit"] = {
+            "status": "skipped",
+            "reason": "pure_asmr_non_narrative_format",
+            "static_shots_allowed": True,
+            "narration_required": False,
+        }
+        return storyboard
+
+    active_scene_count = sum(1 for text in texts if _has_any(text, _CHANGE_TERMS) or (is_asmr and _has_any(text, _ASMR_CHANGE_TERMS)))
     flat_scene_count = sum(1 for text in texts if _has_any(text, _FLAT_TERMS) and not _has_any(text, _CHANGE_TERMS))
     purposes = [str(scene.get("scene_purpose") or "").strip().lower() for scene in scenes]
     repeated_purpose_count = len(purposes) - len(set(p for p in purposes if p))
@@ -350,6 +372,10 @@ def _audit_story_engagement_quality(
         "low_flatness": flat_scene_count <= max(1, int(total * 0.20)),
         "payoff_or_ending": _has_any(final_text, _PAYOFF_TERMS),
     }
+    if is_asmr:
+        # ASMR is often process-driven rather than conflict-driven: a visible
+        # transformation, reveal, or seamless loop is its narrative payoff.
+        findings["payoff_or_ending"] = findings["payoff_or_ending"] or _has_any(final_text, _ASMR_CHANGE_TERMS)
     if children_mode:
         # Kids content should still have curiosity, a gentle problem, attempts, and a warm payoff.
         findings["safe_child_progress"] = _has_any(whole, ("mencoba", "belajar", "menolong", "bergantian", "bersama", "berhasil", "pelajaran", "try", "learn", "help"))
@@ -888,6 +914,22 @@ def resolve_target_language(target_country: str = "", target_lang: str = "") -> 
     return COUNTRY_LANGUAGE_MAP.get((target_country or "").strip(), "Indonesia")
 
 
+def target_language_guidance(target_lang: str) -> str:
+    """Give the generator a usable register/dialect contract for Indonesian variants."""
+    key = str(target_lang or "").strip().lower()
+    return {
+        "jawa": "Use natural Basa Jawa with context-appropriate ngoko/krama; keep dialogue spoken and do not translate character names.",
+        "sunda": "Use natural Basa Sunda with respectful conversational register; keep dialogue spoken and do not translate character names.",
+        "gaul jakarta": "Use natural contemporary Jakarta slang (casual aku/gue, kamu/lo only when relationship fits); avoid forced slang in narration and do not translate character names.",
+        "chindo (mandarin-indonesia campuran)": "Use natural Indonesian-Mandarin code-switching: Indonesian as the base, short Mandarin phrases only where socially natural, with consistent meaning and pronunciation; never translate character names.",
+        "hindi": "Use natural contemporary Hindi in Devanagari only when written text is explicitly requested; keep spoken dialogue conversational and culturally grounded for India. Do not flatten all Indian characters into one stereotype; localize region, names, clothing, food, and setting to the premise.",
+        "arab": "Use natural Modern Standard Arabic for narration or a clearly chosen regional spoken variety for dialogue; specify the target country and keep names, clothing, architecture, and social context culturally respectful. Do not treat all Arab countries as identical.",
+        "urdu": "Use natural Urdu with culturally appropriate register for Pakistan; keep dialogue spoken and localize names, clothing, architecture, and setting to the selected region.",
+        "bengali": "Use natural Bengali for Bangladesh with culturally appropriate register; localize names, clothing, architecture, food, and setting without stereotypes.",
+        "persia": "Use natural Persian/Farsi with culturally appropriate register for Iran; localize names, clothing, architecture, and setting without stereotypes.",
+    }.get(key, f"Use natural spoken {target_lang or 'target'}; keep character names and identities unchanged.")
+
+
 def build_local_realism_rules(target_country: str = "") -> str:
     """Build instruction block that forces skin tone, wardrobe, environment, names, and language to match a target country/local audience."""
     country = (target_country or "").strip()
@@ -924,15 +966,25 @@ ATURAN LOKALISASI EDUKASI ANAK (WAJIB):
 """
 
 
-def auto_suggest_details(theme: str = "", microdrama_mode: bool = False, children_mode: bool = False, target_country: str = "", dracin_theme: str = "", target_lang: str = "", series_mode: bool = False) -> Dict[str, Any]:
+def auto_suggest_details(theme: str = "", microdrama_mode: bool = False, children_mode: bool = False, target_country: str = "", dracin_theme: str = "", target_lang: str = "", series_mode: bool = False, enhance_existing: bool = False) -> Dict[str, Any]:
     """Auto-suggest character matrix, creative cinematic premise, and seeds using Gemini AI."""
     seed_main = random.randint(100000, 999999)
     seed_2 = random.randint(100000, 999999)
     seed_3 = random.randint(100000, 999999)
 
     target_lang = resolve_target_language(target_country, target_lang)
+    target_language_rules = target_language_guidance(target_lang)
     auto_concept_token = f"CONCEPT-{random.SystemRandom().randrange(10000000, 99999999)}"
-    user_prompt = f"""TEMA UTAMA PENGGUNA (WAJIB DIIKUTI SECARA KETAT & SETIA): "{theme}"
+    enhance_instruction = """
+MODE ENHANCE SCRIPT — PRIORITAS TERTINGGI:
+Teks pengguna adalah script/dialog final. Jangan membuat premis baru dan jangan mengubah alur utama.
+Pertahankan urutan kejadian, karakter, hubungan, konflik, ending, serta setiap dialog kata demi kata.
+Hanya tambahkan atau perjelas blocking, aksi visual, ekspresi, kamera, lighting, ambience, foley,
+transisi, kontinuitas properti, dan detail produksi yang membantu script difilmkan. Output `suggested_premise`
+harus berupa script yang sama dengan enhancement produksi, bukan ringkasan atau cerita baru.
+""" if enhance_existing else ""
+    user_prompt = f"""{enhance_instruction}
+TEMA UTAMA PENGGUNA (WAJIB DIIKUTI SECARA KETAT & SETIA): "{theme}"
 
 PETUNJUK BAHASA & TEMA:
 1. Pahami tema dari pengguna dalam BAHASA APAPUN (Bahasa Indonesia, Inggris, Arab, Jepang, dll).
@@ -1114,6 +1166,14 @@ def generate_youtube_metadata(
 ) -> Dict[str, Any]:
     """Generate accurate YouTube packaging based on official metadata guidance."""
     thumbnail_ratio = "9:16" if str(aspect_ratio).lower() in {"portrait", "9:16", "vertical"} else "16:9"
+    source_visual_style = str((storyboard or {}).get("visual_style") or "live_action").lower()
+    thumbnail_style = {
+        "anime_2d": "2D anime cel-shaded illustration",
+        "2d_animation": "hand-drawn 2D animation",
+        "3d_cartoon": "stylized 3D cartoon animation",
+        "comic_book": "graphic novel comic-book illustration",
+        "live_action": "live-action cinematic photography with natural human appearance",
+    }.get(source_visual_style, "live-action cinematic photography with natural human appearance")
     prompt = f"""
 Anda adalah YouTube SEO Specialist & Content Strategist Terkemuka.
 Berdasarkan judul film "{film_title}" dan premis cerita: "{premise}", rancangkan kit publikasi YouTube lengkap:
@@ -1150,6 +1210,7 @@ BAHASA DAN PASAR TARGET (WAJIB):
    - Akhiri dengan tepat 3 hashtag yang langsung terkait isi video.
 3. **Prompt Thumbnail / Cover YouTube (Midjourney/Flux/Flow Prompt Bahasa Inggris)**:
    - Video sumber berformat {thumbnail_ratio}. Prompt cover WAJIB memakai komposisi {thumbnail_ratio}, bukan rasio lain.
+   - Medium thumbnail WAJIB mengikuti medium video sumber: {thumbnail_style}. Jangan mengubah video live-action menjadi kartun/anime atau sebaliknya.
    - Satu subjek utama, emosi jelas, konflik mudah dibaca, kontras kuat, dan teks thumbnail maksimal 2-4 kata.
    - Thumbnail harus memenuhi janji judul dan tidak menyesatkan.
 4. **Hashtag**: tepat 3 hashtag tanpa spasi, spesifik, dan relevan.
@@ -1178,6 +1239,13 @@ OUTPUT WAJIB FORMAT JSON VALID:
     try:
         result = generate_text(prompt, json_output=True)
         parsed = json.loads(_extract_json_text(result.text))
+        thumb = str(parsed.get("thumbnail_prompt") or "").strip()
+        if thumb:
+            # Remove accidental medium drift from older/provider prompts.
+            if source_visual_style == "live_action":
+                thumb = re.sub(r"\b(?:2d|3d)\s*(?:anime|cartoon|animation)|cel[- ]shaded|cartoon style\b", "live-action cinematic photography", thumb, flags=re.IGNORECASE)
+                thumb = re.sub(r"\b(?:illustration|illustrated|drawn artwork)\b", "cinematic photographic composition", thumb, flags=re.IGNORECASE)
+            parsed["thumbnail_prompt"] = f"{thumb.rstrip(' .')}, {thumbnail_style}, {thumbnail_ratio} aspect ratio."
         if str(target_lang).strip().lower() in {"korea", "korean", "한국어"}:
             language_sample = " ".join([
                 *[str(item) for item in (parsed.get("titles") or parsed.get("seo_titles") or [])],
@@ -1295,7 +1363,7 @@ Hasilkan TEPAT {batch_size} adegan berikutnya (Scene {start_idx} s/d {end_idx}) 
 Pertahankan format JSON LENGKAP yang identik. Setiap scene WAJIB mengisi semua field berikut dan tidak boleh
 mengosongkannya: scene_number, title, scene_purpose, activity, expression, visual_composition,
 transition_bridge, shot_type, camera_movement, action_summary, narration_id, text_overlay,
-prompt_for_flow, shot_flow (3-6 shot bertimestamp), audio_blueprint, dialogue,
+prompt_for_flow, shot_flow (3-5 beat bertimestamp), audio_blueprint, dialogue,
 characters_in_scene, start_state, end_state, lighting_mood, dan duration.
 
 OUTPUT WAJIB FORMAT JSON VALID (HANYA JSON):
@@ -1626,6 +1694,7 @@ UGC / AFFILIATE PRODUCTION BOARD — {ugc_variant.upper()}:
 """ if ugc_mode else ""
 
     target_lang = resolve_target_language(target_country, target_lang)
+    target_language_rules = target_language_guidance(target_lang)
     children_visual_rules = """
 GAYA VISUAL WAJIB (MODE CERITA ANAK):
 Setiap `prompt_for_flow` WAJIB diawali/menyisipkan gaya ini: soft 3D cartoon animation, preschool
@@ -1635,6 +1704,29 @@ DILARANG: photorealistic, cinematic chiaroscuro, dark moody lighting, harsh shad
 anamorphic lens, teal-and-orange grading, human child characters.
 `shot_type` cukup sederhana (Wide Shot / Medium Shot / Close Up) dan gerakan kamera lembut & pelan.
 """ if children_mode else ""
+    children_channel_cta_rules = """
+ATURAN CHANNEL ANAK & RETENSI (WAJIB):
+- Cerita harus terasa seperti episode serial orisinal: hook/pertanyaan pada 0-3 detik, petunjuk atau perubahan nyata di setiap bagian, satu kejutan aman yang lucu, lalu payoff yang menjawab misteri utama.
+- Jangan memakai atau meniru karakter, nama, logo, musik, catchphrase, kostum, atau dunia dari kartun berlisensi. Buat semua karakter dan properti orisinal.
+- Scene terakhir wajib menjadi penutup CTA singkat: karakter mengajak penonton menulis jawaban/pilihan di komentar, subscribe channel YouTube, dan follow TikTok/Facebook untuk episode berikutnya. CTA disampaikan lewat narasi/dialog atau audio, bukan teks hasil render.
+- CTA tidak boleh meminta data pribadi, memaksa, menakut-nakuti, atau mengarahkan anak keluar platform tanpa pendampingan orang dewasa.
+""" if children_mode else ""
+    asmr_mode = any(token in str(premise or '').lower() for token in ('asmr', 'satisfying', 'suara hujan', 'suara hewan', 'restock', 'mukbang'))
+    asmr_ambience_mode = any(token in str(premise or '').lower() for token in ('hujan', 'rain', 'sungai', 'river', 'api unggun', 'fireplace', 'campfire', 'angin', 'wind', 'malam alam', 'night forest'))
+    asmr_food_mode = any(token in str(premise or '').lower() for token in ('makanan', 'food', 'memotong bahan', 'mukbang', 'crunch'))
+    asmr_object_mode = any(token in str(premise or '').lower() for token in ('mainan', 'toy', 'slime', 'slem', 'satisfying loop', 'craft', 'benda lembek'))
+    asmr_production_rules = """
+ATURAN ASMR / SATISFYING (WAJIB):
+- Prioritaskan satu trigger utama per scene dan tulis audio_blueprint yang konkret: tekstur, sumber bunyi, intensitas lembut, tempo, dan jeda. Hindari musik keras, clipping, suara mendadak, serta campuran banyak trigger yang melelahkan.
+- Visual wajib mendukung suara lewat close-up/macro, gerakan tangan atau alam yang lambat, kontinuitas objek, dan payoff before-after atau loop yang mulus. Jangan menjanjikan efek terapi/medis.
+- Untuk PURE ASMR: jangan gunakan narasi, voice-over, dialog, CTA verbal, atau alur konflik. Audio utama hanya suara ASMR dan ambience natural; static locked-off shot atau satu continuous take diperbolehkan dan tidak dianggap scene datar.
+- Hook, sebab-akibat, eskalasi, klimaks, dan payoff cerita TIDAK WAJIB untuk PURE ASMR. Jika formatnya hanya ambience/static, jangan memaksakan pergantian angle, karakter berbicara, atau cerita.
+- Untuk makanan, mainan, dan konten anak: gunakan objek aman, higienis, tanpa merek, tanpa konsumsi berlebihan, tanpa benda kecil atau alat berbahaya yang mudah dijangkau anak.
+- Karakter manusia/hewan dan character sheet bersifat OPSIONAL. Untuk ambience alam seperti hujan, sungai, api unggun, angin, atau malam, hasil boleh tanpa karakter sama sekali: gunakan `characters: []`, `consistent_characters: "No characters — environment only"`, dan `characters_in_scene: []`.
+{"LARANGAN KERAS ASMR AMBIENCE: untuk hujan/rain, sungai/river, api unggun/fireplace/campfire, angin/wind, dan malam alam, DILARANG menampilkan manusia, wajah, tangan, kaki, tubuh, hewan, presenter, atau siluet orang. Hanya environment dan sumber suara. Gunakan static locked-off shot atau continuous take; perubahan angle tidak wajib." if asmr_ambience_mode else ""}
+{"MODE ASMR MAKANAN: jangan tampilkan wajah atau tubuh. Jika ada aksi manusia, hanya tangan POV dan/atau area mulut tanpa identitas; fokus pada suara persiapan, tekstur, gigitan, dan ambience. Tidak ada dialog, narasi, atau konsumsi berlebihan." if asmr_food_mode else ""}
+{"MODE ASMR OBJEK/MAINAN: jangan tampilkan wajah atau tubuh. Gunakan POV tangan saja atau close-up tangan yang memukul pelan, meremas, menekan, menggosok, menyusun, atau meregangkan mainan/slime/benda lembek. Tangan harus anatomi normal, gerak lembut, tanpa karakter berbicara." if asmr_object_mode else ""}
+""" if asmr_mode else ""
     if children_mode:
         action_density_rules = CHILDREN_ACTION_RULES
     else:
@@ -1683,6 +1775,12 @@ STORY QUALITY CONTRACT — RANCANG SEBELUM MENULIS SCENE (WAJIB):
   mengubah posisi, atau menghasilkan konsekuensi. Establishing shot tanpa perubahan maksimal {max(1, int(scene_count * 0.20))} scene.
 - Bagian awal wajib menanam konflik atau pertanyaan; bagian tengah wajib menaikkan taruhan dan sebab-akibat;
   bagian akhir wajib membayar konflik lewat klimaks dan resolusi/ending yang terasa earned.
+- Untuk drama keluarga, mertua–menantu, rumah tangga, atau perselingkuhan: DILARANG membuat semua tokoh
+  langsung akur. Wajib tetapkan pihak yang berseberangan, motif masing-masing, tuduhan atau kebohongan
+  yang meningkat, serta konsekuensi emosional yang terlihat. Jika premis memuat perselingkuhan, jangan
+  otomatis menyudutkan korban: tanam bukti yang memungkinkan pembalikan perspektif dan ungkap pelaku
+  melalui tindakan, pesan, saksi, atau benda bukti yang jelas. Ending boleh pahit, menggantung, atau berupa
+  batasan/keputusan tegas; rekonsiliasi hanya boleh terjadi jika konflik benar-benar dibayar dan earned.
 - Setiap scene wajib menjawab: apa yang berubah dibanding scene sebelumnya, mengapa perubahan itu terjadi,
   dan tekanan baru apa yang dipaksa muncul setelahnya. Tulis perubahan itu eksplisit di `action_summary`,
   `scene_purpose`, `end_state`, dan `prompt_for_flow`.
@@ -1798,7 +1896,8 @@ tokoh. Jangan membuat nama lokal/generik pengganti seperti Arya, Bagas, atau pen
 Anda adalah Sutradara Film AI Sinematik Kelas Dunia & Visual Director untuk Google Flow Omni Flash.
 Tugas Anda adalah meracik **STORYBOARD SINEMATIK KONSISTEN BANYAK KARAKTER & DYNAMIC MULTI-ANGLE CAMERA ({scene_count} ADEGAN/SCENE)**.
 
-BAHASA OUTPUT UTAMA: {target_lang} (Semua ringkasan aksi, narasi voiceover, teks overlay, dan dialog WAJIB DITULIS DALAM BAHASA {target_lang} SECARA MUTLAK, MESKIPUN PREMIS AWAL DALAM BAHASA LAIN!)
+BAHASA OUTPUT UTAMA: {target_lang} (Semua ringkasan aksi, narasi voiceover, teks overlay, dan dialog WAJIB DITULIS DALAM BAHASA {target_lang} SECARA MUTLAK, MESKIPUN PREMIS AWAL DALAM BAHASA LAIN!).
+REGISTER BAHASA: {target_language_rules}
 
 {duration_rules}
 
@@ -1810,7 +1909,9 @@ BAHASA OUTPUT UTAMA: {target_lang} (Semua ringkasan aksi, narasi voiceover, teks
 {microdrama_rules}
 {ugc_rules}
 {local_realism_rules}
-{children_localization_rules}
+        {children_localization_rules}
+        {children_channel_cta_rules}
+        {asmr_production_rules}
 {children_variation_rules}
 {reading_rules}
 {POLICY_SAFE_RULES}
@@ -1860,9 +1961,10 @@ warna kulit, potongan/warna/lapisan pakaian, sepatu dan lokasi aksesori. Hormati
    memindahkan tokoh bolak-balik ke lokasi jauh pada setiap adegan. Jika cerita memang harus pindah lokasi,
    adegan sebelum/sesudahnya WAJIB menunjukkan jembatan visual yang masuk akal (keluar pintu, masuk kendaraan,
    tiba di lobi/gerbang), bukan teleportasi atau lompatan waktu mendadak.
-3a. **Kepadatan Shot Mengikuti Isi, Bukan Dipaksakan**: Untuk konten anak/edukasi gunakan satu pengambilan
-   kontinu atau 1-3 beat kamera agar aksi mudah dibaca. Untuk dialog/emosi gunakan maksimal 3 shot; drama normal
-   3-4 shot; hanya aksi/perang/kejaran cepat yang boleh 4-5 shot. Semua coverage harus merekam SATU kejadian
+3a. **Kepadatan Shot 3-5 Beat untuk Klip 10 Detik**: Pilih secara dinamis 3 hingga 5 beat kamera sesuai isi;
+   jangan mengunci dialog atau drama ke 3 shot. Untuk konten anak/edukasi boleh 1-3 beat agar mudah dibaca,
+   tetapi drama/action 10 detik harus memiliki hook langsung, turn/reveal/impact di tengah, dan payoff atau
+   cliffhanger sebelum detik 10. Semua coverage harus merekam SATU kejadian
    berantai di SATU lokasi dan waktu kontinu—bukan beberapa adegan cerita yang dijejalkan ke satu klip.
 4. **Flow Prompt Professional**: Setiap `prompt_for_flow` ditulis dalam Bahasa Inggris yang murni visual, mendetail (Karakter & Seed IDs + Multi-Angle Camera Shot + Aksi Tokoh + Studio 8K Lighting).
 4a. **AKSI HARUS TERJADI DI DALAM KLIP (Wajib)**: `prompt_for_flow` WAJIB mendeskripsikan gerakan yang benar-benar
@@ -1972,6 +2074,8 @@ PARAMETIK REQUEST (WAJIB 100% PATUH & RELEVAN):
 - Character Seed Main: {seed}
 - Deskripsi Karakter: {char_desc_instruction}
 - Catatan Tambahan: {custom_instructions or "Tidak ada"}
+
+{"FORMAT PURE ASMR TANPA KARAKTER: gunakan characters: [], consistent_characters: 'No characters — environment only', characters_in_scene: [] di setiap scene, dan dialogue: []. Jangan menciptakan manusia/hewan hanya untuk memenuhi schema." if asmr_mode else ""}
 
 7. **Character Registry (Wajib)**: Daftarkan SETIAP karakter yang muncul. WAJIB GUNAKAN NAMA LOKAL NEGARA {target_country or target_lang} UNTUK NAMA MEREKA. JIKA PREMIS MEMAKAI NAMA INDONESIA (MISAL SINTA/RATNA/BUDI) TAPI TARGET BUKAN INDONESIA, ANDA WAJIB MENGGANTINYA MENJADI NAMA {target_country or target_lang}! Field "description" WAJIB sedetail mungkin...
    Field "visual_signature" WAJIB berisi kombinasi permanen yang unik dan mudah terlihat: warna/siluet pakaian,
