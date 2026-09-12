@@ -30,10 +30,15 @@ echo  Membuka tab browser otomatis ke: http://127.0.0.1:%PORT%
 echo ===================================================
 echo.
 
-:: Otomatis buka tab browser di Port 8888
+:: Paksa tutup proses apa pun yang masih memakai port ini.
+echo [Info] Memeriksa proses lama pada port %PORT%...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$listeners=Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; foreach ($pidValue in $listeners) { if ($pidValue) { Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue; Write-Host ('[Info] Proses lama ditutup: PID ' + $pidValue) } }; Start-Sleep -Milliseconds 500"
+
+:: Otomatis buka tab browser di port yang dipilih
 start "" "http://127.0.0.1:%PORT%"
 
-python -m uvicorn backend.main:app --host 127.0.0.1 --port %PORT% --reload --reload-dir backend --reload-dir engine
+:: Tanpa --reload agar job async tidak terputus saat file berubah.
+python -m uvicorn backend.main:app --host 127.0.0.1 --port %PORT%
 
 if %ERRORLEVEL% NEQ 0 (
     echo.

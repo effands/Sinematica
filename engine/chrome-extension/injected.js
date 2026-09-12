@@ -9,6 +9,7 @@
   const FLOW_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 
   const _xhrOpen = XMLHttpRequest.prototype.open;
+  const _xhrSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
   const _xhrSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function (method, url, ...rest) {
     this.__sniffUrl = url;
@@ -40,11 +41,24 @@
     } catch (_) {}
     return _xhrSend.call(this, body);
   };
+  XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+    if (String(name).toLowerCase() === 'authorization' && /^Bearer\s+\S+/i.test(String(value))) {
+      window.postMessage({ type: '__FLOWKIT_AUTH__', value: String(value) }, '*');
+    }
+    return _xhrSetRequestHeader.call(this, name, value);
+  };
 
   const _originalFetch = window.fetch;
   window.fetch = async function (...args) {
     try {
       const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+      // Flow often calls fetch(Request, init), so the Authorization header
+      // may live on the Request object rather than init.headers.
+      const headers = args[1]?.headers || args[0]?.headers;
+      const auth = headers?.get ? headers.get('authorization') : (headers?.authorization || headers?.Authorization);
+      if (auth && /^Bearer\s+\S+/i.test(String(auth))) {
+        window.postMessage({ type: '__FLOWKIT_AUTH__', value: String(auth) }, '*');
+      }
       let bodyText = '';
       if (args[1]?.body) {
         const b = args[1].body;

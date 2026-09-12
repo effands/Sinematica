@@ -135,10 +135,10 @@ class VideoReferenceSelectionTests(unittest.TestCase):
             ["storyboard", "char-a", "char-b"],
         )
 
-    def test_policy_retry_keeps_characters_and_removes_storyboard(self):
+    def test_policy_retry_keeps_storyboard_and_characters(self):
         self.assertEqual(
             build_video_reference_ids(["char-a", "char-b"], "storyboard", policy_attempt=2),
-            ["char-a", "char-b"],
+            ["storyboard", "char-a", "char-b"],
         )
 
     def test_storyboard_is_last_resort_without_character_sheet(self):
@@ -158,10 +158,10 @@ class VideoReferenceSelectionTests(unittest.TestCase):
             [],
         )
 
-    def test_prominent_people_rejection_drops_references_only_on_final_retry(self):
+    def test_policy_rewrite_never_drops_authored_references(self):
         reason = "Generasi ditolak: PUBLIC_ERROR_PROMINENT_PEOPLE_FILTER_FAILED"
         self.assertFalse(should_drop_character_references(reason, 1, 2))
-        self.assertTrue(should_drop_character_references(reason, 2, 2))
+        self.assertFalse(should_drop_character_references(reason, 2, 2))
 
     def test_non_image_policy_rejection_keeps_references_on_final_retry(self):
         self.assertFalse(

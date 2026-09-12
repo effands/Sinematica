@@ -26,7 +26,7 @@ _ACTION_WORDS = (
 )
 _EMOTIONAL_WORDS = (
     "cry", "cries", "weeps", "whisper", "confess", "grief", "heartbreak", "farewell",
-    "menangis", "berbisik", "mengaku", "sedih", "patah hati", "perpisahan", "haru",
+    "angrily", "angry", "marah", "berteriak", "menangis", "berbisik", "mengaku", "sedih", "patah hati", "perpisahan", "haru",
 )
 
 _NO_BRANDING_GUARD = (
@@ -50,6 +50,16 @@ def choose_shot_count(scene: Dict[str, Any], prompt: str = "") -> int:
         return int(explicit)
     text = " ".join(str(scene.get(k) or "") for k in ("title", "action_summary", "dialogue"))
     text = f"{text} {prompt}".lower()
+    if re.search(r"\b(?:door|doorway|pintu|gerbang)\b", text) and re.search(
+        r"\b(?:close|closes|closing|open|opens|opening|tutup|menutup|membuka)\b", text
+    ):
+        return 3
+    if contains_story_terms(text, _EMOTIONAL_WORDS):
+        return 3
+    if contains_story_terms(text, _ACTION_WORDS):
+        return 5
+    if re.search(r"\b(?:letter|surat|amplop|envelope)\b", text):
+        return 4
     if not str(scene.get("title") or "").strip():
         return 3
     fingerprint = hashlib.sha256(text.encode("utf-8")).digest()[0]

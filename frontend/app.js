@@ -1662,7 +1662,7 @@ async function fetchFleetStatus() {
           <div class="profile-header" style="display: flex; justify-content: space-between; align-items: center;">
             <span class="profile-title" style="font-weight: 800; font-size: 15px; color: #ffffff;">💻 ${escapeHtml((p.name || p.instance_id || 'Chrome').replace(/\s+Profile$/i, ''))}</span>
             <span class="badge-status ${isReady ? 'badge-ready' : 'badge-noauth'}">
-              ${isReady ? 'Ready & Logged In' : (p.readiness_error || 'Need Flow Window/Login')}
+              ${isReady ? 'Ready & Logged In' : (p.readiness_error || 'Flow aktif, token OAuth agent belum tertangkap')}
             </span>
           </div>
           <div style="font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px;">
@@ -2750,6 +2750,14 @@ function initStoryboardForm() {
 
       const sceneMasterNav = document.querySelector('.nav-item[data-tab="tab-history"]');
       if (sceneMasterNav) sceneMasterNav.click();
+
+      // Keep storyboard generation and video rendering as two explicit stages.
+      // Do not auto-click the execution button here: the storyboard request is
+      // an Image generation and must finish without spending video credits.
+      // Video starts only when the user explicitly clicks the execution action.
+      if (!currentStoryboard.story_parts.has_next_part) {
+        showToast('Storyboard selesai sebagai Image. Klik Kirim ke Flow jika ingin mulai membuat Video.', 'info');
+      }
 
     } catch (err) {
       showCustomAlert(err.message, 'Gagal Generate Storyboard', '❌');

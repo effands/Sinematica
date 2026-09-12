@@ -140,6 +140,7 @@ def stream_download(
     *,
     opener: Optional[Callable] = None,
     timeout: int = 120,
+    media_kind: str = "video",
 ) -> int:
     """Stream an HTTP response atomically to disk and return the byte count."""
     if opener is None:
@@ -158,8 +159,10 @@ def stream_download(
         )
         response.raise_for_status()
         content_type = str(response.headers.get("content-type", "")).lower()
-        if content_type and "video" not in content_type and "octet-stream" not in content_type:
-            raise RuntimeError(f"Respons unduhan bukan video ({content_type}).")
+        if content_type and "octet-stream" not in content_type:
+            expected = "image" if media_kind == "image" else "video"
+            if expected not in content_type:
+                raise RuntimeError(f"Respons unduhan bukan {expected} ({content_type}).")
         with partial.open("wb") as output:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
@@ -167,6 +170,14 @@ def stream_download(
                     total += len(chunk)
         if total == 0:
             raise RuntimeError("Respons unduhan video kosong.")
+        # A thumbnail can be returned from a generic Flow `url` field with a
+        # video-looking content type. Reject image signatures before publishing
+        # it under an .mp4 name; otherwise Gallery shows 0:00 and the bad file
+        # is treated as a completed video.
+        with partial.open("rb") as probe:
+            signature = probe.read(12)
+        if media_kind != "image" and signature.startswith((b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF8")):
+            raise RuntimeError("Flow mengembalikan thumbnail gambar, bukan video MP4.")
         partial.replace(destination)
         return total
     except Exception:

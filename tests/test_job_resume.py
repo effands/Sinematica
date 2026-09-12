@@ -10,10 +10,15 @@ from backend.jobs_executor import resume_job, get_job_status, _active_jobs
 class TestJobResume(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
+        # Resume tests use an in-memory synthetic job. Never let their
+        # _save_history call overwrite the user's production job history.
+        self.history_patcher = patch("backend.jobs_executor._save_history")
+        self.history_patcher.start()
         _active_jobs.clear()
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
+        self.history_patcher.stop()
         _active_jobs.clear()
 
     def test_resume_non_existent_job_returns_false(self):

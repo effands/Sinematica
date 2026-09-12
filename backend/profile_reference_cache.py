@@ -39,6 +39,15 @@ async def ensure_character_media_for_profile(
     """Upload each local sheet once per Flow profile/project and return its alias map."""
     key = profile_key(instance_id, project_id)
     media_map = cache.setdefault(key, {})
+    # A reconnect can briefly report the same Chrome instance with a stale or
+    # newly detected project id. The media handles were created by that exact
+    # authenticated Flow session, so reuse them before attempting a local-file
+    # upload (which is the path that fails when Flow hides its upload bearer).
+    for cached_key, cached_map in cache.items():
+        if cached_key == key or cached_key[0] != str(instance_id or ""):
+            continue
+        for alias, media_id in cached_map.items():
+            media_map.setdefault(alias, media_id)
     uploaded_names = []
     for index, character in enumerate(characters or [], 1):
         aliases = character_aliases(character, index)

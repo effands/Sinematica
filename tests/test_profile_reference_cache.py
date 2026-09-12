@@ -57,6 +57,30 @@ class ProfileReferenceCacheTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ids1, ids2)
             self.assertEqual((count1, count2), (1, 0))
 
+    async def test_character_sheet_reuses_same_instance_after_project_refresh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sheet = Path(tmp) / "hero.png"
+            sheet.write_bytes(b"image")
+            calls = []
+
+            async def upload(_bridge, path, project_id=None, instance_id=None):
+                calls.append((project_id, instance_id))
+                return "media-existing-session"
+
+            characters = [{"id": 1, "name": "Hero"}]
+            paths = {1: str(sheet)}
+            cache = {}
+            first, _ = await ensure_character_media_for_profile(
+                object(), characters, paths, "old-project", "profile-a", cache, upload_fn=upload
+            )
+            refreshed, uploaded = await ensure_character_media_for_profile(
+                object(), characters, paths, "new-project", "profile-a", cache, upload_fn=upload
+            )
+
+            self.assertEqual(first[1], refreshed[1])
+            self.assertEqual(uploaded, [])
+            self.assertEqual(len(calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

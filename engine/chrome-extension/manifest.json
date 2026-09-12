@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sinematica Flow Agent",
-  "version": "1.4.6",
+  "version": "1.5.32",
   "description": "Multi-Profile Google Flow Video Automation Agent for Sinematica AI",
   "icons": {
     "16": "icon16.png",

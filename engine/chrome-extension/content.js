@@ -60,6 +60,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 });
 
 window.addEventListener('message', (e) => {
+  if (e.data?.type === '__FLOWKIT_AUTH__' && e.data.value) {
+    try { chrome.runtime.sendMessage({ type: 'CAPTURE_FLOW_AUTH', value: e.data.value }).catch(() => {}); } catch (_) {}
+    return;
+  }
   if (e.data?.type === '__FLOWKIT_CREDITS__' && e.data.credits !== undefined) {
     try {
       chrome.runtime.sendMessage({

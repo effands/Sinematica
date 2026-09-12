@@ -51,7 +51,7 @@ def status_snapshot() -> dict:
     if any_connected and any_ready:
         state = "ready"
     elif any_connected:
-        state = "connected_no_login"
+        state = "connected_flow_session_no_oauth"
     else:
         state = "disconnected"
 
@@ -76,6 +76,6 @@ async def ensure_ready(timeout: float = 30, poll_interval: float = 0.5) -> None:
             break
         await asyncio.sleep(max(0, poll_interval))
     raise RuntimeError(
-        "Belum ada Chrome extension Flow Agent yang terhubung atau ter-login. "
-        "Pastikan extension dimuat di Chrome (chrome://extensions) dan profil ter-login di flow.google.com."
+        "Chrome Flow terhubung atau ter-login, tetapi sesi Flow aktif namun token OAuth API belum tertangkap oleh extension. "
+        "Buka Flow pada profil yang sama dan lakukan satu generate manual agar token API tertangkap."
     )

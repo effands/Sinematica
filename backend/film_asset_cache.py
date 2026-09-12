@@ -82,6 +82,13 @@ class FilmAssetCache:
         path, _ = self.paths(key)
         if state and state.get('status') == 'ready':
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != state.get('sha256'):
+                # The Flow media handle is still a valid reusable reference
+                # even when the local mirror was removed or could not be
+                # downloaded. Let the executor fall through to media_id reuse
+                # instead of treating this as a new character and generating a
+                # paid duplicate sheet.
+                if state.get('media_id'):
+                    return None
                 raise AssetRecoveryRequired('Master sheet hilang/rusak; pulihkan file cache sebelum Resume.')
             return str(path)
         return None

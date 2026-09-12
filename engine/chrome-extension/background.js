@@ -87,7 +87,11 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
     // Ignore Sinematica's own worker/injected requests. Otherwise an expired token
     // sent by this extension is immediately captured and persisted again.
-    if (selfRequestsInFlight > 0 || Number(details?.tabId) < 0) return;
+    // Flow may issue generation requests from its own service worker, which
+    // Chrome reports with tabId === -1. Do not discard those: they carry the
+    // real OAuth bearer we need to relay. Sinematica's own requests remain
+    // excluded by selfRequestsInFlight.
+    if (selfRequestsInFlight > 0) return;
     if (!details?.requestHeaders?.length) return;
     const authHeader = details.requestHeaders.find(
       (h) => h.name?.toLowerCase() === 'authorization',
@@ -106,6 +110,44 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
       console.log('[Sinematica Agent] Captured Flow OAuth session.');
       notifyTokenCaptured();
     }
+  },
+  { urls: [
+    'https://aisandbox-pa.googleapis.com/*',
+    'https://aisandbox-pa.sandbox.googleapis.com/*',
+    'https://*.googleapis.com/*',
+    'https://*.google.com/*',
+    'https://labs.google/*',
+    'https://flow.google.com/*'
+  ] },
+  ['requestHeaders', 'extraHeaders'],
+);
+
+// Some service-worker initiated Flow requests expose Authorization only on the
+// post-header event. Capture that path as well.
+chrome.webRequest.onSendHeaders.addListener(
+  (details) => {
+    if (selfRequestsInFlight > 0 || !details?.requestHeaders?.length) return;
+    const authHeader = details.requestHeaders.find(
+      (h) => h.name?.toLowerCase() === 'authorization',
+    );
+    const value = authHeader?.value || '';
+    if (details.url.includes('batchGenerateImages') && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'flow_ui_request_meta',
+        instance_id: instanceId,
+        header_names: details.requestHeaders.map(h => String(h.name || '').toLowerCase()).filter(Boolean),
+        has_authorization: Boolean(authHeader),
+        has_bearer: /^Bearer\s+\S+/i.test(value),
+        has_cookie: details.requestHeaders.some(h => h.name?.toLowerCase() === 'cookie'),
+      }));
+    }
+    if (!/^Bearer\s+\S+/i.test(value)) return;
+    const token = value.replace(/^Bearer\s+/i, '').trim();
+    if (!token || flowKey === token) return;
+    flowKey = token;
+    chrome.storage.local.set({ flowKey });
+    console.log('[Sinematica Agent] Captured Flow OAuth session after headers sent.');
+    notifyTokenCaptured();
   },
   { urls: [
     'https://aisandbox-pa.googleapis.com/*',
@@ -532,7 +574,12 @@ async function notifyRegistration() {
   }
   const readiness = readinessError
     ? { ready: false, error: readinessError }
-    : FlowTab.readinessState({ tab: flowTab, flowKey: flowKey || (await hasFlowSessionCookie()), projectId: currentProjectId });
+    : FlowTab.readinessState({
+      tab: flowTab,
+      flowKey,
+      sessionReady: flowSessionReady || !!flowKey || await hasFlowSessionCookie(),
+      projectId: currentProjectId,
+    });
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({
     type: 'register',
@@ -543,6 +590,7 @@ async function notifyRegistration() {
     project_id: currentProjectId,
     ready: readiness.ready,
     readiness_error: readiness.error,
+    credits: Number.isFinite(Number(lastKnownCredits)) ? Number(lastKnownCredits) : null,
     version: chrome.runtime.getManifest().version,
   }));
 }
@@ -569,6 +617,656 @@ function notifyTokenCaptured() {
   notifyRegistration();
 }
 
+async function generateImageViaAuthenticatedFlowUi(tabId, requestBody) {
+  if (!tabId || !requestBody?.requests?.length) {
+    return { status: 500, data: { error: 'FLOW_UI_FALLBACK_INVALID_REQUEST' } };
+  }
+  const prompt = requestBody.requests[0]?.structuredPrompt?.parts
+    ?.find((part) => typeof part?.text === 'string')?.text;
+  if (!prompt) {
+    return { status: 500, data: { error: 'FLOW_UI_FALLBACK_PROMPT_MISSING' } };
+  }
+  // The API payload may contain imageInputs/referenceImages in several
+  // schemas. Preserve the media UUIDs so the authenticated UI fallback can
+  // attach the same character sheets instead of silently generating an
+  // unreferenced storyboard.
+  const referenceIds = [];
+  const collectReferenceIds = (value, key = '') => {
+    if (Array.isArray(value)) return value.forEach((item) => collectReferenceIds(item, key));
+    if (!value || typeof value !== 'object') {
+      if (typeof value === 'string' && key === 'mediaId') referenceIds.push(value);
+      if (typeof value === 'string' && key === 'name') {
+        const match = value.match(/\/media\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+        if (match) referenceIds.push(match[1]);
+      }
+      return;
+    }
+    Object.entries(value).forEach(([childKey, childValue]) => collectReferenceIds(childValue, childKey));
+  };
+  collectReferenceIds(requestBody);
+  try {
+    // Chrome may keep a Flow home tab active while the project composer is in
+    // another restored tab. Probe every authenticated Flow tab instead of
+    // assuming ensureFlowTab() returned the tab containing the composer.
+    let flowTabs = await FlowTab.queryFlowTabs(chrome);
+    const isProjectComposer = (tab) => {
+      try {
+        const parsed = new URL(tab?.url || '');
+        return parsed.hostname === 'flow.google.com'
+          && /^\/project\/[^/]+\/?$/.test(parsed.pathname);
+      } catch (_) {
+        return false;
+      }
+    };
+    // An image asset editor also has a contenteditable and a Start generation
+    // button. Never submit storyboard/character generation there: restrict the
+    // candidate to the project composer, and restore the project root when
+    // Flow left the tab on /edit/<asset> after a previous result.
+    let composerTabs = (flowTabs || []).filter(isProjectComposer);
+    if (!composerTabs.length) {
+      const current = await chrome.tabs.get(tabId).catch(() => null);
+      if (current && /\/edit\//i.test(current.url || '') && currentProjectId) {
+        await chrome.tabs.update(tabId, {
+          url: `https://flow.google.com/project/${encodeURIComponent(currentProjectId)}`,
+        });
+        await new Promise(resolve => setTimeout(resolve, 1800));
+        flowTabs = await FlowTab.queryFlowTabs(chrome);
+        composerTabs = (flowTabs || []).filter(isProjectComposer);
+      }
+    }
+    const candidateIds = [...composerTabs.map(tab => tab.id)]
+      .filter((id, index, list) => id && list.indexOf(id) === index);
+    if (!candidateIds.length) {
+      return { status: 503, data: { error: 'FLOW_UI_IMAGE_FALLBACK_COMPOSER_ROOT_UNAVAILABLE' } };
+    }
+    let result = null;
+    for (const candidateId of candidateIds) {
+      const probe = await chrome.scripting.executeScript({
+        target: { tabId: candidateId },
+        world: 'MAIN',
+        func: () => ({
+          hasEditor: !!document.querySelector('[contenteditable="true"]'),
+          hasStart: !!document.querySelector('button[aria-label="Start generation"]'),
+        }),
+      }).catch(() => null);
+      if (!probe?.[0]?.result?.hasEditor || !probe?.[0]?.result?.hasStart) continue;
+
+      result = await chrome.scripting.executeScript({
+      target: { tabId: candidateId },
+      world: 'MAIN',
+        func: async (text, requestedRatio, requestedReferenceIds) => {
+        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = getComputedStyle(el);
+          const box = el.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden'
+            && box.width > 0 && box.height > 0;
+        };
+        const controls = () => Array.from(document.querySelectorAll(
+          'button, [role="radio"], [role="option"], [role="listitem"], mat-button-toggle, label'
+        ));
+        const labelNodes = () => [...controls(), ...document.querySelectorAll(
+          '[aria-label], [data-value], span'
+        )];
+        const labelText = (el) => normalize(
+          el.textContent || el.getAttribute('aria-label') || el.getAttribute('data-value')
+        );
+        const findLabelNode = (label) => labelNodes()
+          .filter(el => visible(el) && labelText(el) === normalize(label))
+          .sort((a, b) => labelText(a).length - labelText(b).length)[0];
+        const clickExact = (label) => {
+          const wanted = normalize(label);
+          const node = findLabelNode(wanted);
+          const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
+          if (!target) return false;
+          target.click();
+          return true;
+        };
+        const clickExactEventually = async (label, timeout = 5000) => {
+          const deadline = Date.now() + timeout;
+          while (Date.now() < deadline) {
+            if (clickExact(label)) return true;
+            await new Promise((resolve) => setTimeout(resolve, 150));
+          }
+          return false;
+        };
+        const selectedExact = (label) => {
+          const node = findLabelNode(label);
+          const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
+          if (!target) return false;
+          return target.getAttribute('aria-checked') === 'true'
+              || node.getAttribute('aria-pressed') === 'true'
+              || /(^|\s)(selected|checked|active)(\s|$)/i.test(target.className?.baseVal || target.className || '')
+              || target.querySelector?.('[aria-checked="true"],[aria-selected="true"]');
+        };
+        const addImageReferences = async (ids) => {
+          if (!ids.length) return { added: 0, missing: [] };
+          const normalizeText = (value) => normalize(value).replace(/[\s_-]/g, '');
+          // Flow can preserve the selected Ingredients while the picker is
+          // reopened. In that case the asset UUIDs are not present in the
+          // picker DOM anymore, but the visible Ingredient chips prove that
+          // the requested references are already attached.
+          const existingIngredients = Array.from(document.querySelectorAll(
+            'button, [role="button"], [aria-label]'
+          )).filter((el) => visible(el) && normalizeText(
+            el.getAttribute('aria-label') || el.innerText || el.textContent
+          ).includes('ingredient'));
+          if (existingIngredients.length >= ids.length) {
+            return { added: ids.length, missing: [] };
+          }
+          const findAssetNodes = (id) => Array.from(document.querySelectorAll(
+            '[data-media-id],[data-mediaid],[data-asset-id],[role="option"],[role="listitem"]'
+          )).filter((el) => {
+            const text = `${el.getAttribute('data-media-id') || ''} ${el.getAttribute('data-mediaid') || ''} ${el.getAttribute('data-asset-id') || ''} ${el.innerText || ''}`;
+            return text.includes(id) || normalizeText(text).includes(normalizeText(id));
+          });
+          const selected = [];
+          const missing = [];
+          for (const id of ids) {
+            const trigger = Array.from(document.querySelectorAll('button,[aria-label]')).find((el) =>
+              visible(el) && normalizeText(el.getAttribute('aria-label') || el.innerText).includes('addingredients'));
+            if (!trigger) { missing.push(id); continue; }
+            trigger.click(); await new Promise((resolve) => setTimeout(resolve, 500));
+            const match = findAssetNodes(id).pop();
+            if (!match) { missing.push(id); continue; }
+            (match.closest('button,[role="option"],[role="listitem"],[tabindex]') || match).click();
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            const add = Array.from(document.querySelectorAll('button,[role="button"]')).find((el) =>
+              visible(el) && normalizeText(el.innerText || el.textContent || el.getAttribute('aria-label')).includes('addtoprompt'));
+            if (!add) { missing.push(id); continue; }
+            add.click(); selected.push(id);
+            await new Promise((resolve) => setTimeout(resolve, 400));
+          }
+          return { added: selected.length, missing };
+        };
+        const referenceResult = await addImageReferences(requestedReferenceIds || []);
+        if ((requestedReferenceIds || []).length && referenceResult.added !== requestedReferenceIds.length) {
+          return { error: 'FLOW_UI_IMAGE_REFERENCES_INCOMPLETE', references_added: referenceResult.added, references_missing: referenceResult.missing };
+        }
+        const editor = document.querySelector('[contenteditable="true"]');
+        const start = document.querySelector('button[aria-label="Start generation"]');
+        // The button is disabled while the composer is empty; that is expected
+        // before we insert the request. Only the editor/button presence matters here.
+        if (!editor || !start) return { error: 'FLOW_UI_COMPOSER_UNAVAILABLE' };
+        // Character sheets and storyboards are single-output assets. Never
+        // inherit Flow's previous x2 setting from the last generation.
+        const settings = document.querySelector('button[aria-label="Settings trigger"]');
+        // Always open the settings sheet and explicitly select Image + x1.
+        // Reading the summary text alone is unsafe: Flow can retain a previous
+        // Video/16:9 selection while the summary is stale or the composer has
+        // just been reused from another job.
+        if (!findLabelNode('image')) {
+          settings?.click();
+          await new Promise((resolve) => setTimeout(resolve, 350));
+        }
+        if (!await clickExactEventually('image')) return { error: 'FLOW_UI_IMAGE_MODE_CONTROL_MISSING' };
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (!selectedExact('image')) return { error: 'FLOW_UI_IMAGE_MODE_NOT_APPLIED' };
+        // Apply the caller's image ratio instead of inheriting whatever the
+        // previous Flow job left selected. Character sheets/storyboards are
+        // still one output, but Portrait must remain Portrait.
+        // Flow's Image composer exposes portrait as 3:4; 9:16 is a Video
+        // ratio only. Keep the app's portrait intent without leaving the
+        // previous Video setting selected.
+        const ratioLabel = requestedRatio === 'IMAGE_ASPECT_RATIO_PORTRAIT' ? '9:16'
+          : requestedRatio === 'IMAGE_ASPECT_RATIO_LANDSCAPE' ? '16:9'
+          : requestedRatio === 'IMAGE_ASPECT_RATIO_4_3' ? '4:3'
+          : requestedRatio === 'IMAGE_ASPECT_RATIO_3_4' ? '3:4'
+          : requestedRatio === 'IMAGE_ASPECT_RATIO_SQUARE' ? '1:1' : null;
+        if (ratioLabel) await clickExactEventually(ratioLabel);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (!await clickExactEventually('x1')) return { error: 'FLOW_UI_SINGLE_OUTPUT_CONTROL_MISSING' };
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (!selectedExact('x1')) return { error: 'FLOW_UI_SINGLE_OUTPUT_NOT_APPLIED' };
+        const before = new Set(Array.from(document.images)
+          .map((img) => img.currentSrc || img.src)
+          .filter(Boolean));
+        editor.focus();
+        // Flow's composer is a React contenteditable. Assigning textContent alone
+        // does not update React's internal value, so the button stays disabled.
+        // Use the same editing primitive as a real user paste, then emit the
+        // before/input events for the editor implementation currently shipped by Flow.
+        document.execCommand('selectAll', false);
+        document.execCommand('insertText', false, text);
+        if ((editor.innerText || editor.textContent || '').trim() !== text.trim()) {
+          editor.textContent = text;
+          editor.dispatchEvent(new InputEvent('beforeinput', {
+            bubbles: true, inputType: 'insertText', data: text,
+          }));
+          editor.dispatchEvent(new InputEvent('input', {
+            bubbles: true, inputType: 'insertText', data: text,
+          }));
+        }
+        // Flow's composer updates through React state asynchronously. A short
+        // fixed sleep makes long prompts look empty/disabled even though the
+        // real UI accepts them a moment later. Wait for the editor state and
+        // the actual Start button to settle before giving up.
+        let button = null;
+        const buttonDeadline = Date.now() + 8000;
+        while (Date.now() < buttonDeadline) {
+          button = document.querySelector('button[aria-label="Start generation"]');
+          const editorText = (editor.innerText || editor.textContent || '').trim();
+          if (button && !button.disabled && editorText === text.trim()) break;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        if (!button || button.disabled) return { error: 'FLOW_UI_GENERATE_DISABLED' };
+        button.click();
+        const deadline = Date.now() + 90000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          const fresh = Array.from(document.images)
+            .map((img) => img.currentSrc || img.src)
+            .filter((url) => url && !before.has(url) && imgIsUsable(url));
+          if (fresh.length) return { image_url: fresh[fresh.length - 1] };
+        }
+        return { error: 'FLOW_UI_GENERATION_TIMEOUT' };
+
+        function imgIsUsable(url) {
+          try {
+            const parsed = new URL(url);
+            if (parsed.protocol !== 'https:') return false;
+            // Flow serves generated thumbnails through more than one CDN host
+            // depending on project/account. The old detector only accepted two
+            // hosts, turning successful Image generations into NO_IMAGE.
+            return parsed.hostname === 'flow-content.google'
+              || parsed.hostname === 'flow.google.com'
+              || parsed.hostname.endsWith('.googleusercontent.com')
+              || parsed.hostname === 'storage.googleapis.com'
+              || parsed.hostname.endsWith('.gstatic.com');
+          } catch (_) {
+            return false;
+          }
+        }
+      },
+      args: [prompt, requestBody.requests[0]?.imageAspectRatio, referenceIds],
+      }).catch(() => null);
+      if (result?.[0]?.result?.image_url) break;
+    }
+    if (!result) {
+      return { status: 500, data: { error: 'FLOW_UI_FALLBACK_FLOW_UI_COMPOSER_UNAVAILABLE' } };
+    }
+    const value = result?.[0]?.result;
+    if (!value?.image_url) {
+      return { status: 500, data: { error: `FLOW_UI_FALLBACK_${value?.error || 'NO_IMAGE'}` } };
+    }
+    const match = value.image_url.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    const mediaId = match ? match[0] : value.image_url;
+    return { status: 200, data: { media: [{ name: mediaId, image: { generatedImage: { fifeUrl: value.image_url } } }] } };
+  } catch (error) {
+    console.warn('[Sinematica Agent] Flow UI fallback failed:', error);
+    return { status: 500, data: { error: `FLOW_UI_FALLBACK_EXCEPTION: ${error?.message || String(error)}` } };
+  }
+}
+
+function encodeUiVideoHandle(url) {
+  try {
+    return `ui_video:${btoa(unescape(encodeURIComponent(url)))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}`;
+  } catch (_) {
+    return `ui_video:${url}`;
+  }
+}
+
+function decodeUiVideoHandle(handle) {
+  if (typeof handle !== 'string' || !handle.startsWith('ui_video:')) return null;
+  try {
+    const encoded = handle.slice('ui_video:'.length)
+      .replace(/-/g, '+').replace(/_/g, '/');
+    return decodeURIComponent(escape(atob(encoded + '='.repeat((4 - encoded.length % 4) % 4))));
+  } catch (_) {
+    return null;
+  }
+}
+
+async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody) {
+  if (!tabId || !requestBody?.requests?.length) {
+    return { status: 500, data: { error: 'FLOW_UI_VIDEO_FALLBACK_INVALID_REQUEST' } };
+  }
+  const prompt = requestBody.requests[0]?.textInput?.structuredPrompt?.parts
+    ?.find((part) => typeof part?.text === 'string')?.text;
+  const referenceIds = Array.from(new Set(
+    (requestBody.requests[0]?.referenceImages || [])
+      .map((item) => item?.mediaId || item?.name || item?.media?.mediaId || '')
+      .filter(Boolean)
+  )).slice(0, 7);
+  if (!prompt) {
+    return { status: 500, data: { error: 'FLOW_UI_VIDEO_FALLBACK_PROMPT_MISSING' } };
+  }
+
+  try {
+    let flowTabs = await FlowTab.queryFlowTabs(chrome);
+    const isProjectComposer = (tab) => {
+      try {
+        const parsed = new URL(tab?.url || '');
+        return parsed.hostname === 'flow.google.com'
+          && parsed.pathname.replace(/\/$/, '') === `/project/${currentProjectId}`;
+      } catch (_) {
+        return false;
+      }
+    };
+    // Image generation can leave the only Flow tab on /edit/<asset>. That
+    // page has an image-edit composer with its own Ingredients picker, not the
+    // video composer. Video fallback must run on the project root composer.
+    let composerTabs = (flowTabs || []).filter(isProjectComposer);
+    if (!composerTabs.length && currentProjectId) {
+      const current = await chrome.tabs.get(tabId).catch(() => null);
+      if (current && /\/edit\//i.test(current.url || '')) {
+        const projectUrl = `https://flow.google.com/project/${encodeURIComponent(currentProjectId)}`;
+        await chrome.tabs.update(tabId, { url: projectUrl });
+        await new Promise(resolve => setTimeout(resolve, 1800));
+        flowTabs = await FlowTab.queryFlowTabs(chrome);
+        composerTabs = (flowTabs || []).filter(isProjectComposer);
+      }
+    }
+    // Never execute the video fallback in an asset editor.  In particular,
+    // character-sheet / image-edit pages expose a similarly named Ingredients
+    // button, but it belongs to the image editor and can create more images
+    // instead of a video.  A video request is valid only on the project-root
+    // composer selected above.
+    const candidateIds = [...composerTabs.map(tab => tab.id)]
+      .filter((id, index, list) => id && list.indexOf(id) === index);
+    if (!candidateIds.length) {
+      return { status: 503, data: { error: 'FLOW_UI_VIDEO_FALLBACK_COMPOSER_ROOT_UNAVAILABLE' } };
+    }
+    let result = null;
+
+    for (const candidateId of candidateIds) {
+      result = await chrome.scripting.executeScript({
+        target: { tabId: candidateId },
+        world: 'MAIN',
+        func: async (text, refIds, requestedAspectRatio, requestedVideoModelKey) => {
+          const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+          const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+          const controls = () => Array.from(document.querySelectorAll(
+            'button, [role="radio"], [role="option"], [role="listitem"], mat-button-toggle, label'
+          ));
+          const visible = (el) => {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden'
+              && rect.width > 0 && rect.height > 0;
+          };
+          const labelNodes = () => [...controls(), ...document.querySelectorAll('[aria-label], [data-value], span')];
+          const labelText = (el) => normalize(
+            el.textContent || el.getAttribute('aria-label') || el.getAttribute('data-value')
+          );
+          const findLabelNode = (label) => labelNodes()
+            .filter(el => visible(el) && labelText(el) === normalize(label))
+            .sort((a, b) => labelText(a).length - labelText(b).length)[0];
+          const clickExact = (label) => {
+            const node = findLabelNode(label);
+            const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
+            if (!target) return false;
+            target.click();
+            return true;
+          };
+          const clickExactEventually = async (label, timeout = 5000) => {
+            const deadline = Date.now() + timeout;
+            while (Date.now() < deadline) {
+              if (clickExact(label)) return true;
+              await sleep(150);
+            }
+            return false;
+          };
+          const selectedExact = (label) => {
+            const node = findLabelNode(label);
+            if (!node) return false;
+            const target = node.closest('[role="radio"],button,mat-button-toggle') || node;
+            return target.getAttribute('aria-checked') === 'true'
+              || target.getAttribute('aria-pressed') === 'true'
+              || target.classList.contains('mat-button-toggle-checked')
+              || target.classList.contains('selected');
+          };
+          const clickContains = (label) => {
+            const wanted = normalize(label);
+            const node = controls().find(el => normalize(el.innerText || el.textContent || el.getAttribute('aria-label')).includes(wanted));
+            if (!node) return false;
+            (node.closest('button,[role="radio"],mat-button-toggle,label') || node).click();
+            return true;
+          };
+          const assetSources = () => Array.from(document.querySelectorAll('img, video, source, a[href]'))
+            .map(el => el.currentSrc || el.src || el.href || '')
+            .filter(url => typeof url === 'string' && url.length > 0);
+          const extractVideoUrl = (before) => {
+            // Do not scan every image/link on the page: Flow renders a new
+            // thumbnail beside the video and both can share the same CDN.
+            const candidates = Array.from(document.querySelectorAll('video, video source'))
+              .map(el => el.currentSrc || el.src || '')
+              .filter(url => typeof url === 'string' && url.length > 0 && !before.has(url))
+              .filter(url => !/\/image\/|thumbnail|preview/i.test(url));
+            return candidates.find(url => /\.mp4(?:[?#]|$)|googlevideo|flow-content|\/video\/|download/i.test(url))
+              || null;
+          };
+
+          const clickByText = (wantedText, contains = false) => {
+            const wanted = normalize(wantedText);
+            const node = controls().find(el => {
+              if (!visible(el)) return false;
+              const value = normalize(el.innerText || el.textContent || el.getAttribute('aria-label'));
+              return contains ? value.includes(wanted) : value === wanted;
+            });
+            if (!node) return false;
+            (node.closest('button,[role="radio"],[role="option"],[role="listitem"],mat-button-toggle,label') || node).click();
+            return true;
+          };
+
+          const setInputValue = (input, value) => {
+            if (!input) return false;
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            if (setter) setter.call(input, value);
+            else input.value = value;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+          };
+
+          const findAssetNodes = (refId) => {
+            const needle = String(refId).toLowerCase();
+            const nodes = Array.from(document.querySelectorAll('*'));
+            const direct = nodes.filter(el => {
+              if (!visible(el)) return false;
+              const attrs = Array.from(el.attributes || [])
+                .map(attr => `${attr.name}=${attr.value}`)
+                .join(' ')
+                .toLowerCase();
+              const source = `${attrs} ${el.getAttribute('src') || ''} ${el.getAttribute('href') || ''}`.toLowerCase();
+              return source.includes(needle) || source.includes(`media/${needle}`);
+            });
+            if (direct.length) return direct;
+            // Some Flow builds put the media name only on the tile's serialized
+            // markup. Use that fallback only when no direct attribute matched;
+            // otherwise an ancestor tile can win and its click does not select.
+            return nodes.filter(el => {
+              if (!visible(el)) return false;
+              return String(el.outerHTML || '').slice(0, 4000).toLowerCase().includes(needle);
+            });
+          };
+
+          const clickAssetNode = (node) => {
+            if (!node) return false;
+            const target = node.closest(
+              '[data-media-id],[data-mediaid],[role="option"],[role="listitem"],button,[tabindex]'
+            ) || node.parentElement || node;
+            target.click();
+            return true;
+          };
+
+          const addFlowIngredients = async (ids) => {
+            if (!ids.length) return { added: 0, missing: [] };
+            const trigger = document.querySelector(
+              'button[aria-label*="Add ingredients"], [aria-label*="Add ingredients"]'
+            ) || controls().find(el => normalize(el.getAttribute('aria-label')).includes('add ingredients'));
+            if (!trigger) return { added: 0, missing: ids.slice(), error: 'FLOW_UI_INGREDIENT_TRIGGER_MISSING' };
+            const selected = [];
+            const missing = [];
+            for (const id of ids) {
+              // Flow closes the picker after each successful "Add to prompt".
+              // Reopen it for every reference so adding the first asset does
+              // not make the remaining storyboard/sheets disappear.
+              const pickerTrigger = document.querySelector(
+                'button[aria-label*="Add ingredients"], [aria-label*="Add ingredients"]'
+              ) || controls().find(el => normalize(el.getAttribute('aria-label')).includes('add ingredients'));
+              if (!pickerTrigger) {
+                missing.push(id);
+                continue;
+              }
+              pickerTrigger.click();
+              await sleep(500);
+              let matches = findAssetNodes(id);
+              if (!matches.length) {
+                const search = Array.from(document.querySelectorAll('input')).find(input =>
+                  visible(input) && /search assets|search/i.test(input.getAttribute('placeholder') || '')
+                );
+                if (search) {
+                  setInputValue(search, id);
+                  await sleep(450);
+                  matches = findAssetNodes(id);
+                  setInputValue(search, '');
+                  await sleep(250);
+                }
+              }
+              if (matches.length) {
+                clickAssetNode(matches[matches.length - 1]);
+                await sleep(250);
+                // Flow's picker is single-selection: clicking another tile
+                // replaces the preview selection. Add each asset immediately
+                // instead of batching clicks and ending with only the last
+                // tile selected (which leaves Add to prompt disabled).
+                const addButton = controls().find(el => visible(el) && !el.disabled
+                  && normalize(el.innerText || el.textContent || el.getAttribute('aria-label')).includes('add to prompt'));
+                if (addButton) {
+                  (addButton.closest('button,[role="button"]') || addButton).click();
+                  selected.push(id);
+                  await sleep(400);
+                } else {
+                  missing.push(id);
+                }
+              } else {
+                missing.push(id);
+              }
+            }
+
+            if (!selected.length) {
+              document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+              return { added: 0, missing, error: 'FLOW_UI_INGREDIENT_ASSETS_NOT_FOUND' };
+            }
+            await sleep(250);
+            if (!selected.length) {
+              return { added: 0, missing: ids, error: 'FLOW_UI_ADD_TO_PROMPT_DISABLED' };
+            }
+            return { added: selected.length, missing };
+          };
+
+          const settings = document.querySelector('button[aria-label="Settings trigger"]');
+          // Never inherit the previous image-generation configuration. Open
+          // the settings sheet on every video request and set every relevant
+          // production parameter explicitly from the caller's request.
+          if (!findLabelNode('video')) {
+            settings?.click();
+            await sleep(350);
+          }
+          if (!await clickExactEventually('video')) return { error: 'FLOW_UI_VIDEO_MODE_CONTROL_MISSING' };
+          await sleep(500);
+
+          // Select the same mode as the original request before opening the
+          // ingredient picker. Flow keeps the picker behind the settings sheet
+          // otherwise, so a click can appear to succeed while selecting nothing.
+          if (refIds.length) {
+            if (!await clickExactEventually('ingredients')) clickContains('ingredients');
+          } else if (!await clickExactEventually('frames')) {
+            clickContains('frames');
+          }
+          const videoRatioLabel = requestedAspectRatio === 'VIDEO_ASPECT_RATIO_PORTRAIT'
+            ? '9:16' : requestedAspectRatio === 'VIDEO_ASPECT_RATIO_LANDSCAPE'
+              ? '16:9' : null;
+          const durationMatch = String(requestedVideoModelKey || '').match(/_(\d+)s$/i);
+          const videoDurationLabel = durationMatch ? `${durationMatch[1]}s` : null;
+          if (videoRatioLabel) await clickExactEventually(videoRatioLabel);
+          if (videoDurationLabel) await clickExactEventually(videoDurationLabel);
+          if (!await clickExactEventually('x1')) return { error: 'FLOW_UI_SINGLE_OUTPUT_CONTROL_MISSING' };
+          await sleep(500);
+          if (!selectedExact('video') || !selectedExact('ingredients')
+              || (videoRatioLabel && !selectedExact(videoRatioLabel))
+              || (videoDurationLabel && !selectedExact(videoDurationLabel))
+              || !selectedExact('x1')) {
+            return { error: 'FLOW_UI_VIDEO_SETTINGS_NOT_APPLIED' };
+          }
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          await sleep(350);
+
+          // Preserve the caller's references in Flow's authenticated UI. Frames
+          // is only safe when the request has no references to attach.
+          const ingredientResult = await addFlowIngredients(refIds);
+          if (refIds.length && ingredientResult.added !== refIds.length) {
+            return {
+              error: ingredientResult.error || 'FLOW_UI_INGREDIENTS_INCOMPLETE',
+              references_added: ingredientResult.added,
+              references_missing: ingredientResult.missing,
+            };
+          }
+
+          const editor = document.querySelector('[contenteditable="true"]');
+          if (!editor) return { error: 'FLOW_UI_VIDEO_COMPOSER_UNAVAILABLE' };
+          const before = new Set(assetSources());
+          editor.focus();
+          document.execCommand('selectAll', false);
+          document.execCommand('insertText', false, text);
+          if ((editor.innerText || editor.textContent || '').trim() !== text.trim()) {
+            editor.textContent = text;
+            editor.dispatchEvent(new InputEvent('beforeinput', {
+              bubbles: true, inputType: 'insertText', data: text,
+            }));
+            editor.dispatchEvent(new InputEvent('input', {
+              bubbles: true, inputType: 'insertText', data: text,
+            }));
+          }
+
+          let start = null;
+          const deadline = Date.now() + 10000;
+          while (Date.now() < deadline) {
+            start = document.querySelector('button[aria-label="Start generation"]');
+            if (start && !start.disabled && (editor.innerText || editor.textContent || '').trim() === text.trim()) break;
+            await sleep(250);
+          }
+          if (!start || start.disabled) return { error: 'FLOW_UI_VIDEO_GENERATE_DISABLED' };
+          start.click();
+
+          const renderDeadline = Date.now() + 180000;
+          while (Date.now() < renderDeadline) {
+            await sleep(1500);
+            const url = extractVideoUrl(before);
+            if (url) return { video_url: url, references_added: ingredientResult.added };
+          }
+          return { error: 'FLOW_UI_VIDEO_GENERATION_TIMEOUT' };
+        },
+          args: [prompt, referenceIds, requestBody.requests[0]?.aspectRatio, requestBody.requests[0]?.videoModelKey],
+      }).catch(() => null);
+
+      if (result?.[0]?.result?.video_url) break;
+    }
+
+    const value = result?.[0]?.result;
+    if (!value?.video_url) {
+      return { status: 500, data: { error: `FLOW_UI_VIDEO_FALLBACK_${value?.error || 'NO_VIDEO'}` } };
+    }
+    const handle = encodeUiVideoHandle(value.video_url);
+    return {
+      status: 200,
+      data: {
+        media: [{ name: handle, video: { videoUrl: value.video_url } }],
+        uiVideoUrl: value.video_url,
+        referencesAdded: value.references_added || 0,
+      },
+      auth_mode: 'authenticated_flow_ui_session',
+    };
+  } catch (error) {
+    console.warn('[Sinematica Agent] Flow UI video fallback failed:', error);
+    return { status: 500, data: { error: `FLOW_UI_VIDEO_FALLBACK_EXCEPTION: ${error?.message || String(error)}` } };
+  }
+}
+
 async function _probeTokenFromTab(tabId) {
   if (flowKey || !tabId) return flowKey;
   try {
@@ -577,19 +1275,26 @@ async function _probeTokenFromTab(tabId) {
       world: 'MAIN',
       func: () => {
         try {
-          for (let i = 0; i < localStorage.length; i++) {
-            const v = localStorage.getItem(localStorage.key(i));
-            if (v && typeof v === 'string' && v.includes('ya29.')) {
-              const m = v.match(/ya29\.[A-Za-z0-9_.~-]+/);
-              if (m && m[0]) return m[0];
+          const findBearer = (value, seen = new Set()) => {
+            if (typeof value === 'string') {
+              const m = value.match(/ya29\.[A-Za-z0-9_.~-]+/);
+              return m?.[0] || null;
             }
+            if (!value || typeof value !== 'object' || seen.has(value)) return null;
+            seen.add(value);
+            for (const key of Object.keys(value).slice(0, 80)) {
+              const found = findBearer(value[key], seen);
+              if (found) return found;
+            }
+            return null;
+          };
+          for (let i = 0; i < localStorage.length; i++) {
+            const found = findBearer(localStorage.getItem(localStorage.key(i)));
+            if (found) return found;
           }
           for (let i = 0; i < sessionStorage.length; i++) {
-            const v = sessionStorage.getItem(sessionStorage.key(i));
-            if (v && typeof v === 'string' && v.includes('ya29.')) {
-              const m = v.match(/ya29\.[A-Za-z0-9_.~-]+/);
-              if (m && m[0]) return m[0];
-            }
+            const found = findBearer(sessionStorage.getItem(sessionStorage.key(i)));
+            if (found) return found;
           }
         } catch (_) {}
         return null;
@@ -633,9 +1338,47 @@ async function _probeTokenFromTab(tabId) {
   }
   return flowKey;
 }
+
+async function _probeTokenFromAnyFlowTab(preferredTabId = null) {
+  if (flowKey) return flowKey;
+  const tabs = await FlowTab.queryFlowTabs(chrome).catch(() => []);
+  const ids = [preferredTabId, ...(tabs || []).map(tab => tab.id)]
+    .filter((id, index, list) => id && list.indexOf(id) === index);
+  for (const id of ids) {
+    const found = await _probeTokenFromTab(id);
+    if (found) return found;
+  }
+  return flowKey;
+}
 // ─── Native Main World API Request Proxy ───────────────────
 async function handleApiRequest(msg) {
   const { id, endpoint, body, flow_key } = msg;
+
+  // Video renders created through the authenticated Flow composer do not have
+  // an API operation that can be polled with the public API key. Return the
+  // already completed UI result directly to the normal backend poller.
+  if (endpoint.includes('batchCheckAsyncVideoGenerationStatus')) {
+    const serializedBody = JSON.stringify(body || {});
+    const uiHandle = serializedBody.match(/ui_video:[A-Za-z0-9_-]+/)?.[0];
+    const uiVideoUrl = decodeUiVideoHandle(uiHandle);
+    if (uiHandle && uiVideoUrl && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'api_response',
+        id,
+        status: 200,
+        data: {
+          media: [{
+            name: uiHandle,
+            status: 'COMPLETED',
+            mediaMetadata: { mediaStatus: 'MEDIA_GENERATION_STATUS_SUCCESSFUL' },
+            video: { videoUrl: uiVideoUrl },
+          }],
+        },
+        auth_mode: 'authenticated_flow_ui_session',
+      }));
+      return;
+    }
+  }
 
   let targetTab;
   try {
@@ -816,9 +1559,120 @@ async function handleApiRequest(msg) {
     // A profile may report session_ready while its cached flowKey is empty or
     // stale. Recover the OAuth token from this profile's actual Flow tab before
     // sending the request; otherwise Google sees only the public API key.
-    const recoveredBearerKey = await _probeTokenFromTab(targetTab.id);
+    const recoveredBearerKey = await _probeTokenFromAnyFlowTab(targetTab.id);
     const activeBearerKey = recoveredBearerKey || flow_key || flowKey;
     const isOwnImageRequest = endpoint.includes('batchGenerateImages');
+    const isVideoReferenceRequest = endpoint.includes('batchAsyncGenerateVideoReferenceImages');
+
+    // Keep request-local reference extraction here.  The UI fallback has its
+    // own collector, but this handler must not read that function's local
+    // `referenceIds` variable (which caused the Mika 500 ReferenceError).
+    const requestReferenceIds = [];
+    const collectRequestReferenceIds = (value, key = '') => {
+      if (!value) return;
+      if (Array.isArray(value)) {
+        value.forEach(item => collectRequestReferenceIds(item, key));
+        return;
+      }
+      if (typeof value !== 'object') return;
+      if (typeof value.mediaId === 'string') requestReferenceIds.push(value.mediaId);
+      if (typeof value.referenceId === 'string') requestReferenceIds.push(value.referenceId);
+      if (typeof value.imageId === 'string') requestReferenceIds.push(value.imageId);
+      Object.entries(value).forEach(([childKey, childValue]) => {
+        if (/reference|imageinput|ingredient|media/i.test(childKey)) {
+          collectRequestReferenceIds(childValue, childKey);
+        }
+      });
+    };
+    collectRequestReferenceIds(body);
+
+    // Google Flow's current UI keeps the OAuth credential inside its own
+    // authenticated application context. Do not send an API-key-only image
+    // request first: that path is rejected by aisandbox-pa with HTTP 401 even
+    // though the visible Flow session is valid. Route image generation through
+    // the logged-in Flow composer when no bearer is available.
+    const imageHasReferences = requestReferenceIds.length > 0;
+    // Reference Image requests must use the visible authenticated Flow
+    // composer. Even a stale cached bearer token can otherwise make the
+    // extension send an API-key/HTTP request and Flow returns 401.
+    if (isOwnImageRequest && imageHasReferences) {
+      const uiFallback = await generateImageViaAuthenticatedFlowUi(targetTab.id, body);
+      if (uiFallback?.status === 200) {
+        recordMetrics(true, 'IMAGE');
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'api_response', id, status: 200, data: uiFallback.data, auth_mode: 'authenticated_flow_ui_session' }));
+        }
+        return;
+      }
+      const fallbackError = uiFallback?.data?.error || 'FLOW_UI_AUTHENTICATED_REFERENCE_GENERATION_UNAVAILABLE';
+      recordMetrics(false, 'IMAGE', fallbackError);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'api_response', id, status: 503, data: { error: fallbackError }, auth_mode: 'authenticated_flow_ui_session_unavailable' }));
+      }
+      return;
+    }
+    if (isOwnImageRequest && !activeBearerKey) {
+      const uiFallback = await generateImageViaAuthenticatedFlowUi(targetTab.id, body);
+      if (uiFallback?.status === 200) {
+        recordMetrics(true, 'IMAGE');
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'api_response',
+            id,
+            status: uiFallback.status,
+            data: uiFallback.data,
+            auth_mode: 'authenticated_flow_ui_session',
+          }));
+        }
+        return;
+      }
+      // Never fall through to the API-key-only endpoint. Google rejects that
+      // request with 401 even when the visible Flow session is authenticated.
+      const fallbackError = uiFallback?.data?.error || 'FLOW_UI_AUTHENTICATED_GENERATION_UNAVAILABLE';
+      recordMetrics(false, 'IMAGE', fallbackError);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'api_response',
+          id,
+          status: 503,
+          data: { error: fallbackError },
+          auth_mode: 'authenticated_flow_ui_session_unavailable',
+        }));
+      }
+      return;
+    }
+
+    // The current Flow web app can submit Ingredients video jobs from its
+    // authenticated composer, but its R2V HTTP endpoint rejects the public
+    // API key when no bearer is exposed to the extension. Use that same UI
+    // session and return a pollable UI handle instead of sending the doomed
+    // API-key-only request.
+    if (isVideoReferenceRequest && !activeBearerKey) {
+      const uiFallback = await generateVideoViaAuthenticatedFlowUi(targetTab.id, body);
+      if (uiFallback?.status === 200) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'api_response',
+            id,
+            status: 200,
+            data: uiFallback.data,
+            auth_mode: 'authenticated_flow_ui_session',
+          }));
+        }
+        return;
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'api_response',
+          id,
+          status: 503,
+          data: { error: uiFallback?.data?.error || 'FLOW_UI_VIDEO_FALLBACK_UNAVAILABLE' },
+          auth_mode: 'authenticated_flow_ui_session_unavailable',
+        }));
+      }
+      return;
+    }
+
     if (isOwnImageRequest) selfRequestsInFlight++;
 
     let attempts = 0;
@@ -947,6 +1801,10 @@ async function handleApiRequest(msg) {
             captchaAction,
             currentProjectId,
             activeBearerKey,
+            // Uploads must use the extension worker too.  The Flow page can
+            // generate through its own origin, but upload endpoints reject or
+            // hide page-origin fetches behind CORS; the worker has the same
+            // authenticated session and host permissions.
             String(tabCheck?.url || targetTab.url || '').startsWith('https://flow.google.com/'),
           ]
         });
@@ -982,7 +1840,29 @@ async function handleApiRequest(msg) {
           const { status, data, error } = executionResult;
           const responseData = data ?? (error ? { error } : {});
           if (status === 401) {
+            console.warn('[Sinematica Agent] Request 401 received, refreshing Flow OAuth token...');
             invalidateFlowAuth('FLOW_LOGIN_EXPIRED');
+            if (isOwnImageRequest && attempts === 1) {
+              const uiFallback = await generateImageViaAuthenticatedFlowUi(targetTab.id, body);
+              if (uiFallback) {
+                if (isOwnImageRequest) selfRequestsInFlight = Math.max(0, selfRequestsInFlight - 1);
+                recordMetrics(uiFallback.status === 200, 'IMAGE', uiFallback.status === 200 ? '' : (uiFallback.data?.error || 'FLOW_UI_FALLBACK_FAILED'));
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({
+                    type: 'api_response',
+                    id,
+                    status: uiFallback.status,
+                    data: uiFallback.data,
+                    auth_mode: 'authenticated_flow_ui_session',
+                  }));
+                }
+                return;
+              }
+            }
+            if (attempts < maxAttempts) {
+              const refreshedToken = await _probeTokenFromTab(targetTab.id);
+              if (refreshedToken) continue;
+            }
           }
           if (responseData && typeof responseData === 'object') {
             const rem = responseData.remainingCredits ?? responseData.credits;
@@ -1005,6 +1885,7 @@ async function handleApiRequest(msg) {
               status,
               data: responseData,
               error: error || undefined,
+              auth_mode: activeBearerKey ? 'oauth_bearer' : 'authenticated_flow_page_session',
             }));
           }
           return;
@@ -1044,6 +1925,14 @@ async function handleApiRequest(msg) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'CAPTURE_FLOW_AUTH' && typeof msg.value === 'string') {
+    const match = msg.value.match(/^Bearer\s+(\S+)/i);
+    if (match && match[1] && flowKey !== match[1]) {
+      flowKey = match[1];
+      chrome.storage.local.set({ flowKey });
+      notifyTokenCaptured();
+    }
+  }
   if (msg.type === 'SNIFFED_FLOW_CREDITS' && msg.credits !== undefined) {
     const val = Number(msg.credits);
     if (Number.isFinite(val)) {
@@ -1073,6 +1962,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }));
       } catch (_) {}
     }
+  }
+
+  if (msg.type === 'UPDATE_MANUAL_TOKEN' && msg.flowKey) {
+    flowKey = msg.flowKey;
+    chrome.storage.local.set({ flowKey });
+    console.log('[Sinematica Agent] Manual token applied:', flowKey.slice(0, 15) + '...');
+    notifyTokenCaptured();
+    sendResponse({ success: true });
   }
 
   if (msg.type === 'UPDATE_PROFILE_NAME' && msg.name) {

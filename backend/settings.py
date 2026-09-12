@@ -27,13 +27,13 @@ DEFAULT_CHARACTER_SHEET_TEMPLATE = """3×3 CHARACTER CONTACT SHEET MASTER PROMPT
 
 Ultra-Photorealistic Studio Edition • 9-Panel Identity Lock • AI Optimized
 
-Create an ultra-photorealistic 3×3 character identity reference sheet for this person: {char_desc}. The seed value is internal metadata only and must not appear visually.
+Create one ultra-photorealistic 3×3 character identity reference sheet for this person: {char_desc}. The seed value is internal metadata only and must not appear visually.
 
 Transform the subject into a consistent, definitive character design while strictly preserving and locking identity, bone structure, facial proportions, skin tone, hairstyle, outfit, silhouette, and recognizable visual language across all 9 panels.
 
 COMPOSITION & LAYOUT:
 One single vertical 9:16 image containing a clean, evenly arranged 3×3 contact sheet (9 panels total).
-NO title bar, NO visible name, NO seed text, NO labels, NO captions, NO typography anywhere in the image.
+At the top, add a small clean editorial header with the exact character name: {char_name}. The name is an identification label only; do not add seed text, captions, story paragraphs, or extra typography.
 All 9 panels must be clearly separated by thin, clean divider lines on a neutral studio background with subtle realistic shadows. Balanced margins, professional editorial portfolio presentation.
 Consistent lighting, color, wardrobe, styling, and character identity across all panels. Each panel should feel like a different camera capture of the exact same person in the same studio session.
 
@@ -63,7 +63,7 @@ PHOTOGRAPHY & RENDER STYLE:
 Ultra-photorealistic editorial photography | 85mm lens equivalent | RAW photography look | Extremely high detail and optical sharpness | Natural realistic skin texture with visible skin pores | Controlled professional studio lighting | Neutral studio background | Subtle realistic shadows | Accurate anatomy and natural fabric behavior.
 
 ANTI-DRIFT & NEGATIVE PROMPT:
-Do NOT change the person's identity, alter facial structure, beautify or airbrush the face, smooth skin unnaturally, change skin tone, redesign facial features, change body proportions, create different people, repeat identical camera angles, stylize into cartoon or anime, introduce inconsistent wardrobe or changing accessories, recoloured clothing, cluttered layout, visible text, title bars, captions, name tags, seed numbers, labels, watermark, blurry textures, AI artifacts, extra limbs, distorted anatomy."""
+Do NOT change the person's identity, alter facial structure, beautify or airbrush the face, smooth skin unnaturally, change skin tone, redesign facial features, change body proportions, create different people, repeat identical camera angles, stylize into cartoon or anime, introduce inconsistent wardrobe or changing accessories, recoloured clothing, cluttered layout, seed numbers, story captions, extra labels, watermark, blurry textures, AI artifacts, extra limbs, distorted anatomy."""
 
 
 DEFAULT_SCENE_STORYBOARD_TEMPLATE = """SCENE STORYBOARD CONTACT SHEET (3-5 MULTI-ANGLE SHOT FLOW)
@@ -105,14 +105,17 @@ inconsistent lighting, comic speech bubbles, oversized floating text, captions, 
 
 
 def _migrate_textful_reference_templates(config: dict) -> dict:
-    """Replace old saved sheet templates that asked the model to render labels/seed text."""
+    """Replace old saved templates so sheets use the current single-name contract."""
     char_template = str(config.get("character_seed_template") or "")
     if (
         "Title bar at top" in char_template
         or "subtle seed tag" in char_template
         or "Character Seed:" in char_template
         or "The seed value is internal metadata only" not in char_template
-        or "Character Name:" in char_template
+        or "Character Name:" in char_template and "exact character name" not in char_template
+        # The pre-existing default was textless and had no {char_name}
+        # placeholder, so it otherwise survives migration silently.
+        or ("CHARACTER CONTACT SHEET" in char_template and "{char_name}" not in char_template)
     ):
         config["character_seed_template"] = DEFAULT_CHARACTER_SHEET_TEMPLATE
 
@@ -238,7 +241,7 @@ def get_flow_project_id() -> str:
 
 CHILDREN_CHARACTER_SHEET_TEMPLATE = """CHARACTER SHEET — 3D CARTOON ANIMAL FOR PRESCHOOL SERIES
 
-Create a bright, friendly character identity reference sheet for this character: {char_desc}. The seed value is internal metadata only and must not appear visually.
+Create one bright, friendly character identity reference sheet for this character: {char_desc}. The seed value is internal metadata only and must not appear visually.
 
 CHARACTER TYPE (MANDATORY):
 A cute anthropomorphic ANIMAL rendered as a soft 3D cartoon character, in the style of a modern
@@ -247,7 +250,7 @@ Big friendly eyes, soft rounded shapes, chunky proportions, oversized head, smal
 gentle smile, simple colourful outfit. Appealing and huggable, never scary or edgy.
 
 LAYOUT:
-NO title, NO character name text, NO seed text, NO labels, NO captions, NO typography anywhere in the image. Clean pastel background.
+At the top, add a small clean header with the exact character name: {char_name}. This is an identification label only; do not add seed text, captions, story paragraphs, or extra typography. Clean pastel background.
 Turnaround: front view, side view, back view with identical proportions and colours.
 Three expressions: happy, curious, surprised (gentle and friendly, never angry or frightening).
 Three poses: standing, walking, waving.
@@ -260,7 +263,7 @@ Consistent colour palette across every panel.
 NEGATIVE PROMPT:
 Human child, human children, realistic human, photorealistic, scary, creepy, sharp teeth, weapons,
 dark shadows, horror, gore, moody lighting, harsh contrast, complex textures, adult themes,
-inconsistent character design, different colours between panels, cluttered layout, visible text, title bars, captions, name tags, seed numbers, labels, watermark."""
+inconsistent character design, different colours between panels, cluttered layout, title bars, captions, seed numbers, extra labels, watermark."""
 
 
 CHILDREN_SCENE_STORYBOARD_TEMPLATE = """SCENE STORYBOARD SHEET — PRESCHOOL 3D CARTOON

@@ -40,7 +40,7 @@ def extract_api_error(result: dict) -> str:
         return f"HTTP {status}" if status else "Extension API Error"
 
     if "Cannot access contents" in raw_err or "FLOW_LOGIN_REQUIRED" in raw_err:
-        return "Google Flow belum login di Chrome profile. Silakan buka https://labs.google/fx/tools/flow dan pastikan akun Google sudah posisi Login."
+        return "Google Flow aktif, tetapi token OAuth API belum tertangkap oleh extension. Buka Flow pada profile yang sama dan lakukan satu generate manual."
 
     return raw_err
 
@@ -189,6 +189,18 @@ async def generate_video_r2v(bridge, prompt: str, aspect: str, project_id: str,
         result = await bridge.api_request(endpoint, body, instance_id=instance_id)
         status = result.get("status", 0)
         if status == 200:
+            if result.get("auth_mode") == "authenticated_flow_ui_session":
+                attached = (result.get("data") or {}).get("referencesAdded")
+                if attached is not None and int(attached) != len(ref_objs):
+                    raise ValueError(
+                        f"Flow UI hanya memasang {attached}/{len(ref_objs)} Ingredients; "
+                        "render video dibatalkan agar reference tidak hilang."
+                    )
+                log.info(
+                    "Flow UI Ingredients terpasang: %d/%d reference image.",
+                    int(attached) if attached is not None else len(ref_objs),
+                    len(ref_objs),
+                )
             break
         err = extract_api_error(result)
         is_transient_captcha = status == 403 and "recaptcha" in err.lower()
@@ -215,15 +227,25 @@ def find_video_url(obj) -> Optional[str]:
     """Recursively search a JSON structure for video download/serving URLs."""
     if isinstance(obj, str):
         if obj.startswith("http://") or obj.startswith("https://"):
-            if any(ext in obj.lower() for ext in [".mp4", "servingurl", "download", "video", "googlevideo", "googleusercontent"]):
+            lowered = obj.lower()
+            # Flow exposes thumbnails under /image/. They may share the same
+            # CDN host as videos, so reject them explicitly.
+            if "/image/" in lowered or "thumbnail" in lowered or "preview" in lowered:
+                return None
+            if any(ext in lowered for ext in [".mp4", "servingurl", "download", "video", "googlevideo", "googleusercontent"]):
                 return obj
         return None
 
     if isinstance(obj, dict):
         for key in ["servingUrl", "videoUrl", "downloadUrl", "url", "mp4Url", "fusedVideoUrl"]:
             val = obj.get(key)
-            if isinstance(val, str) and (val.startswith("http://") or val.startswith("https://")):
-                return val
+            # A generic `url` field often points to the generated thumbnail.
+            # Never treat it as a video unless its shape clearly identifies a
+            # video/CDN download URL.
+            if isinstance(val, str):
+                candidate = find_video_url(val)
+                if candidate:
+                    return candidate
             elif isinstance(val, dict):
                 sub_url = find_video_url(val)
                 if sub_url:

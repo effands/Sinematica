@@ -64,6 +64,8 @@ class ExtensionBridge:
         self._rate_sem: asyncio.Semaphore | None = None
         self._rate_lock: asyncio.Lock | None = None
         self._last_request_at: float = 0.0
+        self._last_api_auth_mode: str | None = None
+        self._last_api_status: int | None = None
 
     def _get_rate_limit(self):
         if self._rate_sem is None:
@@ -95,6 +97,7 @@ class ExtensionBridge:
     def register_instance(
         self, instance_id: str, ws, instance_name: str = None, project_id: str = None,
         ready: bool = True, readiness_error: str = None, version: str = None, session_ready: bool = False,
+        credits=None,
     ):
         instance_id = str(instance_id or "").strip()
         if not instance_id:
@@ -110,6 +113,9 @@ class ExtensionBridge:
             "ready": bool(ready),
             "readiness_error": readiness_error,
             "version": version or previous.get("version"),
+            "last_api_auth_mode": previous.get("last_api_auth_mode"),
+            "last_api_status": previous.get("last_api_status"),
+            "credits": credits if credits is not None else previous.get("credits"),
             "last_active": time.time(),
             "busy": False
         }
@@ -199,10 +205,16 @@ class ExtensionBridge:
                 "name": entry.get("name"),
                 "connected": entry.get("ws") is not None and _is_ws_connected(entry["ws"]),
                 "logged_in": bool(entry.get("flow_key") or entry.get("session_ready")),
+                "oauth_ready": bool(entry.get("flow_key")),
+                "session_ready": bool(entry.get("session_ready")),
                 "project_id": entry.get("project_id"),
                 "ready": bool(entry.get("ready", True)),
                 "readiness_error": entry.get("readiness_error"),
                 "version": entry.get("version", "1.3.8"),
+                "last_api_auth_mode": entry.get("last_api_auth_mode"),
+                "last_api_status": entry.get("last_api_status"),
+                "last_ui_auth_summary": entry.get("last_ui_auth_summary"),
+                "credits": entry.get("credits"),
                 "is_active": iid == self.active_instance_id,
                 "is_preferred": iid == self._preferred_instance_id,
             })
@@ -414,6 +426,7 @@ class ExtensionBridge:
                 iid, ws, name, project_id,
                 ready=msg.get("ready", True),
                 readiness_error=msg.get("readiness_error"),
+                credits=msg.get("credits"),
             )
             if "flow_key" in msg:
                 self.record_instance_token(iid, msg.get("flow_key"))
@@ -423,6 +436,19 @@ class ExtensionBridge:
             flow_key = msg.get("flow_key")
             if iid and flow_key:
                 self.record_instance_token(iid, flow_key)
+
+        elif msg_type == "flow_ui_request_meta":
+            iid = msg.get("instance_id") or instance_id or self.active_instance_id
+            entry = self._instances.get(iid)
+            summary = {
+                "has_authorization": bool(msg.get("has_authorization")),
+                "has_bearer": bool(msg.get("has_bearer")),
+                "has_cookie": bool(msg.get("has_cookie")),
+                "header_names": sorted(set(str(x).lower() for x in (msg.get("header_names") or []))),
+            }
+            if entry is not None:
+                entry["last_ui_auth_summary"] = summary
+            log.info("Flow UI auth metadata instance=%s summary=%s", iid, summary)
 
         elif msg_type == "download_start":
             req_id = msg.get("id")
@@ -460,6 +486,21 @@ class ExtensionBridge:
             req_id = msg.get("id")
             if req_id and req_id in self._pending:
                 fut = self._pending.pop(req_id)
+                if msg_type == "api_response":
+                    auth_mode = msg.get("auth_mode") or "unknown"
+                    status = msg.get("status")
+                    target_entry = self._instances.get(instance_id or self.active_instance_id)
+                    if target_entry is not None:
+                        target_entry["last_api_auth_mode"] = auth_mode
+                        target_entry["last_api_status"] = status
+                    self._last_api_auth_mode = auth_mode
+                    self._last_api_status = status
+                    log.info(
+                        "Flow API response id=%s status=%s auth_mode=%s",
+                        req_id,
+                        status,
+                        auth_mode,
+                    )
                 if not fut.done():
                     fut.set_result(msg)
 

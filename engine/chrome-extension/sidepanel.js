@@ -12,6 +12,8 @@ function initSidePanel() {
   const statusDot = document.getElementById('statusDot');
   const btnOpenFlow = document.getElementById('btnOpenFlowTab');
   const btnRefresh = document.getElementById('btnRefreshToken');
+  const manualTokenInput = document.getElementById('manualTokenInput');
+  const btnSaveManualToken = document.getElementById('btnSaveManualToken');
 
   // Load saved state
   chrome.storage.local.get(['autopilotEnabled', 'requestStats', 'requestLogs', 'flowKey'], (data) => {
@@ -22,7 +24,25 @@ function initSidePanel() {
     updateMetricsUI(data.requestStats || { total: 0, success: 0, failed: 0 });
     renderLogsUI(data.requestLogs || []);
     updateTokenSyncUI(data.flowKey);
+    if (manualTokenInput && data.flowKey) {
+      manualTokenInput.value = data.flowKey;
+    }
   });
+
+  if (btnSaveManualToken && manualTokenInput) {
+    btnSaveManualToken.addEventListener('click', () => {
+      let val = (manualTokenInput.value || '').trim();
+      if (val.startsWith('Bearer ')) val = val.substring(7).trim();
+      if (val) {
+        chrome.storage.local.set({ flowKey: val }, () => {
+          updateTokenSyncUI(val);
+          btnSaveManualToken.textContent = '✓ Saved';
+          chrome.runtime.sendMessage({ type: 'UPDATE_MANUAL_TOKEN', flowKey: val }).catch(() => {});
+          setTimeout(() => { btnSaveManualToken.textContent = 'Set'; }, 1500);
+        });
+      }
+    });
+  }
 
   // Toggle switch handler
   toggle.addEventListener('change', () => {
@@ -55,20 +75,45 @@ function initSidePanel() {
   // Refresh Token button
   btnRefresh.addEventListener('click', async () => {
     btnRefresh.textContent = '⏳ Syncing...';
-    const allTabs = await chrome.tabs.query({});
-    const tabs = allTabs.filter(t => isFlowTab(t.url));
-    if (tabs && tabs.length > 0) {
-      try {
-        const res = await chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_PAGE_AUTH_TOKEN' });
+    try {
+      // 1. Coba recover via session endpoint Flow langsung
+      for (const sUrl of ['https://flow.google.com/fx/api/auth/session', 'https://labs.google/fx/api/auth/session']) {
+        try {
+          const r = await fetch(sUrl, { credentials: 'include' });
+          if (r.ok) {
+            const data = await r.json();
+            const token = data.access_token || data.accessToken;
+            if (token) {
+              chrome.storage.local.set({ flowKey: token });
+              chrome.runtime.sendMessage({ type: 'UPDATE_MANUAL_TOKEN', flowKey: token }).catch(() => {});
+              updateTokenSyncUI(token);
+              if (manualTokenInput) manualTokenInput.value = token;
+              btnRefresh.textContent = '✓ Synced!';
+              setTimeout(() => { btnRefresh.textContent = 'Refresh Token'; }, 2000);
+              return;
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 2. Coba minta ke tab yang terbuka
+      const allTabs = await chrome.tabs.query({});
+      const tabs = allTabs.filter(t => isFlowTab(t.url));
+      if (tabs && tabs.length > 0) {
+        const res = await chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_PAGE_AUTH_TOKEN' }).catch(() => null);
         if (res && res.flow_key) {
           chrome.storage.local.set({ flowKey: res.flow_key });
+          chrome.runtime.sendMessage({ type: 'UPDATE_MANUAL_TOKEN', flowKey: res.flow_key }).catch(() => {});
           updateTokenSyncUI(res.flow_key);
+          if (manualTokenInput) manualTokenInput.value = res.flow_key;
+          btnRefresh.textContent = '✓ Synced!';
+          setTimeout(() => { btnRefresh.textContent = 'Refresh Token'; }, 2000);
+          return;
         }
-      } catch (_) {}
-    }
-    setTimeout(() => {
-      btnRefresh.textContent = 'Refresh Token';
-    }, 1000);
+      }
+    } catch (_) {}
+
+    btnRefresh.textContent = 'Refresh Token';
   });
 
   // Listen to storage changes for real-time updates

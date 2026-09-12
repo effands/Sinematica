@@ -74,10 +74,10 @@
     return waitForTabComplete(chromeApi, tab, wait);
   }
 
-  function readinessState({ tab, flowKey, projectId }) {
+  function readinessState({ tab, flowKey, sessionReady = false, projectId }) {
     if (!tab) return { ready: false, error: 'NO_FLOW_WINDOW' };
     if (tab.status !== 'complete') return { ready: false, error: 'FLOW_TAB_LOADING' };
-    if (!flowKey) return { ready: false, error: 'FLOW_LOGIN_REQUIRED' };
+    if (!flowKey && !sessionReady) return { ready: false, error: 'FLOW_SESSION_REQUIRED' };
     if (!projectId) return { ready: false, error: 'FLOW_PROJECT_REQUIRED' };
     return { ready: true, error: null };
   }
