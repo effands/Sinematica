@@ -3,7 +3,19 @@
  * Executes API requests natively in tab main world with real reCAPTCHA Enterprise tokens.
  */
 
-importScripts('trpc-response.js', 'flow-tab.js', 'flow-auth.js');
+importScripts(
+  'trpc-response.js',
+  'flow-tab.js',
+  'flow-auth.js',
+  'flow-logger.js',
+  'flow-project.js',
+  'flow-composer-editor.js',
+  'flow-composer-config.js',
+  'flow-composer-ingredients.js',
+  'flow-watcher.js',
+  'flow-recaptcha.js',
+  'flow-api-client.js'
+);
 
 const API_KEY = 'AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
 
@@ -18,6 +30,24 @@ let instanceName = "Chrome Profile";
 let currentProjectId = null;
 let lastKnownCredits = null;
 let flowSessionReady = false;
+
+const logger = (typeof FlowLogger !== 'undefined' && FlowLogger.createLogger)
+  ? FlowLogger.createLogger({
+      instanceId,
+      projectId: currentProjectId,
+      wsSender: (payload) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify(payload)); } catch (_) {}
+        }
+      }
+    })
+  : {
+      debug: () => {},
+      info: (tag, msg, meta) => console.log(`[${tag}] ${msg}`, meta || ''),
+      warn: (tag, msg, meta) => console.warn(`[${tag}] ${msg}`, meta || ''),
+      error: (tag, msg, meta) => console.error(`[${tag}] ${msg}`, meta || ''),
+      setContext: () => {}
+    };
 
 let reconnectTimer = null;
 let reconnectAttempts = 0;
@@ -44,6 +74,7 @@ chrome.storage.local.get(['instanceId', 'instanceName', 'flowKey', 'currentProje
     lastKnownCredits = Number(data.lastKnownCredits);
   }
 
+  logger.setContext({ instanceId, projectId: currentProjectId });
   init();
 });
 
@@ -242,17 +273,20 @@ async function _detectProjectIdFromTabs(preferredTabId = null) {
         return (b.lastAccessed || 0) - (a.lastAccessed || 0);
       });
       for (const tab of orderedTabs) {
-        if (tab.url) {
-          const match = tab.url.match(/project\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-          if (match && match[1]) {
-            const previousProjectId = currentProjectId;
-            currentProjectId = match[1];
-            chrome.storage.local.set({ currentProjectId });
-            if (previousProjectId && previousProjectId !== currentProjectId) {
-              console.log('[Sinematica Agent] Project aktif diperbarui:', previousProjectId, '→', currentProjectId);
-            }
-            return currentProjectId;
+        const detected = FlowProject.detectProjectIdFromUrl(tab.url || tab.pendingUrl || '');
+        if (detected) {
+          const previousProjectId = currentProjectId;
+          currentProjectId = detected;
+          logger.setContext({ instanceId, projectId: currentProjectId });
+          chrome.storage.local.set({ currentProjectId });
+          if (previousProjectId && previousProjectId !== currentProjectId) {
+            logger.info('PROJECT', `Project aktif diperbarui: ${previousProjectId} → ${currentProjectId}`, {
+              previousProjectId,
+              currentProjectId,
+              tabId: tab.id,
+            });
           }
+          return currentProjectId;
         }
       }
     }

@@ -64,14 +64,18 @@
       </div>
     </div>
 
-    <!-- Request Log Section -->
+    <!-- Log Section with Tabs -->
     <div class="log-section">
-      <div class="log-header">
-        <span class="log-title">REQUEST LOG</span>
+      <div class="log-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; gap: 8px;">
+          <button id="tabBtnRequests" class="tab-btn active" style="border: none; background: none; font-weight: 700; font-size: 11px; color: var(--accent-purple); cursor: pointer;">REQUESTS</button>
+          <button id="tabBtnAgentLogs" class="tab-btn" style="border: none; background: none; font-weight: 700; font-size: 11px; color: var(--text-sub); cursor: pointer;">AGENT LOGS</button>
+        </div>
         <span class="log-badge" id="logCountBadge">0</span>
       </div>
 
-      <div class="table-container">
+      <!-- Requests Table View -->
+      <div class="table-container" id="requestsView">
         <table class="log-table">
           <thead>
             <tr>
@@ -91,6 +95,13 @@
           <p>No requests yet</p>
         </div>
       </div>
+
+      <!-- Agent Terminal View -->
+      <div class="table-container" id="agentLogsView" style="display: none; background: #0f172a; border-radius: 10px; padding: 8px; font-family: monospace; font-size: 11px; color: #e2e8f0; max-height: 220px; overflow-y: auto;">
+        <div id="agentLogsContainer" style="display: flex; flex-direction: column; gap: 4px;">
+          <!-- Real-time structured agent logs -->
+        </div>
+      </div>
     </div>
 
     <!-- Footer Action Buttons -->
@@ -100,6 +111,7 @@
     </div>
   </div>
 
+  <script src="flow-logger.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

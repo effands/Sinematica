@@ -53,7 +53,17 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["injected.js"],
+      "resources": [
+        "injected.js",
+        "flow-logger.js",
+        "flow-project.js",
+        "flow-composer-editor.js",
+        "flow-composer-config.js",
+        "flow-composer-ingredients.js",
+        "flow-watcher.js",
+        "flow-recaptcha.js",
+        "flow-api-client.js"
+      ],
       "matches": ["https://labs.google/*", "https://flow.google.com/*"]
     }
   ],
