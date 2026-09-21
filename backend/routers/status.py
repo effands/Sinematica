@@ -5,6 +5,7 @@ import json
 import logging
 
 from ..bridge_manager import get_bridge, status_snapshot
+from ..fleet_logger import record_fleet_log, get_recent_fleet_logs
 from engine.omniflash.bridge import is_routable_bridge_message
 
 router = APIRouter(tags=["Status & Fleet"])
@@ -24,6 +25,11 @@ def get_fleet_profiles():
         return {"profiles": bridge.instance_snapshot()}
     except Exception:
         return {"profiles": []}
+
+
+@router.get("/api/fleet_logs")
+def get_fleet_agent_logs(limit: int = 50):
+    return {"logs": get_recent_fleet_logs(limit=limit)}
 
 
 @router.get("/api/fleet_credits")
@@ -191,6 +197,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif is_routable_bridge_message(msg_type):
                     bridge.handle_message(data_str, websocket, instance_id)
+
+                elif msg_type == "agent_log":
+                    entry = msg.get("data")
+                    if entry and isinstance(entry, dict):
+                        record_fleet_log(entry)
 
                 elif msg_type == "flow_ui_request":
                     # The Flow website just made an image request; copy its exact shape.
