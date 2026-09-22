@@ -53,3 +53,84 @@ test('FlowComposerEditor validates empty and null documents safely', () => {
   };
   assert.equal(FlowComposerEditor.injectText(mockDoc, 'test'), false);
 });
+
+test('configureOptimalAffiliateVideoSettings selects video, ratio, and x1 count', async () => {
+  const { FlowTaskExecutor } = require('./flow-executor.js');
+  const clickedElements = [];
+
+  globalThis.MouseEvent = class MockMouseEvent {
+    constructor(type, init = {}) {
+      this.type = type;
+      Object.assign(this, init);
+    }
+  };
+
+  const createToggle = (label, checked = false) => ({
+    innerText: label,
+    textContent: label,
+    classList: { contains: (cls) => (cls === 'mat-button-toggle-checked' ? checked : false) },
+    getAttribute: (attr) => (attr === 'aria-checked' ? (checked ? 'true' : 'false') : null),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    focus: () => {},
+    click: function() {
+      clickedElements.push(label);
+    },
+    dispatchEvent: (ev) => {
+      if (ev.type === 'click') clickedElements.push(label);
+      return true;
+    },
+    getBoundingClientRect: () => ({ left: 10, top: 10, width: 50, height: 20 }),
+  });
+
+  const fakeOverlay = {
+    querySelectorAll: () => [],
+    querySelector: (sel) => {
+      if (sel.includes('Mode')) {
+        return {
+          querySelectorAll: () => [createToggle('Image'), createToggle('Video')],
+        };
+      }
+      if (sel.includes('Video type')) {
+        return {
+          querySelectorAll: () => [createToggle('Frames'), createToggle('Ingredients')],
+        };
+      }
+      if (sel.includes('Aspect ratio')) {
+        return {
+          querySelectorAll: () => [createToggle('16:9'), createToggle('9:16')],
+        };
+      }
+      if (sel.includes('Output count') || sel.includes('Count')) {
+        return {
+          querySelectorAll: () => [createToggle('x1'), createToggle('x2'), createToggle('x4')],
+        };
+      }
+      return null;
+    },
+  };
+
+  globalThis.document = {
+    querySelector: (sel) => {
+      if (sel.includes('settings') || sel.includes('flow-prompt-box-settings')) return fakeOverlay;
+      return null;
+    },
+    querySelectorAll: () => [],
+    dispatchEvent: () => {},
+    body: fakeOverlay,
+  };
+
+  const executor = new FlowTaskExecutor();
+  const ok = await executor.configureOptimalAffiliateVideoSettings({
+    subTab: 'Frames',
+    aspectRatio: '9:16',
+    outputCount: 1,
+  });
+
+  assert.equal(ok, true);
+  assert.ok(clickedElements.includes('Video'), 'Video toggle must be clicked');
+  assert.ok(clickedElements.includes('Frames'), 'Frames toggle must be clicked');
+  assert.ok(clickedElements.includes('9:16'), '9:16 ratio toggle must be clicked');
+  assert.ok(clickedElements.includes('x1'), 'x1 count toggle must be clicked');
+});
+

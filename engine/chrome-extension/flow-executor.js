@@ -1139,6 +1139,18 @@
             await sleep(200);
           }
 
+          // Output count: always lock to single output (x1)
+          const countGroup = overlay.querySelector('flow-toggles[aria-label="Output count"], flow-toggles[aria-label="Count"]') || overlay;
+          const countToggles = Array.from(countGroup.querySelectorAll('mat-button-toggle, button[role="radio"], button, .mat-button-toggle-button'));
+          const countToggle = countToggles.find((b) => {
+            const text = (b.innerText || b.textContent || (typeof b.getAttribute === 'function' ? b.getAttribute('aria-label') : '') || '').trim().toLowerCase();
+            return text === 'x1' || text === '1x' || text === '1' || /\bx1\b/i.test(text);
+          });
+          if (countToggle) {
+            await clickToggle(countToggle);
+            await sleep(200);
+          }
+
           const closeOverlay = () => {
             if (typeof KeyboardEvent !== 'undefined') {
               try {
