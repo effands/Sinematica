@@ -48,3 +48,21 @@ test('FlowNetworkParser extracts project ID from diverse URL formats', () => {
   const pid = FlowNetworkParser.extractProjectIdFromUrl('https://flow.google.com/project/a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d');
   assert.equal(pid, 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d');
 });
+
+test('FlowNetworkParser builds valid Boq upload image payload and parses response', () => {
+  const payload = FlowNetworkParser.buildBoqUploadImagePayload({
+    base64Data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    mimeType: 'image/png',
+    fileName: 'storyboard.png',
+    projectId: '11111111-2222-3333-4444-555555555555'
+  });
+  assert.ok(Array.isArray(payload));
+  assert.ok(payload.length >= 1);
+
+  const mockUploadResp = [[null, ['flowMedia/uploaded_asset_123', null, 'https://flow-content.google/image/uploaded.png']]];
+  const parsed = FlowNetworkParser.parseBoqUploadImageResponse(mockUploadResp, 'storyboard.png', 'fallback-id', '11111111-2222-3333-4444-555555555555');
+  assert.ok(parsed);
+  assert.equal(parsed.mediaId, 'flowMedia/uploaded_asset_123');
+  assert.equal(parsed.imageUrl, 'https://flow-content.google/image/uploaded.png');
+});
+

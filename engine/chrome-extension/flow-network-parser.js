@@ -727,6 +727,7 @@
     let mediaId = '';
     let displayName = defaultName;
     let projectId = fallbackProjectId || '';
+    let imageUrl = '';
 
     if (typeof rawResponse === 'object' && rawResponse !== null) {
       const obj = rawResponse;
@@ -738,6 +739,7 @@
         mediaId = String(m.name || m.mediaId || m.id || '');
       }
 
+      if (obj.imageUrl) imageUrl = String(obj.imageUrl);
       if (obj.displayName) displayName = String(obj.displayName);
       if (obj.projectId) projectId = String(obj.projectId);
     }
@@ -767,6 +769,22 @@
       mediaId = findMediaIdInArray(rawResponse);
     }
 
+    if (!imageUrl && Array.isArray(rawResponse)) {
+      function findImageUrlInArray(arr) {
+        for (const item of arr) {
+          if (typeof item === 'string' && isMediaUrl(item)) {
+            return item;
+          }
+          if (Array.isArray(item)) {
+            const found = findImageUrlInArray(item);
+            if (found) return found;
+          }
+        }
+        return '';
+      }
+      imageUrl = findImageUrlInArray(rawResponse);
+    }
+
     if (!mediaId && typeof rawResponse === 'string') {
       mediaId = rawResponse.trim();
     }
@@ -784,6 +802,7 @@
       mediaName: mediaId,
       projectId: projectId || fallbackProjectId,
       displayName,
+      imageUrl: imageUrl || '',
     };
   }
 
