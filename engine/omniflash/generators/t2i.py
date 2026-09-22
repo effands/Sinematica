@@ -2,6 +2,7 @@
 Ported directly from proven Affilia engine.
 """
 
+import base64
 import json
 import logging
 import os
@@ -24,7 +25,34 @@ IMAGE_ASPECTS = {
     "portrait":  "IMAGE_ASPECT_RATIO_PORTRAIT",      # 9:16
 }
 
+ASPECT_RATIO_MAP = {
+    "portrait":  "9:16",
+    "landscape": "16:9",
+    "square":    "1:1",
+    "4x3":       "4:3",
+    "3x4":       "3:4",
+}
+
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _encode_reference_images(paths: Optional[List[str]]) -> List[Dict[str, str]]:
+    """Convert local reference image paths to base64 objects for direct extension DOM upload."""
+    encoded = []
+    for path_str in paths or []:
+        p = Path(path_str)
+        if p.is_file():
+            try:
+                b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
+                mime = "image/jpeg" if p.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+                encoded.append({
+                    "fileName": p.name,
+                    "base64Data": b64,
+                    "mimeType": mime,
+                })
+            except Exception as ex:
+                log.warning("Gagal membaca gambar referensi %s: %s", path_str, ex)
+    return encoded
 
 
 def _parse_image_results(data: dict) -> List[Dict[str, str]]:
@@ -133,10 +161,10 @@ def _build_reference_variants(ref_ids: List[str], project_id: str = None) -> Lis
     return variants
 
 
-async def generate_character_image(bridge, prompt: str, aspect: str = "landscape", project_id: str = None,
-                                   instance_id: str = None, reference_media_ids: List[str] = None,
-                                   seed: int = None) -> Dict[str, str]:
-    """Generate an image in Google Flow. Returns media_id and image_url."""
+async def _generate_character_image_api_fallback(bridge, prompt: str, aspect: str = "landscape", project_id: str = None,
+                                                instance_id: str = None, reference_media_ids: List[str] = None,
+                                                seed: int = None) -> Dict[str, str]:
+    """Fallback generator using direct Flow REST API."""
     global _IMG_REF_VARIANT_IDX, _ALL_REF_VARIANTS_REJECTED
 
     aspect_ratio = IMAGE_ASPECTS.get(aspect, "IMAGE_ASPECT_RATIO_LANDSCAPE")
@@ -249,6 +277,73 @@ async def generate_character_image(bridge, prompt: str, aspect: str = "landscape
     # Report whether the references were actually honoured, so callers can say so truthfully
     # instead of assuming the request went through as asked.
     out = dict(results[0])
+    out["reference_applied"] = reference_applied
+    out["reference_count"] = len(ref_ids) if reference_applied else 0
+    if reference_error:
+        out["reference_error"] = reference_error
+    return out
+
+
+async def generate_character_image(
+    bridge, prompt: str, aspect: str = "landscape", project_id: str = None,
+    instance_id: str = None, reference_media_ids: List[str] = None,
+    seed: int = None, reference_image_paths: List[str] = None, timeout: float = 240.0
+) -> Dict[str, Any]:
+    """Generate a character/concept image in Google Flow visibly via Chrome Extension DOM automation."""
+    aspect_ratio_str = ASPECT_RATIO_MAP.get(aspect, "9:16" if aspect == "portrait" else "16:9")
+    images_payload = _encode_reference_images(reference_image_paths)
+
+    task_payload = {
+        "kind": "image",
+        "prompt": prompt,
+        "storyboard": {
+            "aspectRatio": aspect_ratio_str,
+            "outputCount": 1,
+        },
+        "projectId": project_id or "",
+        "seed": seed if seed is not None else random.randint(100000, 999999),
+        "timeoutMs": int(timeout * 1000),
+    }
+
+    if images_payload:
+        task_payload["images"] = images_payload
+    if reference_media_ids:
+        task_payload["referenceMediaIds"] = reference_media_ids
+
+    log.info("Memulai generasi gambar karakter di Chrome Extension (aspect: %s, ref_images: %d)", aspect_ratio_str, len(images_payload))
+
+    # Prefer Extension DOM automation
+    if hasattr(bridge, "execute_task"):
+        try:
+            task_res = await bridge.execute_task(task_payload, instance_id=instance_id, timeout=timeout)
+            status = task_res.get("status", 200)
+            res_data = task_res.get("result") or task_res.get("data") or {}
+            
+            if status == 200 and res_data.get("ok", True):
+                img_url = res_data.get("imageUrl") or res_data.get("url") or res_data.get("downloadImageUrl")
+                media_id = res_data.get("mediaId") or res_data.get("id")
+                if not media_id and img_url:
+                    match = UUID_RE.search(img_url)
+                    if match:
+                        media_id = match.group()
+                
+                if img_url or media_id:
+                    return {
+                        "media_id": media_id or f"media_{int(time.time())}",
+                        "image_url": img_url or "",
+                        "download_url": img_url or "",
+                        "reference_applied": len(images_payload) > 0 or bool(reference_media_ids),
+                        "reference_count": len(images_payload) or len(reference_media_ids or []),
+                    }
+            error_msg = res_data.get("error") or task_res.get("error") or "Unknown DOM generation error"
+            log.warning("Ekstensi DOM image generation mengembalikan error: %s. Mencoba fallback API...", error_msg)
+        except Exception as ex:
+            log.warning("Gagal eksekusi DOM image generation via extension (%s). Mencoba fallback API...", ex)
+
+    # Secondary fallback to direct API
+    return await _generate_character_image_api_fallback(
+        bridge, prompt, aspect, project_id, instance_id, reference_media_ids, seed
+    )
     out["reference_applied"] = reference_applied
     out["reference_count"] = len(ref_ids) if reference_applied else 0
     if reference_error:

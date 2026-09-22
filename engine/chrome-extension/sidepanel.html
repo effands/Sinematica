@@ -45,22 +45,14 @@
       </div>
     </div>
 
-    <!-- Token Sync & Credit Bar -->
-    <div class="token-bar">
+    <!-- Flow Session & Credit Bar -->
+    <div class="token-bar" id="sessionStatusBar">
       <div class="token-status">
-        <span class="pulse-green"></span>
-        <span id="tokenSyncText">token synced 1m</span>
+        <span class="pulse-green" id="sessionPulse"></span>
+        <span id="sessionStatusText">Flow Session: Ready</span>
       </div>
       <div class="points-status" id="pointsText">
-        Sisa Point — / ±— Video
-      </div>
-    </div>
-
-    <!-- Manual / Captured Token Input -->
-    <div class="card" style="padding: 10px; margin-top: -4px;">
-      <div style="display: flex; gap: 6px; align-items: center;">
-        <input type="text" id="manualTokenInput" placeholder="Paste Token / ya29... disini" style="flex: 1; padding: 7px 10px; font-size: 11px; border: 1px solid var(--border-color); border-radius: 8px; outline: none; background: #fafafa; font-family: monospace;" />
-        <button id="btnSaveManualToken" style="padding: 7px 12px; font-size: 11px; background: var(--accent-purple); color: white; border-radius: 8px; font-weight: 600;">Set</button>
+        Kredit: — / ±— Video
       </div>
     </div>
 
@@ -107,7 +99,7 @@
     <!-- Footer Action Buttons -->
     <div class="footer-actions">
       <button class="btn-purple" id="btnOpenFlowTab">Open Flow Tab</button>
-      <button class="btn-glass" id="btnRefreshToken">Refresh Token</button>
+      <button class="btn-glass" id="btnSyncSession">Sync Flow Tab</button>
     </div>
   </div>
 

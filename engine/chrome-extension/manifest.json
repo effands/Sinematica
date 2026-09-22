@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sinematica Flow Agent",
-  "version": "1.5.32",
+  "version": "1.5.33",
   "description": "Multi-Profile Google Flow Video Automation Agent for Sinematica AI",
   "icons": {
     "16": "icon16.png",
@@ -17,7 +17,8 @@
     "webRequest",
     "scripting",
     "declarativeNetRequest",
-    "sidePanel"
+    "sidePanel",
+    "debugger"
   ],
   "host_permissions": [
     "https://labs.google/*",
@@ -46,14 +47,37 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://labs.google/*", "https://flow.google.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://flow.google.com/*",
+        "https://labs.google/*"
+      ],
+      "js": [
+        "flow-network-parser.js",
+        "flow-interceptor.js",
+        "injected.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://flow.google.com/*",
+        "https://labs.google/*"
+      ],
+      "js": [
+        "flow-network-parser.js",
+        "flow-executor.js",
+        "content.js"
+      ],
       "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
       "resources": [
+        "flow-network-parser.js",
+        "flow-interceptor.js",
+        "flow-executor.js",
         "injected.js",
         "flow-logger.js",
         "flow-project.js",
@@ -64,7 +88,10 @@
         "flow-recaptcha.js",
         "flow-api-client.js"
       ],
-      "matches": ["https://labs.google/*", "https://flow.google.com/*"]
+      "matches": [
+        "https://labs.google/*",
+        "https://flow.google.com/*"
+      ]
     }
   ],
   "action": {

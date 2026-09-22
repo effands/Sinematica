@@ -13,6 +13,7 @@ data/*.log
 *.log
 data/settings.json
 data/*.json
+data/*.bak
 job_payload_tmp.json
 sb_resp_tmp.json
 scratch/fix_gemini_hosts.ps1

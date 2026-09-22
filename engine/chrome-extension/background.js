@@ -4,6 +4,8 @@
  */
 
 importScripts(
+  'flow-network-parser.js',
+  'flow-executor.js',
   'trpc-response.js',
   'flow-tab.js',
   'flow-auth.js',
@@ -379,6 +381,8 @@ function connectWebSocket() {
         await handleTrpcRequest(msg);
       } else if (msg.type === 'download_request') {
         await handleDownloadRequest(msg);
+      } else if (msg.type === 'agent_task' || msg.type === 'execute_task' || msg.type === 'flow_task') {
+        await handleFlowTask(msg);
       } else if (msg.type === 'ping' && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'pong' }));
       }
@@ -590,6 +594,64 @@ async function sendDownloadChunk(id, index, bytes) {
   ws.send(JSON.stringify({ type: 'download_chunk', id, index, data_base64: btoa(binary) }));
 }
 
+async function handleFlowTask(msg) {
+  const taskId = msg.id || msg.taskId || msg.task_id || `task_${Date.now()}`;
+  try {
+    const targetTab = await FlowTab.ensureFlowTab(chrome);
+    if (!targetTab || !targetTab.id) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'task_response',
+          id: taskId,
+          status: 500,
+          error: 'FLOW_TAB_NOT_READY'
+        }));
+      }
+      return;
+    }
+
+    const tabInfo = await chrome.tabs.get(targetTab.id).catch(() => null);
+    if (tabInfo && tabInfo.status === 'loading') {
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    const payload = {
+      taskId,
+      ...msg.params,
+      ...msg,
+      projectId: msg.params?.projectId || msg.projectId || currentProjectId,
+    };
+
+    chrome.tabs.sendMessage(targetTab.id, {
+      type: 'EXECUTE_FLOW_TASK',
+      payload
+    }, (res) => {
+      const lastErr = chrome.runtime.lastError;
+      if (lastErr) {
+        console.warn('[Sinematica Agent] Error sending task to content script:', lastErr.message);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'task_response',
+            id: taskId,
+            status: 500,
+            error: `CONTENT_SCRIPT_UNREACHABLE: ${lastErr.message}`
+          }));
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[Sinematica Agent] handleFlowTask error:', err);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'task_response',
+        id: taskId,
+        status: 500,
+        error: err.toString()
+      }));
+    }
+  }
+}
+
 async function notifyRegistration() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   let flowTab = null;
@@ -651,7 +713,22 @@ function notifyTokenCaptured() {
   notifyRegistration();
 }
 
-async function generateImageViaAuthenticatedFlowUi(tabId, requestBody) {
+function sendTaskProgress(requestId, stage, message, extra = {}) {
+  if (!requestId) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  try {
+    ws.send(JSON.stringify({
+      type: 'task_progress',
+      id: requestId,
+      stage: stage || 'PROGRESS',
+      message: message || '',
+      timestamp: Date.now(),
+      ...(extra || {})
+    }));
+  } catch (_) {}
+}
+
+async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId = null) {
   if (!tabId || !requestBody?.requests?.length) {
     return { status: 500, data: { error: 'FLOW_UI_FALLBACK_INVALID_REQUEST' } };
   }
@@ -660,6 +737,8 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody) {
   if (!prompt) {
     return { status: 500, data: { error: 'FLOW_UI_FALLBACK_PROMPT_MISSING' } };
   }
+
+  sendTaskProgress(requestId, 'PREPARE_COMPOSER', 'Menyiapkan sesi Google Flow (Mode Image, Rasio, 1 output)...', { percent: 10 });
   // The API payload may contain imageInputs/referenceImages in several
   // schemas. Preserve the media UUIDs so the authenticated UI fallback can
   // attach the same character sheets instead of silently generating an
@@ -687,7 +766,7 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody) {
       try {
         const parsed = new URL(tab?.url || '');
         return parsed.hostname === 'flow.google.com'
-          && /^\/project\/[^/]+\/?$/.test(parsed.pathname);
+          && /^(?:\/u\/\d+)?\/project\/[^/]+\/?$/.test(parsed.pathname);
       } catch (_) {
         return false;
       }
@@ -726,194 +805,255 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody) {
       if (!probe?.[0]?.result?.hasEditor || !probe?.[0]?.result?.hasStart) continue;
 
       result = await chrome.scripting.executeScript({
-      target: { tabId: candidateId },
-      world: 'MAIN',
-        func: async (text, requestedRatio, requestedReferenceIds) => {
-        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        const visible = (el) => {
-          if (!el) return false;
-          const style = getComputedStyle(el);
-          const box = el.getBoundingClientRect();
-          return style.display !== 'none' && style.visibility !== 'hidden'
-            && box.width > 0 && box.height > 0;
-        };
-        const controls = () => Array.from(document.querySelectorAll(
-          'button, [role="radio"], [role="option"], [role="listitem"], mat-button-toggle, label'
-        ));
-        const labelNodes = () => [...controls(), ...document.querySelectorAll(
-          '[aria-label], [data-value], span'
-        )];
-        const labelText = (el) => normalize(
-          el.textContent || el.getAttribute('aria-label') || el.getAttribute('data-value')
-        );
-        const findLabelNode = (label) => labelNodes()
-          .filter(el => visible(el) && labelText(el) === normalize(label))
-          .sort((a, b) => labelText(a).length - labelText(b).length)[0];
-        const clickExact = (label) => {
-          const wanted = normalize(label);
-          const node = findLabelNode(wanted);
-          const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
-          if (!target) return false;
-          target.click();
-          return true;
-        };
-        const clickExactEventually = async (label, timeout = 5000) => {
-          const deadline = Date.now() + timeout;
-          while (Date.now() < deadline) {
-            if (clickExact(label)) return true;
-            await new Promise((resolve) => setTimeout(resolve, 150));
-          }
-          return false;
-        };
-        const selectedExact = (label) => {
-          const node = findLabelNode(label);
-          const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
-          if (!target) return false;
-          return target.getAttribute('aria-checked') === 'true'
-              || node.getAttribute('aria-pressed') === 'true'
-              || /(^|\s)(selected|checked|active)(\s|$)/i.test(target.className?.baseVal || target.className || '')
-              || target.querySelector?.('[aria-checked="true"],[aria-selected="true"]');
-        };
-        const addImageReferences = async (ids) => {
-          if (!ids.length) return { added: 0, missing: [] };
-          const normalizeText = (value) => normalize(value).replace(/[\s_-]/g, '');
-          // Flow can preserve the selected Ingredients while the picker is
-          // reopened. In that case the asset UUIDs are not present in the
-          // picker DOM anymore, but the visible Ingredient chips prove that
-          // the requested references are already attached.
-          const existingIngredients = Array.from(document.querySelectorAll(
-            'button, [role="button"], [aria-label]'
-          )).filter((el) => visible(el) && normalizeText(
-            el.getAttribute('aria-label') || el.innerText || el.textContent
-          ).includes('ingredient'));
-          if (existingIngredients.length >= ids.length) {
-            return { added: ids.length, missing: [] };
-          }
-          const findAssetNodes = (id) => Array.from(document.querySelectorAll(
-            '[data-media-id],[data-mediaid],[data-asset-id],[role="option"],[role="listitem"]'
-          )).filter((el) => {
-            const text = `${el.getAttribute('data-media-id') || ''} ${el.getAttribute('data-mediaid') || ''} ${el.getAttribute('data-asset-id') || ''} ${el.innerText || ''}`;
-            return text.includes(id) || normalizeText(text).includes(normalizeText(id));
-          });
-          const selected = [];
-          const missing = [];
-          for (const id of ids) {
-            const trigger = Array.from(document.querySelectorAll('button,[aria-label]')).find((el) =>
-              visible(el) && normalizeText(el.getAttribute('aria-label') || el.innerText).includes('addingredients'));
-            if (!trigger) { missing.push(id); continue; }
-            trigger.click(); await new Promise((resolve) => setTimeout(resolve, 500));
-            const match = findAssetNodes(id).pop();
-            if (!match) { missing.push(id); continue; }
-            (match.closest('button,[role="option"],[role="listitem"],[tabindex]') || match).click();
-            await new Promise((resolve) => setTimeout(resolve, 250));
-            const add = Array.from(document.querySelectorAll('button,[role="button"]')).find((el) =>
-              visible(el) && normalizeText(el.innerText || el.textContent || el.getAttribute('aria-label')).includes('addtoprompt'));
-            if (!add) { missing.push(id); continue; }
-            add.click(); selected.push(id);
-            await new Promise((resolve) => setTimeout(resolve, 400));
-          }
-          return { added: selected.length, missing };
-        };
-        const referenceResult = await addImageReferences(requestedReferenceIds || []);
-        if ((requestedReferenceIds || []).length && referenceResult.added !== requestedReferenceIds.length) {
-          return { error: 'FLOW_UI_IMAGE_REFERENCES_INCOMPLETE', references_added: referenceResult.added, references_missing: referenceResult.missing };
-        }
-        const editor = document.querySelector('[contenteditable="true"]');
-        const start = document.querySelector('button[aria-label="Start generation"]');
-        // The button is disabled while the composer is empty; that is expected
-        // before we insert the request. Only the editor/button presence matters here.
-        if (!editor || !start) return { error: 'FLOW_UI_COMPOSER_UNAVAILABLE' };
-        // Character sheets and storyboards are single-output assets. Never
-        // inherit Flow's previous x2 setting from the last generation.
-        const settings = document.querySelector('button[aria-label="Settings trigger"]');
-        // Always open the settings sheet and explicitly select Image + x1.
-        // Reading the summary text alone is unsafe: Flow can retain a previous
-        // Video/16:9 selection while the summary is stale or the composer has
-        // just been reused from another job.
-        if (!findLabelNode('image')) {
-          settings?.click();
-          await new Promise((resolve) => setTimeout(resolve, 350));
-        }
-        if (!await clickExactEventually('image')) return { error: 'FLOW_UI_IMAGE_MODE_CONTROL_MISSING' };
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        if (!selectedExact('image')) return { error: 'FLOW_UI_IMAGE_MODE_NOT_APPLIED' };
-        // Apply the caller's image ratio instead of inheriting whatever the
-        // previous Flow job left selected. Character sheets/storyboards are
-        // still one output, but Portrait must remain Portrait.
-        // Flow's Image composer exposes portrait as 3:4; 9:16 is a Video
-        // ratio only. Keep the app's portrait intent without leaving the
-        // previous Video setting selected.
-        const ratioLabel = requestedRatio === 'IMAGE_ASPECT_RATIO_PORTRAIT' ? '9:16'
-          : requestedRatio === 'IMAGE_ASPECT_RATIO_LANDSCAPE' ? '16:9'
-          : requestedRatio === 'IMAGE_ASPECT_RATIO_4_3' ? '4:3'
-          : requestedRatio === 'IMAGE_ASPECT_RATIO_3_4' ? '3:4'
-          : requestedRatio === 'IMAGE_ASPECT_RATIO_SQUARE' ? '1:1' : null;
-        if (ratioLabel) await clickExactEventually(ratioLabel);
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        if (!await clickExactEventually('x1')) return { error: 'FLOW_UI_SINGLE_OUTPUT_CONTROL_MISSING' };
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        if (!selectedExact('x1')) return { error: 'FLOW_UI_SINGLE_OUTPUT_NOT_APPLIED' };
-        const before = new Set(Array.from(document.images)
-          .map((img) => img.currentSrc || img.src)
-          .filter(Boolean));
-        editor.focus();
-        // Flow's composer is a React contenteditable. Assigning textContent alone
-        // does not update React's internal value, so the button stays disabled.
-        // Use the same editing primitive as a real user paste, then emit the
-        // before/input events for the editor implementation currently shipped by Flow.
-        document.execCommand('selectAll', false);
-        document.execCommand('insertText', false, text);
-        if ((editor.innerText || editor.textContent || '').trim() !== text.trim()) {
-          editor.textContent = text;
-          editor.dispatchEvent(new InputEvent('beforeinput', {
-            bubbles: true, inputType: 'insertText', data: text,
-          }));
-          editor.dispatchEvent(new InputEvent('input', {
-            bubbles: true, inputType: 'insertText', data: text,
-          }));
-        }
-        // Flow's composer updates through React state asynchronously. A short
-        // fixed sleep makes long prompts look empty/disabled even though the
-        // real UI accepts them a moment later. Wait for the editor state and
-        // the actual Start button to settle before giving up.
-        let button = null;
-        const buttonDeadline = Date.now() + 8000;
-        while (Date.now() < buttonDeadline) {
-          button = document.querySelector('button[aria-label="Start generation"]');
-          const editorText = (editor.innerText || editor.textContent || '').trim();
-          if (button && !button.disabled && editorText === text.trim()) break;
-          await new Promise((resolve) => setTimeout(resolve, 250));
-        }
-        if (!button || button.disabled) return { error: 'FLOW_UI_GENERATE_DISABLED' };
-        button.click();
-        const deadline = Date.now() + 90000;
-        while (Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          const fresh = Array.from(document.images)
-            .map((img) => img.currentSrc || img.src)
-            .filter((url) => url && !before.has(url) && imgIsUsable(url));
-          if (fresh.length) return { image_url: fresh[fresh.length - 1] };
-        }
-        return { error: 'FLOW_UI_GENERATION_TIMEOUT' };
-
-        function imgIsUsable(url) {
-          try {
-            const parsed = new URL(url);
-            if (parsed.protocol !== 'https:') return false;
-            // Flow serves generated thumbnails through more than one CDN host
-            // depending on project/account. The old detector only accepted two
-            // hosts, turning successful Image generations into NO_IMAGE.
-            return parsed.hostname === 'flow-content.google'
-              || parsed.hostname === 'flow.google.com'
-              || parsed.hostname.endsWith('.googleusercontent.com')
-              || parsed.hostname === 'storage.googleapis.com'
-              || parsed.hostname.endsWith('.gstatic.com');
-          } catch (_) {
+        target: { tabId: candidateId },
+        world: 'MAIN',
+        func: async (text, requestedRatio, requestedReferenceIds, reqId) => {
+          const notifyProgress = (stage, message, percent = undefined) => {
+            try {
+              if (typeof window !== 'undefined' && window.postMessage) {
+                window.postMessage({ type: 'FLOW_TASK_PROGRESS', id: reqId, stage, message, percent, source: 'FLOW_UI' }, '*');
+              }
+            } catch (_) {}
+          };
+          const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+          const visible = (el) => {
+            if (!el) return false;
+            const style = getComputedStyle(el);
+            const box = el.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden'
+              && box.width > 0 && box.height > 0;
+          };
+          const controls = () => Array.from(document.querySelectorAll(
+            'button, [role="radio"], [role="option"], [role="listitem"], mat-button-toggle, label'
+          ));
+          const labelNodes = () => [...controls(), ...document.querySelectorAll(
+            '[aria-label], [data-value], span'
+          )];
+          const labelText = (el) => normalize(
+            el.textContent || el.getAttribute('aria-label') || el.getAttribute('data-value')
+          );
+          const findLabelNode = (label) => labelNodes()
+            .filter(el => visible(el) && labelText(el) === normalize(label))
+            .sort((a, b) => labelText(a).length - labelText(b).length)[0];
+          const clickExact = (label) => {
+            const wanted = normalize(label);
+            const node = findLabelNode(wanted);
+            const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
+            if (!target) return false;
+            target.click();
+            return true;
+          };
+          const clickExactEventually = async (label, timeout = 5000) => {
+            const deadline = Date.now() + timeout;
+            while (Date.now() < deadline) {
+              if (clickExact(label)) return true;
+              await new Promise((resolve) => setTimeout(resolve, 150));
+            }
             return false;
+          };
+          const selectedExact = (label) => {
+            const node = findLabelNode(label);
+            const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
+            if (!target) return false;
+            return target.getAttribute('aria-checked') === 'true'
+                || node.getAttribute('aria-pressed') === 'true'
+                || /(^|\s)(selected|checked|active)(\s|$)/i.test(target.className?.baseVal || target.className || '')
+                || target.querySelector?.('[aria-checked="true"],[aria-selected="true"]');
+          };
+          const addImageReferences = async (ids) => {
+            if (!ids.length) return { added: 0, missing: [] };
+            notifyProgress('ATTACHING_REFERENCES', `Memasukkan ${ids.length} referensi karakter ke slot composer...`, 20);
+            const normalizeText = (value) => normalize(value).replace(/[\s_-]/g, '');
+            const existingIngredients = Array.from(document.querySelectorAll(
+              'button, [role="button"], [aria-label]'
+            )).filter((el) => visible(el) && normalizeText(
+              el.getAttribute('aria-label') || el.innerText || el.textContent
+            ).includes('ingredient'));
+            if (existingIngredients.length >= ids.length) {
+              return { added: ids.length, missing: [] };
+            }
+            const findAssetNodes = (id) => Array.from(document.querySelectorAll(
+              '[data-media-id],[data-mediaid],[data-asset-id],[role="option"],[role="listitem"]'
+            )).filter((el) => {
+              const text = `${el.getAttribute('data-media-id') || ''} ${el.getAttribute('data-mediaid') || ''} ${el.getAttribute('data-asset-id') || ''} ${el.innerText || ''}`;
+              return text.includes(id) || normalizeText(text).includes(normalizeText(id));
+            });
+            const selected = [];
+            const missing = [];
+            for (const id of ids) {
+              const trigger = Array.from(document.querySelectorAll('button,[aria-label]')).find((el) =>
+                visible(el) && normalizeText(el.getAttribute('aria-label') || el.innerText).includes('addingredients'));
+              if (!trigger) { missing.push(id); continue; }
+              trigger.click(); await new Promise((resolve) => setTimeout(resolve, 500));
+              const match = findAssetNodes(id).pop();
+              if (!match) { missing.push(id); continue; }
+              (match.closest('button,[role="option"],[role="listitem"],[tabindex]') || match).click();
+              await new Promise((resolve) => setTimeout(resolve, 250));
+              const add = Array.from(document.querySelectorAll('button,[role="button"]')).find((el) =>
+                visible(el) && normalizeText(el.innerText || el.textContent || el.getAttribute('aria-label')).includes('addtoprompt'));
+              if (!add) { missing.push(id); continue; }
+              add.click(); selected.push(id);
+              await new Promise((resolve) => setTimeout(resolve, 400));
+            }
+            return { added: selected.length, missing };
+          };
+          const referenceResult = await addImageReferences(requestedReferenceIds || []);
+          if ((requestedReferenceIds || []).length && referenceResult.added !== requestedReferenceIds.length) {
+            return { error: 'FLOW_UI_IMAGE_REFERENCES_INCOMPLETE', references_added: referenceResult.added, references_missing: referenceResult.missing };
           }
-        }
-      },
-      args: [prompt, requestBody.requests[0]?.imageAspectRatio, referenceIds],
+          const editor = document.querySelector('[contenteditable="true"]');
+          const start = document.querySelector('button[aria-label="Start generation"]');
+          if (!editor || !start) return { error: 'FLOW_UI_COMPOSER_UNAVAILABLE' };
+
+          notifyProgress('CONFIGURING_MODE', 'Mengatur opsi gambar (Mode Image, Rasio, 1 output)...', 30);
+          const settings = document.querySelector('button[aria-label="Settings trigger"]');
+          if (!findLabelNode('image')) {
+            settings?.click();
+            await new Promise((resolve) => setTimeout(resolve, 350));
+          }
+          if (!await clickExactEventually('image')) return { error: 'FLOW_UI_IMAGE_MODE_CONTROL_MISSING' };
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          if (!selectedExact('image')) return { error: 'FLOW_UI_IMAGE_MODE_NOT_APPLIED' };
+
+          const ratioLabel = requestedRatio === 'IMAGE_ASPECT_RATIO_PORTRAIT' ? '9:16'
+            : requestedRatio === 'IMAGE_ASPECT_RATIO_LANDSCAPE' ? '16:9'
+            : requestedRatio === 'IMAGE_ASPECT_RATIO_4_3' ? '4:3'
+            : requestedRatio === 'IMAGE_ASPECT_RATIO_3_4' ? '3:4'
+            : requestedRatio === 'IMAGE_ASPECT_RATIO_SQUARE' ? '1:1' : null;
+          if (ratioLabel) await clickExactEventually(ratioLabel);
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          const trySelectOutputCount = async (count = '1') => {
+            const candidates = [`x${count}`, count, `${count} output`, `${count} image`];
+            for (const cand of candidates) {
+              if (await clickExactEventually(cand, 600)) {
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                return true;
+              }
+            }
+            const toggleNodes = Array.from(document.querySelectorAll('flow-toggles mat-button-toggle, mat-button-toggle, button[role="radio"]'));
+            for (const tog of toggleNodes) {
+              const txt = (tog.textContent || tog.getAttribute('aria-label') || '').trim().toLowerCase();
+              if (txt === `x${count}` || txt === count || txt.includes(`x${count}`)) {
+                const btn = tog.querySelector('button') || tog;
+                btn.click();
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                return true;
+              }
+            }
+            return false;
+          };
+          await trySelectOutputCount('1');
+
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+          await new Promise((resolve) => setTimeout(resolve, 300));
+
+          const before = new Set(Array.from(document.images)
+            .map((img) => img.currentSrc || img.src)
+            .filter(Boolean));
+          editor.focus();
+
+          notifyProgress('TYPING_PROMPT', `Mengisi prompt gambar: "${text.slice(0, 60)}..."`, 40);
+          document.execCommand('selectAll', false);
+          document.execCommand('insertText', false, text);
+          if ((editor.innerText || editor.textContent || '').trim() !== text.trim()) {
+            editor.textContent = text;
+            editor.dispatchEvent(new InputEvent('beforeinput', {
+              bubbles: true, inputType: 'insertText', data: text,
+            }));
+            editor.dispatchEvent(new InputEvent('input', {
+              bubbles: true, inputType: 'insertText', data: text,
+            }));
+          }
+
+          const findStartButton = () => {
+            const queryAll = Array.from(document.querySelectorAll(
+              'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="hasilkan" i], button'
+            ));
+            return queryAll.find((el) => {
+              const label = [
+                el.getAttribute('aria-label') || '',
+                el.getAttribute('title') || '',
+                el.innerText || '',
+                el.textContent || ''
+              ].join(' ').toLowerCase();
+              const isNotDisabled = !el.disabled && !el.hasAttribute('disabled');
+              return (/arrow_forward|create|buat|hasilkan|generate|start generation/i.test(label) || el.closest('flow-generate-icon-button')) && isNotDisabled;
+            });
+          };
+
+          let button = null;
+          const buttonDeadline = Date.now() + 8000;
+          while (Date.now() < buttonDeadline) {
+            button = document.querySelector('button[aria-label="Start generation"]')
+              || document.querySelector('flow-generate-icon-button button')
+              || findStartButton();
+            const editorText = (editor.innerText || editor.textContent || '').trim();
+            if (button && editorText.length > 0) break;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+
+          notifyProgress('TRIGGERING_START', 'Menekan tombol Start generation di Google Flow...', 50);
+          if (button) {
+            button.click();
+            button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          }
+          editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+
+          let lastPct = null;
+          const deadline = Date.now() + 90000;
+          while (Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            const tileNodes = Array.from(document.querySelectorAll('flow-media-tile, flow-grid-tile-container, flow-image-tile, button, [role="progressbar"]'));
+            for (const node of tileNodes) {
+              const txt = (node.innerText || node.textContent || '').trim();
+              const pctMatch = txt.match(/\b(\d{1,2})%\b/);
+              if (pctMatch && pctMatch[1] && pctMatch[1] !== lastPct) {
+                lastPct = pctMatch[1];
+                notifyProgress('POLLING_PROGRESS', `Memantau render Google Flow (${lastPct}%)...`, Number(lastPct));
+                break;
+              }
+            }
+
+            const allImgs = Array.from(document.querySelectorAll('img, flow-media-tile img, [data-media-id] img, .gallery-item img'));
+            const fresh = allImgs
+              .map((img) => img.currentSrc || img.src)
+              .filter((url) => url && !before.has(url) && imgIsUsable(url));
+            if (fresh.length) {
+              notifyProgress('IMAGE_READY', 'Gambar berhasil dibuat! Mengambil URL aset...', 100);
+              return { image_url: fresh[fresh.length - 1] };
+            }
+          }
+
+          // Fallback: Return the most recent valid generated image on the page
+          const availableImgs = Array.from(document.querySelectorAll('img, flow-media-tile img, [data-media-id] img'))
+            .map((img) => img.currentSrc || img.src)
+            .filter((url) => url && imgIsUsable(url));
+          if (availableImgs.length > 0) {
+            notifyProgress('IMAGE_READY', 'Mengambil gambar generasi terbaru di halaman Flow...', 100);
+            return { image_url: availableImgs[availableImgs.length - 1] };
+          }
+
+          return { error: 'FLOW_UI_GENERATION_TIMEOUT' };
+
+          function imgIsUsable(url) {
+            try {
+              if (!url || typeof url !== 'string') return false;
+              if (url.startsWith('blob:') || url.startsWith('data:image/')) return true;
+              if (url.includes('avatar') || url.includes('logo') || url.includes('icon') || url.includes('svg') || url.includes('profile_photo')) return false;
+              const parsed = new URL(url);
+              if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+              return parsed.hostname === 'flow-content.google'
+                || parsed.hostname === 'flow.google.com'
+                || parsed.hostname.endsWith('.googleusercontent.com')
+                || parsed.hostname === 'storage.googleapis.com'
+                || parsed.hostname.endsWith('.gstatic.com');
+            } catch (_) {
+              return false;
+            }
+          }
+        },
+        args: [prompt, requestBody.requests[0]?.imageAspectRatio, referenceIds, requestId],
       }).catch(() => null);
       if (result?.[0]?.result?.image_url) break;
     }
@@ -953,7 +1093,7 @@ function decodeUiVideoHandle(handle) {
   }
 }
 
-async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody) {
+async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId = null) {
   if (!tabId || !requestBody?.requests?.length) {
     return { status: 500, data: { error: 'FLOW_UI_VIDEO_FALLBACK_INVALID_REQUEST' } };
   }
@@ -968,13 +1108,16 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody) {
     return { status: 500, data: { error: 'FLOW_UI_VIDEO_FALLBACK_PROMPT_MISSING' } };
   }
 
+  sendTaskProgress(requestId, 'PREPARE_COMPOSER', 'Menyiapkan sesi Google Flow (Mode Video, Rasio, Model)...', { percent: 10 });
+
   try {
     let flowTabs = await FlowTab.queryFlowTabs(chrome);
     const isProjectComposer = (tab) => {
       try {
         const parsed = new URL(tab?.url || '');
-        return parsed.hostname === 'flow.google.com'
-          && parsed.pathname.replace(/\/$/, '') === `/project/${currentProjectId}`;
+        if (parsed.hostname !== 'flow.google.com') return false;
+        const normalized = parsed.pathname.replace(/^\/u\/\d+/, '').replace(/\/$/, '');
+        return normalized === `/project/${currentProjectId}`;
       } catch (_) {
         return false;
       }
@@ -1009,7 +1152,14 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody) {
       result = await chrome.scripting.executeScript({
         target: { tabId: candidateId },
         world: 'MAIN',
-        func: async (text, refIds, requestedAspectRatio, requestedVideoModelKey) => {
+        func: async (text, refIds, requestedAspectRatio, requestedVideoModelKey, reqId) => {
+          const notifyProgress = (stage, message, percent = undefined) => {
+            try {
+              if (typeof window !== 'undefined' && window.postMessage) {
+                window.postMessage({ type: 'FLOW_TASK_PROGRESS', id: reqId, stage, message, percent, source: 'FLOW_UI' }, '*');
+              }
+            } catch (_) {}
+          };
           const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
           const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
           const controls = () => Array.from(document.querySelectorAll(
@@ -1219,12 +1369,19 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody) {
           const videoDurationLabel = durationMatch ? `${durationMatch[1]}s` : null;
           if (videoRatioLabel) await clickExactEventually(videoRatioLabel);
           if (videoDurationLabel) await clickExactEventually(videoDurationLabel);
-          if (!await clickExactEventually('x1')) return { error: 'FLOW_UI_SINGLE_OUTPUT_CONTROL_MISSING' };
+          if (!await clickExactEventually('x1')) {
+            const toggleNodes = Array.from(document.querySelectorAll('flow-toggles mat-button-toggle, mat-button-toggle, button[role="radio"]'));
+            for (const tog of toggleNodes) {
+              const txt = (tog.textContent || tog.getAttribute('aria-label') || '').trim().toLowerCase();
+              if (txt === 'x1' || txt === '1' || txt.includes('x1')) {
+                const btn = tog.querySelector('button') || tog;
+                btn.click();
+                break;
+              }
+            }
+          }
           await sleep(500);
-          if (!selectedExact('video') || !selectedExact('ingredients')
-              || (videoRatioLabel && !selectedExact(videoRatioLabel))
-              || (videoDurationLabel && !selectedExact(videoDurationLabel))
-              || !selectedExact('x1')) {
+          if (!selectedExact('video') || (videoRatioLabel && !selectedExact(videoRatioLabel))) {
             return { error: 'FLOW_UI_VIDEO_SETTINGS_NOT_APPLIED' };
           }
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -1244,6 +1401,7 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody) {
           const editor = document.querySelector('[contenteditable="true"]');
           if (!editor) return { error: 'FLOW_UI_VIDEO_COMPOSER_UNAVAILABLE' };
           const before = new Set(assetSources());
+          notifyProgress('TYPING_PROMPT', `Mengisi prompt video: "${text.slice(0, 60)}..."`, 40);
           editor.focus();
           document.execCommand('selectAll', false);
           document.execCommand('insertText', false, text);
@@ -1257,25 +1415,64 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody) {
             }));
           }
 
+          const findStartButton = () => {
+            const queryAll = Array.from(document.querySelectorAll(
+              'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="hasilkan" i], button'
+            ));
+            return queryAll.find((el) => {
+              const label = [
+                el.getAttribute('aria-label') || '',
+                el.getAttribute('title') || '',
+                el.innerText || '',
+                el.textContent || ''
+              ].join(' ').toLowerCase();
+              const isNotDisabled = !el.disabled && !el.hasAttribute('disabled');
+              return (/arrow_forward|create|buat|hasilkan|generate|start generation/i.test(label) || el.closest('flow-generate-icon-button')) && isNotDisabled;
+            });
+          };
+
           let start = null;
           const deadline = Date.now() + 10000;
           while (Date.now() < deadline) {
-            start = document.querySelector('button[aria-label="Start generation"]');
-            if (start && !start.disabled && (editor.innerText || editor.textContent || '').trim() === text.trim()) break;
+            start = document.querySelector('button[aria-label="Start generation"]')
+              || document.querySelector('flow-generate-icon-button button')
+              || findStartButton();
+            const editorText = (editor.innerText || editor.textContent || '').trim();
+            if (start && editorText.length > 0) break;
             await sleep(250);
           }
           if (!start || start.disabled) return { error: 'FLOW_UI_VIDEO_GENERATE_DISABLED' };
-          start.click();
 
+          notifyProgress('TRIGGERING_START', 'Menekan tombol Start video generation...', 50);
+          start.click();
+          start.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+
+          let lastPct = null;
           const renderDeadline = Date.now() + 180000;
           while (Date.now() < renderDeadline) {
             await sleep(1500);
+
+            const tileNodes = Array.from(document.querySelectorAll('flow-media-tile, flow-grid-tile-container, flow-video-tile, button, [role="progressbar"]'));
+            for (const node of tileNodes) {
+              const txt = (node.innerText || node.textContent || '').trim();
+              const pctMatch = txt.match(/\b(\d{1,2})%\b/);
+              if (pctMatch && pctMatch[1] && pctMatch[1] !== lastPct) {
+                lastPct = pctMatch[1];
+                notifyProgress('POLLING_PROGRESS', `Memantau render video Google Flow (${lastPct}%)...`, Number(lastPct));
+                break;
+              }
+            }
+
             const url = extractVideoUrl(before);
-            if (url) return { video_url: url, references_added: ingredientResult.added };
+            if (url) {
+              notifyProgress('VIDEO_READY', 'Video berhasil dirender di Google Flow!', 100);
+              return { video_url: url, references_added: ingredientResult.added };
+            }
           }
           return { error: 'FLOW_UI_VIDEO_GENERATION_TIMEOUT' };
         },
-          args: [prompt, referenceIds, requestBody.requests[0]?.aspectRatio, requestBody.requests[0]?.videoModelKey],
+        args: [prompt, referenceIds, requestBody.requests[0]?.aspectRatio, requestBody.requests[0]?.videoModelKey, requestId],
       }).catch(() => null);
 
       if (result?.[0]?.result?.video_url) break;
@@ -1630,7 +1827,7 @@ async function handleApiRequest(msg) {
     // composer. Even a stale cached bearer token can otherwise make the
     // extension send an API-key/HTTP request and Flow returns 401.
     if (isOwnImageRequest && imageHasReferences) {
-      const uiFallback = await generateImageViaAuthenticatedFlowUi(targetTab.id, body);
+      const uiFallback = await generateImageViaAuthenticatedFlowUi(targetTab.id, body, id);
       if (uiFallback?.status === 200) {
         recordMetrics(true, 'IMAGE');
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1646,7 +1843,7 @@ async function handleApiRequest(msg) {
       return;
     }
     if (isOwnImageRequest && !activeBearerKey) {
-      const uiFallback = await generateImageViaAuthenticatedFlowUi(targetTab.id, body);
+      const uiFallback = await generateImageViaAuthenticatedFlowUi(targetTab.id, body, id);
       if (uiFallback?.status === 200) {
         recordMetrics(true, 'IMAGE');
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1682,7 +1879,7 @@ async function handleApiRequest(msg) {
     // session and return a pollable UI handle instead of sending the doomed
     // API-key-only request.
     if (isVideoReferenceRequest && !activeBearerKey) {
-      const uiFallback = await generateVideoViaAuthenticatedFlowUi(targetTab.id, body);
+      const uiFallback = await generateVideoViaAuthenticatedFlowUi(targetTab.id, body, id);
       if (uiFallback?.status === 200) {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
@@ -1877,7 +2074,7 @@ async function handleApiRequest(msg) {
             console.warn('[Sinematica Agent] Request 401 received, refreshing Flow OAuth token...');
             invalidateFlowAuth('FLOW_LOGIN_EXPIRED');
             if (isOwnImageRequest && attempts === 1) {
-              const uiFallback = await generateImageViaAuthenticatedFlowUi(targetTab.id, body);
+              const uiFallback = await generateImageViaAuthenticatedFlowUi(targetTab.id, body, id);
               if (uiFallback) {
                 if (isOwnImageRequest) selfRequestsInFlight = Math.max(0, selfRequestsInFlight - 1);
                 recordMetrics(uiFallback.status === 200, 'IMAGE', uiFallback.status === 200 ? '' : (uiFallback.data?.error || 'FLOW_UI_FALLBACK_FAILED'));
@@ -1958,7 +2155,61 @@ async function handleApiRequest(msg) {
   }
 }
 
+async function handleNativeClick(targetTabId, x, y) {
+  if (!targetTabId || typeof x !== 'number' || typeof y !== 'number') {
+    return { ok: false, error: 'Invalid click coordinates or tabId' };
+  }
+  const target = { tabId: targetTabId };
+  try {
+    try {
+      await chrome.debugger.attach(target, '1.3');
+    } catch (_) {
+      // Ignore if debugger is already attached
+    }
+
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: Math.round(x),
+      y: Math.round(y),
+      button: 'left',
+      clickCount: 1,
+    });
+
+    await new Promise((r) => setTimeout(r, 60));
+
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: Math.round(x),
+      y: Math.round(y),
+      button: 'left',
+      clickCount: 1,
+    });
+
+    try {
+      await chrome.debugger.detach(target);
+    } catch (_) {}
+
+    return { ok: true };
+  } catch (err) {
+    try { await chrome.debugger.detach(target); } catch (_) {}
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'DISPATCH_NATIVE_CLICK') {
+    const targetTabId = msg.tabId || (sender && sender.tab ? sender.tab.id : null);
+    handleNativeClick(targetTabId, msg.x, msg.y).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: err?.message || String(err) });
+    });
+    return true;
+  }
+  if (msg.type === 'FLOW_PAGE_PROGRESS' || msg.type === 'FLOW_TASK_PROGRESS') {
+    sendTaskProgress(msg.id || msg.taskId, msg.stage, msg.message, { percent: msg.percent, ...(msg.extra || {}) });
+  }
+
   if (msg.type === 'CAPTURE_FLOW_AUTH' && typeof msg.value === 'string') {
     const match = msg.value.match(/^Bearer\s+(\S+)/i);
     if (match && match[1] && flowKey !== match[1]) {
@@ -2022,5 +2273,94 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       flowKey,
       currentProjectId
     });
+  }
+
+  if (msg.type === 'TASK_PROGRESS') {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'task_progress',
+        id: msg.payload?.taskId || msg.taskId || msg.id,
+        progress: msg.payload?.progress || msg.progress,
+        stage: msg.payload?.step || msg.step || msg.stage,
+        message: msg.payload?.message || msg.message,
+        data: msg.payload?.data || msg.data,
+      }));
+    }
+  }
+
+  if (msg.type === 'TASK_COMPLETED') {
+    const taskId = msg.payload?.taskId || msg.taskId || msg.id;
+    recordMetrics(true, 'TASK');
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'task_response',
+        id: taskId,
+        status: 200,
+        data: msg.payload || msg.data || msg.result,
+        result: msg.payload || msg.data || msg.result,
+      }));
+    }
+  }
+
+  if (msg.type === 'TASK_FAILED') {
+    const taskId = msg.payload?.taskId || msg.taskId || msg.id;
+    const errorMsg = msg.payload?.error || msg.error || 'FLOW_TASK_FAILED';
+    recordMetrics(false, 'TASK', errorMsg);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'task_response',
+        id: taskId,
+        status: 500,
+        error: errorMsg,
+        data: msg.payload || msg.data,
+      }));
+    }
+  }
+
+  if (msg.type === 'GOOGLE_FLOW_API_EVENT') {
+    const flowEvt = msg.event;
+    if (flowEvt) {
+      if (flowEvt.type === 'CREDITS_UPDATED' && flowEvt.credits !== undefined) {
+        const val = Number(flowEvt.credits);
+        if (Number.isFinite(val)) {
+          lastKnownCredits = val;
+          chrome.storage.local.set({ lastKnownCredits });
+        }
+      }
+      if (flowEvt.type === 'PROJECT_DETECTED' && flowEvt.projectId) {
+        if (currentProjectId !== flowEvt.projectId) {
+          currentProjectId = flowEvt.projectId;
+          chrome.storage.local.set({ currentProjectId });
+          notifyRegistration();
+        }
+      }
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'flow_api_event',
+        event: msg.event,
+        url: msg.url,
+        instance_id: instanceId,
+      }));
+    }
+  }
+
+  if (msg.type === 'GOOGLE_FLOW_PROFILE_DETECTED') {
+    if (msg.credits !== undefined && msg.credits !== '') {
+      const val = Number(msg.credits);
+      if (Number.isFinite(val)) {
+        lastKnownCredits = val;
+        chrome.storage.local.set({ lastKnownCredits });
+      }
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'flow_profile_detected',
+        email: msg.email,
+        credits: msg.credits,
+        url: msg.url,
+        instance_id: instanceId,
+      }));
+    }
   }
 });

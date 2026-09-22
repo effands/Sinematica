@@ -29,7 +29,10 @@ test('isProjectComposerUrl correctly identifies project root versus subpaths', (
   const proj = 'aaa1ca86-92ee-4436-b4d5-ace19f4481c9';
   assert.equal(FlowProject.isProjectComposerUrl(`https://flow.google.com/project/${proj}`, proj), true);
   assert.equal(FlowProject.isProjectComposerUrl(`https://flow.google.com/project/${proj}/`, proj), true);
+  assert.equal(FlowProject.isProjectComposerUrl(`https://flow.google.com/u/2/project/${proj}`, proj), true);
+  assert.equal(FlowProject.isProjectComposerUrl(`https://flow.google.com/u/0/project/${proj}/`, proj), true);
   assert.equal(FlowProject.isProjectComposerUrl(`https://flow.google.com/project/${proj}/edit/123`, proj), false);
+  assert.equal(FlowProject.isProjectComposerUrl(`https://flow.google.com/u/2/project/${proj}/edit/123`, proj), false);
   assert.equal(FlowProject.isProjectComposerUrl(`https://other.google.com/project/${proj}`, proj), false);
 });
 

@@ -1013,6 +1013,15 @@ async def execute_storyboard_job(
         log_event(job_id, f"❌ Gagal memulai job: {ex}", level="error")
         return
 
+    def _handle_flow_progress(msg: dict):
+        stage = msg.get("stage", "FLOW")
+        text = msg.get("message", "")
+        if text:
+            profile_name = msg.get("profile") or "FLOW"
+            log_event(job_id, f"[{stage}] {text}", level="info", profile=profile_name)
+
+    bridge.add_progress_listener(_handle_flow_progress)
+
     # Check Flow Project ID
     project_id = flow_project_id or settings.get_flow_project_id()
     if not project_id:
@@ -1311,15 +1320,33 @@ async def execute_storyboard_job(
                             f"🧩 [{5 + c_idx}%] Memakai {len(reference_media_ids)} image reference "
                             f"khusus untuk karakter '{char_name}'.",
                         )
-                    log_event(job_id, f"⏳ [{5 + c_idx}%] Mengirim request character seed image '{char_name}' (Seed: {request_seed}) [Percobaan {try_cnt}]...")
-                    img_res = await generate_character_image(
-                        bridge,
-                        prompt=(char_prompt + build_visual_style_guard(visual_style, is_children)
-                                + build_finishing_look_guard(storyboard)),
-                        aspect="portrait", project_id=seed_project_id,
-                        instance_id=seed_instance_id,
-                        reference_media_ids=reference_media_ids or None,
-                    )
+                    log_event(job_id, f"⏳ [{5 + c_idx}%] [FLOW:INIT] Mengirim request character seed image '{char_name}' (Seed: {request_seed}) [Percobaan {try_cnt}]...")
+
+                    def _on_char_progress(evt):
+                        stage = evt.get("stage") or ""
+                        msg = evt.get("message") or ""
+                        pct = evt.get("percent") or (evt.get("data") or {}).get("percent")
+                        pct_str = f" ({pct}%)" if pct is not None else ""
+                        if msg:
+                            log_event(job_id, f"⏳ [{5 + c_idx}%] [FLOW:{stage}] {msg}{pct_str}")
+
+                    if hasattr(bridge, "add_progress_listener"):
+                        bridge.add_progress_listener(_on_char_progress)
+
+                    try:
+                        img_res = await generate_character_image(
+                            bridge,
+                            prompt=(char_prompt + build_visual_style_guard(visual_style, is_children)
+                                    + build_finishing_look_guard(storyboard)),
+                            aspect="portrait", project_id=seed_project_id,
+                            instance_id=seed_instance_id,
+                            reference_media_ids=reference_media_ids or None,
+                            reference_image_paths=owned_reference_paths or None,
+                            seed=request_seed,
+                        )
+                    finally:
+                        if hasattr(bridge, "remove_progress_listener"):
+                            bridge.remove_progress_listener(_on_char_progress)
                     if reference_media_ids and not img_res.get("reference_applied"):
                         raise RuntimeError(
                             f"Google Flow tidak menerapkan image reference karakter '{char_name}'."
@@ -2636,6 +2663,11 @@ async def execute_storyboard_job(
 
     if not job_state.get("completed_at"):
         finish_job_timing(job_state)
+
+    try:
+        bridge.remove_progress_listener(_handle_flow_progress)
+    except Exception:
+        pass
 
     _save_history()
 

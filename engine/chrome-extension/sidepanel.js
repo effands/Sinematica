@@ -9,14 +9,23 @@ document.addEventListener('DOMContentLoaded', () => {
   initSidePanel();
 });
 
+function isFlowTab(url) {
+  try {
+    const p = new URL(url || '');
+    if (p.hostname === 'flow.google.com' || p.hostname === 'www.flow.google.com') return true;
+    if (p.hostname === 'labs.google' && /^\/fx\/(?:[a-z0-9_-]+\/)*(?:tools\/)?flow(?:\/|$)/i.test(p.pathname)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function initSidePanel() {
   const toggle = document.getElementById('autopilotToggle');
   const toggleLabel = document.getElementById('toggleLabel');
   const statusDot = document.getElementById('statusDot');
   const btnOpenFlow = document.getElementById('btnOpenFlowTab');
-  const btnRefresh = document.getElementById('btnRefreshToken');
-  const manualTokenInput = document.getElementById('manualTokenInput');
-  const btnSaveManualToken = document.getElementById('btnSaveManualToken');
+  const btnSyncSession = document.getElementById('btnSyncSession') || document.getElementById('btnRefreshToken');
 
   const tabBtnRequests = document.getElementById('tabBtnRequests');
   const tabBtnAgentLogs = document.getElementById('tabBtnAgentLogs');
@@ -43,7 +52,7 @@ function initSidePanel() {
   }
 
   // Load saved state
-  chrome.storage.local.get(['autopilotEnabled', 'requestStats', 'requestLogs', 'flowKey', 'agentLogs'], (data) => {
+  chrome.storage.local.get(['autopilotEnabled', 'requestStats', 'requestLogs', 'flowKey', 'currentProjectId', 'lastKnownCredits', 'agentLogs'], (data) => {
     const isEnabled = data.autopilotEnabled !== false;
     if (toggle) toggle.checked = isEnabled;
     updateToggleUI(isEnabled);
@@ -54,26 +63,8 @@ function initSidePanel() {
       agentLogHistory.push(...data.agentLogs);
       renderAgentLogsUI();
     }
-    updateTokenSyncUI(data.flowKey);
-    if (manualTokenInput && data.flowKey) {
-      manualTokenInput.value = data.flowKey;
-    }
+    updateSessionStatusUI(data);
   });
-
-  if (btnSaveManualToken && manualTokenInput) {
-    btnSaveManualToken.addEventListener('click', () => {
-      let val = (manualTokenInput.value || '').trim();
-      if (val.startsWith('Bearer ')) val = val.substring(7).trim();
-      if (val) {
-        chrome.storage.local.set({ flowKey: val }, () => {
-          updateTokenSyncUI(val);
-          btnSaveManualToken.textContent = '✓ Saved';
-          chrome.runtime.sendMessage({ type: 'UPDATE_MANUAL_TOKEN', flowKey: val }).catch(() => {});
-          setTimeout(() => { btnSaveManualToken.textContent = 'Set'; }, 1500);
-        });
-      }
-    });
-  }
 
   // Toggle switch handler
   if (toggle) {
@@ -84,70 +75,54 @@ function initSidePanel() {
     });
   }
 
-  const isFlowTab = (url) => {
-    try {
-      const p = new URL(url || '');
-      if (p.hostname === 'flow.google.com') return true;
-      if (p.hostname === 'labs.google' && /^\/fx\/(?:[a-z0-9_-]+\/)*(?:tools\/)?flow(?:\/|$)/i.test(p.pathname)) return true;
-      return false;
-    } catch { return false; }
-  };
-
   // Open Flow Tab button
   if (btnOpenFlow) {
     btnOpenFlow.addEventListener('click', async () => {
       const allTabs = await chrome.tabs.query({});
-      const tabs = allTabs.filter(t => isFlowTab(t.url));
+      const tabs = allTabs.filter(t => isFlowTab(t.url || t.pendingUrl));
       if (tabs && tabs.length > 0) {
         chrome.tabs.update(tabs[0].id, { active: true });
         if (tabs[0].windowId) chrome.windows.update(tabs[0].windowId, { focused: true });
       } else {
         chrome.tabs.create({ url: 'https://flow.google.com/' });
       }
+      setTimeout(() => {
+        chrome.storage.local.get(['flowKey', 'currentProjectId', 'lastKnownCredits'], (d) => {
+          updateSessionStatusUI(d);
+        });
+      }, 1000);
     });
   }
 
-  // Refresh Token button
-  if (btnRefresh) {
-    btnRefresh.addEventListener('click', async () => {
-      btnRefresh.textContent = '⏳ Syncing...';
+  // Sync Session / Flow Tab button
+  if (btnSyncSession) {
+    btnSyncSession.addEventListener('click', async () => {
+      btnSyncSession.textContent = '⏳ Syncing...';
       try {
-        for (const sUrl of ['https://flow.google.com/fx/api/auth/session', 'https://labs.google/fx/api/auth/session']) {
-          try {
-            const r = await fetch(sUrl, { credentials: 'include' });
-            if (r.ok) {
-              const data = await r.json();
-              const token = data.access_token || data.accessToken;
-              if (token) {
-                chrome.storage.local.set({ flowKey: token });
-                chrome.runtime.sendMessage({ type: 'UPDATE_MANUAL_TOKEN', flowKey: token }).catch(() => {});
-                updateTokenSyncUI(token);
-                if (manualTokenInput) manualTokenInput.value = token;
-                btnRefresh.textContent = '✓ Synced!';
-                setTimeout(() => { btnRefresh.textContent = 'Refresh Token'; }, 2000);
-                return;
-              }
-            }
-          } catch (_) {}
-        }
-
         const allTabs = await chrome.tabs.query({});
-        const tabs = allTabs.filter(t => isFlowTab(t.url));
-        if (tabs && tabs.length > 0) {
-          const res = await chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_PAGE_AUTH_TOKEN' }).catch(() => null);
-          if (res && res.flow_key) {
-            chrome.storage.local.set({ flowKey: res.flow_key });
-            chrome.runtime.sendMessage({ type: 'UPDATE_MANUAL_TOKEN', flowKey: res.flow_key }).catch(() => {});
-            updateTokenSyncUI(res.flow_key);
-            if (manualTokenInput) manualTokenInput.value = res.flow_key;
-            btnRefresh.textContent = '✓ Synced!';
-            setTimeout(() => { btnRefresh.textContent = 'Refresh Token'; }, 2000);
-            return;
+        const flowTabs = allTabs.filter(t => isFlowTab(t.url || t.pendingUrl));
+        if (flowTabs.length > 0) {
+          const activeTab = flowTabs.find(t => t.active) || flowTabs[0];
+          const match = (activeTab.url || activeTab.pendingUrl || '').match(/project\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+          if (match && match[1]) {
+            chrome.storage.local.set({ currentProjectId: match[1] });
           }
+          chrome.tabs.sendMessage(activeTab.id, { type: 'GET_PAGE_AUTH_TOKEN' }).catch(() => null);
+          btnSyncSession.textContent = '✓ Synced!';
+        } else {
+          btnSyncSession.textContent = 'Tab Tidak Ada';
         }
-      } catch (_) {}
+      } catch (_) {
+        btnSyncSession.textContent = '✓ Checked';
+      }
 
-      btnRefresh.textContent = 'Refresh Token';
+      chrome.storage.local.get(['flowKey', 'currentProjectId', 'lastKnownCredits'], (d) => {
+        updateSessionStatusUI(d);
+      });
+
+      setTimeout(() => {
+        btnSyncSession.textContent = 'Sync Flow Tab';
+      }, 2000);
     });
   }
 
@@ -165,10 +140,14 @@ function initSidePanel() {
     if (area === 'local') {
       if (changes.requestStats) updateMetricsUI(changes.requestStats.newValue);
       if (changes.requestLogs) renderLogsUI(changes.requestLogs.newValue);
-      if (changes.flowKey) updateTokenSyncUI(changes.flowKey.newValue);
       if (changes.autopilotEnabled && toggle) {
         toggle.checked = changes.autopilotEnabled.newValue;
         updateToggleUI(changes.autopilotEnabled.newValue);
+      }
+      if (changes.flowKey || changes.currentProjectId || changes.lastKnownCredits) {
+        chrome.storage.local.get(['flowKey', 'currentProjectId', 'lastKnownCredits'], (data) => {
+          updateSessionStatusUI(data);
+        });
       }
     }
   });
@@ -199,18 +178,49 @@ function updateMetricsUI(stats) {
   if (failed) failed.textContent = s.failed || 0;
 }
 
-function updateTokenSyncUI(flowKey) {
-  const syncText = document.getElementById('tokenSyncText');
+async function updateSessionStatusUI(data = {}) {
+  const sessionStatusText = document.getElementById('sessionStatusText') || document.getElementById('tokenSyncText');
+  const sessionPulse = document.getElementById('sessionPulse');
   const pointsText = document.getElementById('pointsText');
-  if (!syncText) return;
-  if (flowKey) {
-    syncText.textContent = 'token synced ready';
-    syncText.style.color = '#10b981';
-    if (pointsText) pointsText.textContent = 'Sisa Point 1035 / ±69 Video';
+  if (!sessionStatusText) return;
+
+  const currentProjectId = data.currentProjectId || null;
+  const lastKnownCredits = (data.lastKnownCredits !== undefined && data.lastKnownCredits !== null) ? Number(data.lastKnownCredits) : null;
+  const flowKey = data.flowKey || null;
+
+  let hasFlowTab = false;
+  try {
+    const allTabs = await chrome.tabs.query({});
+    hasFlowTab = allTabs.some(t => isFlowTab(t.url || t.pendingUrl));
+  } catch (_) {}
+
+  if (hasFlowTab || flowKey || currentProjectId) {
+    sessionStatusText.textContent = 'Flow Session: Ready';
+    sessionStatusText.style.color = 'var(--success-color)';
+    if (sessionPulse) {
+      sessionPulse.className = 'pulse-green';
+    }
+
+    if (pointsText) {
+      if (lastKnownCredits !== null && Number.isFinite(lastKnownCredits)) {
+        const estVideos = Math.floor(lastKnownCredits / 15);
+        pointsText.textContent = `Kredit: ${lastKnownCredits} / ±${estVideos} Video`;
+      } else if (currentProjectId) {
+        const shortProj = currentProjectId.length > 8 ? currentProjectId.slice(0, 8) + '...' : currentProjectId;
+        pointsText.textContent = `Proyek: ${shortProj}`;
+      } else {
+        pointsText.textContent = 'Sesi Terhubung';
+      }
+    }
   } else {
-    syncText.textContent = 'token missing / need login';
-    syncText.style.color = '#f43f5e';
-    if (pointsText) pointsText.textContent = 'Sisa Point — / ±— Video';
+    sessionStatusText.textContent = 'Flow Tab: Belum Terbuka';
+    sessionStatusText.style.color = '#f59e0b';
+    if (sessionPulse) {
+      sessionPulse.className = 'pulse-amber';
+    }
+    if (pointsText) {
+      pointsText.textContent = 'Klik Open Flow Tab';
+    }
   }
 }
 
@@ -248,27 +258,39 @@ function renderAgentLogsUI() {
 
   if (badge && activeTabMode === 'agent_logs') badge.textContent = agentLogHistory.length;
 
-  const tagColor = (tag) => {
-    if (tag.startsWith('DOM:')) return '#38bdf8';
-    if (tag.startsWith('API:')) return '#a78bfa';
-    if (tag === 'AUTH') return '#4ade80';
-    if (tag === 'CAPTCHA') return '#fbbf24';
-    if (tag === 'DOWNLOAD') return '#f472b6';
-    return '#94a3b8';
-  };
+  if (agentLogHistory.length === 0) {
+    container.innerHTML = '<div style="color: #64748b; font-style: italic; padding: 8px;">No agent activity yet...</div>';
+    return;
+  }
 
   container.innerHTML = agentLogHistory.map(entry => {
-    const time = (entry.timestamp || '').slice(11, 19);
-    const color = tagColor(entry.tag || '');
+    const levelColor = entry.level === 'ERROR' ? '#f43f5e'
+      : entry.level === 'WARN' ? '#f59e0b'
+      : entry.level === 'DEBUG' ? '#94a3b8' : '#38bdf8';
+
+    const tagBadge = `<span style="background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 4px; font-weight: 600; color: ${levelColor};">${entry.tag}</span>`;
+    const metaStr = (entry.meta && Object.keys(entry.meta).length > 0)
+      ? `<span style="color: #64748b; margin-left: 4px;">${JSON.stringify(entry.meta)}</span>`
+      : '';
+
     return `
-      <div style="line-height: 1.4; border-bottom: 1px solid #1e293b; padding-bottom: 2px;">
-        <span style="color: #64748b;">${time}</span>
-        <span style="color: ${color}; font-weight: 600;">[${entry.tag || 'AGENT'}]</span>
-        <span>${entry.message || ''}</span>
+      <div style="line-height: 1.4; word-break: break-all;">
+        <span style="color: #475569;">[${entry.time || ''}]</span>
+        ${tagBadge}
+        <span style="color: #e2e8f0; margin-left: 4px;">${escapeHtml(entry.msg || '')}</span>
+        ${metaStr}
       </div>
     `;
   }).join('');
 
-  const scrollContainer = document.getElementById('agentLogsView');
-  if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
+  const parent = container.parentElement;
+  if (parent) parent.scrollTop = parent.scrollHeight;
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

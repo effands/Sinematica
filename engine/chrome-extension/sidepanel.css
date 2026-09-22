@@ -216,6 +216,22 @@ input:checked + .slider:before {
   box-shadow: 0 0 6px var(--success-color);
 }
 
+.pulse-amber {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b;
+}
+
+.pulse-red {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--error-color);
+  box-shadow: 0 0 6px var(--error-color);
+}
+
 .points-status {
   color: #f97316;
   font-weight: 600;

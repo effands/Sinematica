@@ -19,3 +19,11 @@ test('all AI Sandbox requests use the API-key-approved legacy referrer', () => {
     assert.equal(headers.Origin, 'https://labs.google');
   }
 });
+
+test('Manifest includes debugger permission for trusted native clicks', () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8'),
+  );
+  assert.ok(manifest.permissions.includes('debugger'), 'manifest.json must include debugger permission');
+});
+

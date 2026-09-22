@@ -40,7 +40,7 @@
       try {
         const parsed = new URL(url);
         if (parsed.hostname !== 'flow.google.com') return false;
-        const normalizedPath = parsed.pathname.replace(/\/$/, '');
+        const normalizedPath = parsed.pathname.replace(/^\/u\/\d+/, '').replace(/\/$/, '');
         return normalizedPath === `/project/${projectId}`;
       } catch (_) {
         return false;

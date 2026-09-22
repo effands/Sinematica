@@ -18,6 +18,7 @@ log = logging.getLogger("sinematica.engine.bridge")
 _ROUTABLE_BRIDGE_MESSAGES = frozenset({
     "api_response",
     "trpc_response",
+    "task_response",
     "download_response",
     "download_start",
     "download_chunk",
@@ -66,6 +67,24 @@ class ExtensionBridge:
         self._last_request_at: float = 0.0
         self._last_api_auth_mode: str | None = None
         self._last_api_status: int | None = None
+        self._progress_listeners: list = []
+
+    def add_progress_listener(self, callback):
+        """Register a callback for real-time Chrome Extension automation progress events."""
+        if callback not in self._progress_listeners:
+            self._progress_listeners.append(callback)
+
+    def remove_progress_listener(self, callback):
+        """Remove a previously registered progress callback."""
+        if callback in self._progress_listeners:
+            self._progress_listeners.remove(callback)
+
+    def _notify_progress(self, msg: dict):
+        for cb in list(self._progress_listeners):
+            try:
+                cb(msg)
+            except Exception as ex:
+                log.warning("Error executing progress listener: %s", ex)
 
     def _get_rate_limit(self):
         if self._rate_sem is None:
@@ -358,6 +377,57 @@ class ExtensionBridge:
             "content_type": result.get("content_type") or "application/octet-stream",
         }
 
+    async def execute_task(
+        self, task_payload: dict, instance_id: str = None, timeout: float = 300,
+    ) -> dict:
+        """Dispatch a high-level UI automation task to the Chrome extension and await its completion."""
+        req_id = str(uuid.uuid4())
+        ws, entry = self._get_target_ws_with_entry(instance_id)
+
+        if not ws:
+            raise RuntimeError("Tidak ada profil Chrome Extension yang terhubung untuk menjalankan task Google Flow.")
+
+        target_instance_id = entry["instance_id"] if entry else self.active_instance_id
+        project_id = entry.get("project_id") if entry else None
+
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._pending[req_id] = fut
+
+        payload = dict(task_payload)
+        payload.setdefault("taskId", req_id)
+        if project_id and not payload.get("projectId"):
+            payload["projectId"] = project_id
+
+        msg = {
+            "type": "execute_task",
+            "id": req_id,
+            "params": payload,
+            "instance_id": target_instance_id,
+        }
+
+        try:
+            raw = json.dumps(msg)
+            if hasattr(ws, "send_str"):
+                await ws.send_str(raw)
+            elif hasattr(ws, "send_text"):
+                await ws.send_text(raw)
+            elif hasattr(ws, "send"):
+                await ws.send(raw)
+            else:
+                raise RuntimeError("Unsupported WebSocket object type")
+        except Exception as ex:
+            self._pending.pop(req_id, None)
+            self.remove_ws_reference(ws)
+            raise RuntimeError(f"Gagal mengirim task ke Chrome Extension ({target_instance_id}): {ex}")
+
+        try:
+            res = await asyncio.wait_for(fut, timeout=timeout)
+            return res
+        except asyncio.TimeoutError:
+            self._pending.pop(req_id, None)
+            raise RuntimeError(f"Task Google Flow via Chrome ({target_instance_id}) mengalami timeout ({timeout}s)")
+
     async def trpc_request(
         self, url: str, method: str = "POST", headers: dict = None, body=None,
         timeout: float = 20, instance_id: str = None,
@@ -482,7 +552,14 @@ class ExtensionBridge:
                         "data_base64": base64.b64encode(joined).decode("ascii"),
                     })
 
-        elif msg_type in ("api_response", "download_response", "trpc_response"):
+        elif msg_type in ("task_progress", "flow_progress"):
+            self._notify_progress(msg)
+            stage = msg.get("stage", "FLOW")
+            message = msg.get("message", "")
+            if message:
+                log.info("[%s] [%s] %s", str(msg.get("id", "task"))[:8], stage, message)
+
+        elif msg_type in ("api_response", "download_response", "trpc_response", "task_response"):
             req_id = msg.get("id")
             if req_id and req_id in self._pending:
                 fut = self._pending.pop(req_id)
