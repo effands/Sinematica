@@ -267,6 +267,7 @@
           element.dispatchEvent(new ClipboardEvent('paste', {
             bubbles: true,
             cancelable: true,
+            composed: true,
             clipboardData: dt,
           }));
         }
@@ -656,6 +657,7 @@
         const pasteEvt = new ClipboardEvent('paste', {
           bubbles: true,
           cancelable: true,
+          composed: true,
           clipboardData,
         });
 

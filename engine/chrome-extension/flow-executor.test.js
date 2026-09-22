@@ -51,3 +51,58 @@ test('simulateInput dispatches composed InputEvent and KeyboardEvent across comp
   assert.ok(composedInput, 'input event must have composed: true');
 });
 
+test('uploadMultipleImages creates File instances and dispatches composed paste event', async () => {
+  const dispatchedEvents = [];
+  const fakePrompt = {
+    focus: () => {},
+    dispatchEvent: (ev) => {
+      dispatchedEvents.push(ev);
+      return true;
+    },
+  };
+
+  globalThis.document = {
+    querySelector: (sel) => {
+      if (sel.includes('ProseMirror') || sel.includes('contenteditable')) return fakePrompt;
+      return null;
+    },
+    querySelectorAll: () => [
+      {
+        innerText: 'test_storyboard.png',
+        querySelector: (sel) => (sel === 'img' ? { src: 'https://flow-content.google/image/11111111-2222-3333-4444-555555555555' } : null),
+        getAttribute: () => 'flowMedia/test_storyboard.png',
+      }
+    ],
+  };
+
+  globalThis.ClipboardEvent = class MockClipboardEvent {
+    constructor(type, init) {
+      this.type = type;
+      this.bubbles = init.bubbles;
+      this.composed = init.composed;
+      this.clipboardData = init.clipboardData;
+    }
+  };
+
+  globalThis.DataTransfer = class MockDataTransfer {
+    constructor() {
+      this.items = {
+        add: (f) => this.files.push(f),
+      };
+      this.files = [];
+    }
+  };
+
+  const executor = new FlowTaskExecutor();
+  const res = await executor.uploadMultipleImages([
+    { fileName: 'test_storyboard.png', base64Data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', mimeType: 'image/png' }
+  ], 'test-proj', 5000);
+
+  const pasteEvt = dispatchedEvents.find((e) => e.type === 'paste');
+  assert.ok(pasteEvt, 'paste event should be dispatched');
+  assert.equal(pasteEvt.composed, true);
+  assert.equal(res.length, 1);
+  assert.equal(res[0].fileName, 'test_storyboard.png');
+});
+
+
