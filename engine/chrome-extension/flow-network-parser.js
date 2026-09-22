@@ -74,9 +74,8 @@
 
   function extractProjectIdFromUrl(url) {
     if (!url || typeof url !== 'string') return null;
-    const match = url.match(/\/project\/([0-9a-fA-F-]{36})/i) ||
-                  url.match(/\/projects\/([0-9a-fA-F-]{36})/i) ||
-                  url.match(/projectId=([0-9a-fA-F-]{36})/i);
+    const match = url.match(/\/projects?\/([0-9a-fA-F-]{36}|[a-zA-Z0-9_-]{8,})/i) ||
+                  url.match(/projectId=([0-9a-fA-F-]{36}|[a-zA-Z0-9_-]{8,})/i);
     return match ? match[1] : null;
   }
 

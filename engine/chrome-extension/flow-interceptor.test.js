@@ -26,3 +26,44 @@ test('FlowInterceptor extracts WIZ_global_data session parameters correctly', ()
   assert.equal(session.at, 'mock_at_token');
   assert.equal(session.bl, 'boq_labs-ai-sandbox-frontend_20260903.13_p0');
 });
+
+test('FlowInterceptor exposes direct methods on window and responds to ENSURE_PROJECT message', async () => {
+  let postedMessage = null;
+  const mockWindow = {
+    WIZ_global_data: { FdrFJe: 'sid_1', SNlM0e: 'token_1', cfb2h: 'build_1' },
+    location: { pathname: '/project/abcd-1234-efgh', href: 'https://flow.google.com/project/abcd-1234-efgh' },
+    addEventListener: (type, handler) => {
+      if (type === 'message') mockWindow._msgHandler = handler;
+    },
+    removeEventListener: () => {},
+    postMessage: (data) => {
+      postedMessage = data;
+    },
+    FlowNetworkParser,
+  };
+  globalThis.window = mockWindow;
+  globalThis.document = { querySelectorAll: () => [] };
+
+  delete require.cache[require.resolve('./flow-interceptor.js')];
+  require('./flow-interceptor.js');
+
+  assert.equal(typeof mockWindow.__sinematica_uploadImageDirect, 'function');
+  assert.equal(typeof mockWindow.__sinematica_generateVideoDirect, 'function');
+  assert.equal(typeof mockWindow.__sinematica_getMediaDownloadUrlDirect, 'function');
+
+  // Test ENSURE_PROJECT dispatch
+  await mockWindow._msgHandler({
+    source: mockWindow,
+    data: {
+      source: 'SINEMATICA_CONTENT_SCRIPT',
+      action: 'ENSURE_PROJECT',
+      requestId: 'req_123',
+    }
+  });
+
+  assert.ok(postedMessage);
+  assert.equal(postedMessage.requestId, 'req_123');
+  assert.equal(postedMessage.ok, true);
+  assert.equal(postedMessage.result.projectId, 'abcd-1234-efgh');
+});
+
