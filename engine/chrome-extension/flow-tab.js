@@ -78,7 +78,6 @@
     if (!tab) return { ready: false, error: 'NO_FLOW_WINDOW' };
     if (tab.status !== 'complete') return { ready: false, error: 'FLOW_TAB_LOADING' };
     if (!flowKey && !sessionReady) return { ready: false, error: 'FLOW_SESSION_REQUIRED' };
-    if (!projectId) return { ready: false, error: 'FLOW_PROJECT_REQUIRED' };
     return { ready: true, error: null };
   }
 

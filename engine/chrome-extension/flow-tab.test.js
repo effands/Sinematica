@@ -72,7 +72,7 @@ test('creates a Chrome window when tabs.create has no current window', async () 
   assert.deepEqual(calls, [{ url: 'https://flow.google.com/', focused: false }]);
 });
 
-test('requires a loaded Flow tab, authenticated session, and project before ready', () => {
+test('requires a loaded Flow tab, authenticated session before ready', () => {
   assert.deepEqual(
     readinessState({ tab: null, flowKey: 'token', projectId: 'project' }),
     { ready: false, error: 'NO_FLOW_WINDOW' },
@@ -82,11 +82,11 @@ test('requires a loaded Flow tab, authenticated session, and project before read
     { ready: false, error: 'FLOW_SESSION_REQUIRED' },
   );
   assert.deepEqual(
-    readinessState({ tab: { status: 'complete' }, flowKey: null, sessionReady: true, projectId: 'project' }),
+    readinessState({ tab: { status: 'complete' }, flowKey: null, sessionReady: true, projectId: null }),
     { ready: true, error: null },
   );
   assert.deepEqual(
-    readinessState({ tab: { status: 'complete' }, flowKey: 'token', projectId: 'project' }),
+    readinessState({ tab: { status: 'complete' }, flowKey: 'token', projectId: null }),
     { ready: true, error: null },
   );
 });
