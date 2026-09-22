@@ -1190,11 +1190,88 @@
           }
         }
 
+        // 1. Upload extracted frame file using uploadMultipleImages to ensure it completes upload fully
+        let uploadedFrameMedia = null;
         if (frameData) {
           const framePayload = Array.isArray(frameData) ? frameData : [frameData];
-          this.notifyProgress('UPLOADING_IMAGE', 'Mengunggah berkas frame terakhir ke aset proyek Google Flow...');
-          await this.uploadMultipleImages(framePayload, '', timeoutMs);
+          this.notifyProgress('UPLOADING_IMAGE', 'Mengunggah berkas frame ke aset proyek Google Flow...');
+          const uploadRes = await this.uploadMultipleImages(framePayload, '', timeoutMs);
+          if (uploadRes && uploadRes.length > 0) {
+            uploadedFrameMedia = uploadRes[0];
+          }
           await sleep(600);
+        }
+
+        // 2. Add to prompt slot START ONLY (Exact once)
+        let attached = false;
+        try {
+          const allButtons = Array.from(promptBox.querySelectorAll('button, [role="button"], div[role="button"]'));
+          const startBtn = allButtons.find((btn) => {
+            const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+            const aria = (typeof btn.getAttribute === 'function' ? (btn.getAttribute('aria-label') || '') : '').toLowerCase();
+            return text === 'start' || aria.includes('start frame') || aria.includes('first frame') || text.includes('start');
+          });
+
+          // Method A: Click Start button -> popover opens -> select first asset -> click "Add to prompt"
+          if (startBtn) {
+            if (typeof startBtn.click === 'function') startBtn.click();
+            else simulateClick(startBtn);
+            await sleep(450);
+
+            const popover = document.querySelector('flow-add-menu-popover-content');
+            if (popover) {
+              const firstAsset = popover.querySelector('button.asset-item');
+              if (firstAsset) {
+                if (typeof firstAsset.click === 'function') firstAsset.click();
+                else simulateClick(firstAsset);
+                await sleep(250);
+              }
+
+              const addBtn = popover.querySelector('.detail-add-to-prompt-btn, button[class*="add-to-prompt"]');
+              if (addBtn) {
+                if (typeof addBtn.click === 'function') addBtn.click();
+                else simulateClick(addBtn);
+                await sleep(400);
+                attached = true;
+              }
+            }
+          }
+        } catch (eMethodA) {
+          console.warn('[FlowTaskExecutor] attachFrameToStartSlot Method A notice:', eMethodA);
+        }
+
+        // Method B: If not attached yet, click "Add to prompt" on the newest uploaded frame image tile (top-left tile)
+        if (!attached) {
+          try {
+            const imageTiles = Array.from(document.querySelectorAll('flow-image-tile')).filter((tile) => {
+              const isError = !!tile.querySelector('flow-error-tile') || /failed/i.test(tile.innerText || '');
+              const img = tile.querySelector('img');
+              return !isError && img && (img.naturalWidth > 0 || img.complete) && img.src && !img.src.startsWith('data:');
+            });
+
+            if (imageTiles.length > 0) {
+              const targetTile = imageTiles[0];
+              const moreBtn = targetTile.querySelector('button[aria-label="More options"], button[aria-label*="More" i]');
+              if (moreBtn) {
+                if (typeof moreBtn.click === 'function') moreBtn.click();
+                else simulateClick(moreBtn);
+                await sleep(350);
+
+                const menuItems = Array.from(document.querySelectorAll('[role="menuitem"], .mat-mdc-menu-item'));
+                const addToPromptItem = menuItems.find((m) => /add to prompt|start frame|set as start/i.test(m.innerText || ''));
+                if (addToPromptItem) {
+                  if (typeof addToPromptItem.click === 'function') addToPromptItem.click();
+                  else simulateClick(addToPromptItem);
+                  await sleep(400);
+                  attached = true;
+                } else if (typeof KeyboardEvent !== 'undefined') {
+                  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+                }
+              }
+            }
+          } catch (eMethodB) {
+            console.warn('[FlowTaskExecutor] attachFrameToStartSlot Method B notice:', eMethodB);
+          }
         }
       } catch (err) {
         console.warn('[FlowTaskExecutor] attachFrameToStartSlot error:', err);

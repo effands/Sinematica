@@ -101,3 +101,82 @@ test('waitForImageGenerationDomDone detects newly created image tile and ignores
   }
 });
 
+test('attachFrameToStartSlot removes existing chips and connects asset to start slot', async () => {
+  let chipRemoved = false;
+  let startBtnClicked = false;
+  let popoverAssetClicked = false;
+  let addToPromptClicked = false;
+
+  const mockChip = {
+    querySelector: (sel) => {
+      if (sel.includes('remove') || sel.includes('delete') || sel.includes('mat-icon')) {
+        return {
+          click: () => { chipRemoved = true; }
+        };
+      }
+      return null;
+    }
+  };
+
+  const mockStartBtn = {
+    innerText: 'Start',
+    textContent: 'Start',
+    getAttribute: (attr) => (attr === 'aria-label' ? 'Start frame' : null),
+    click: () => { startBtnClicked = true; },
+  };
+
+  const mockPopover = {
+    querySelector: (sel) => {
+      if (sel.includes('asset-item')) {
+        return {
+          click: () => { popoverAssetClicked = true; }
+        };
+      }
+      if (sel.includes('add-to-prompt') || sel.includes('detail-add-to-prompt-btn')) {
+        return {
+          click: () => { addToPromptClicked = true; }
+        };
+      }
+      return null;
+    }
+  };
+
+  const mockPromptBox = {
+    querySelectorAll: (sel) => {
+      if (sel.includes('flow-ingredient-chip')) return [mockChip];
+      if (sel.includes('button')) return [mockStartBtn];
+      return [];
+    },
+    querySelector: () => null,
+  };
+
+  const origDoc = global.document;
+  global.document = {
+    querySelector: (sel) => {
+      if (sel.includes('prompt-box')) return mockPromptBox;
+      if (sel.includes('flow-add-menu-popover-content')) return mockPopover;
+      return null;
+    },
+    querySelectorAll: (sel) => {
+      if (sel.includes('flow-image-tile')) return [];
+      return [];
+    },
+  };
+
+  try {
+    const executor = new FlowTaskExecutor({});
+    // Mock uploadMultipleImages so it doesn't wait for DOM
+    executor.uploadMultipleImages = async () => [{ fileName: 'storyboard.png', mediaId: 'flowMedia/sb1' }];
+
+    const ok = await executor.attachFrameToStartSlot({ fileName: 'storyboard.png' }, 5000);
+    assert.equal(ok, true);
+    assert.equal(chipRemoved, true, 'Old chip must be removed');
+    assert.equal(startBtnClicked, true, 'Start button must be clicked');
+    assert.equal(popoverAssetClicked, true, 'Asset item in popover must be clicked');
+    assert.equal(addToPromptClicked, true, 'Add to prompt button must be clicked');
+  } finally {
+    global.document = origDoc;
+  }
+});
+
+
