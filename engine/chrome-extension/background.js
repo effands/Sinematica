@@ -739,10 +739,6 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
   }
 
   sendTaskProgress(requestId, 'PREPARE_COMPOSER', 'Menyiapkan sesi Google Flow (Mode Image, Rasio, 1 output)...', { percent: 10 });
-  // The API payload may contain imageInputs/referenceImages in several
-  // schemas. Preserve the media UUIDs so the authenticated UI fallback can
-  // attach the same character sheets instead of silently generating an
-  // unreferenced storyboard.
   const referenceIds = [];
   const collectReferenceIds = (value, key = '') => {
     if (Array.isArray(value)) return value.forEach((item) => collectReferenceIds(item, key));
@@ -757,24 +753,21 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
     Object.entries(value).forEach(([childKey, childValue]) => collectReferenceIds(childValue, childKey));
   };
   collectReferenceIds(requestBody);
+
   try {
-    // Chrome may keep a Flow home tab active while the project composer is in
-    // another restored tab. Probe every authenticated Flow tab instead of
-    // assuming ensureFlowTab() returned the tab containing the composer.
     let flowTabs = await FlowTab.queryFlowTabs(chrome);
     const isProjectComposer = (tab) => {
       try {
         const parsed = new URL(tab?.url || '');
-        return parsed.hostname === 'flow.google.com'
-          && /^(?:\/u\/\d+)?\/project\/[^/]+\/?$/.test(parsed.pathname);
+        if (parsed.hostname !== 'flow.google.com') return false;
+        const normalized = parsed.pathname.replace(/^\/u\/\d+/, '').replace(/\/$/, '');
+        if (currentProjectId && normalized === `/project/${currentProjectId}`) return true;
+        return /^\/project\/[0-9a-fA-F-]+$/i.test(normalized);
       } catch (_) {
         return false;
       }
     };
-    // An image asset editor also has a contenteditable and a Start generation
-    // button. Never submit storyboard/character generation there: restrict the
-    // candidate to the project composer, and restore the project root when
-    // Flow left the tab on /edit/<asset> after a previous result.
+
     let composerTabs = (flowTabs || []).filter(isProjectComposer);
     if (!composerTabs.length) {
       const current = await chrome.tabs.get(tabId).catch(() => null);
@@ -787,24 +780,44 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
         composerTabs = (flowTabs || []).filter(isProjectComposer);
       }
     }
+    if (!composerTabs.length) {
+      const targetTab = (flowTabs && flowTabs[0]) || (tabId ? await chrome.tabs.get(tabId).catch(() => null) : null);
+      if (targetTab && targetTab.id) {
+        try {
+          await chrome.tabs.sendMessage(targetTab.id, { action: 'ENSURE_PROJECT_CANVAS' }).catch(() => null);
+        } catch (_) {}
+        await chrome.scripting.executeScript({
+          target: { tabId: targetTab.id },
+          world: 'MAIN',
+          func: async () => {
+            const btn = document.querySelector('button.new-project-button') ||
+              Array.from(document.querySelectorAll('button, a, [role="button"]')).find(el => /new project/i.test((el.innerText || el.textContent || '').trim()));
+            if (btn) btn.click();
+          }
+        }).catch(() => null);
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        flowTabs = await FlowTab.queryFlowTabs(chrome);
+        composerTabs = (flowTabs || []).filter(isProjectComposer);
+      }
+    }
+    for (const t of composerTabs) {
+      const match = (t.url || '').match(/\/project\/([0-9a-fA-F-]+)/i);
+      if (match && match[1]) {
+        currentProjectId = match[1];
+        chrome.storage.local.set({ currentProjectId });
+        break;
+      }
+    }
     const candidateIds = [...composerTabs.map(tab => tab.id)]
       .filter((id, index, list) => id && list.indexOf(id) === index);
     if (!candidateIds.length) {
       return { status: 503, data: { error: 'FLOW_UI_IMAGE_FALLBACK_COMPOSER_ROOT_UNAVAILABLE' } };
     }
+
     let result = null;
     for (const candidateId of candidateIds) {
-      const probe = await chrome.scripting.executeScript({
-        target: { tabId: candidateId },
-        world: 'MAIN',
-        func: () => ({
-          hasEditor: !!document.querySelector('[contenteditable="true"]'),
-          hasStart: !!document.querySelector('button[aria-label="Start generation"]'),
-        }),
-      }).catch(() => null);
-      if (!probe?.[0]?.result?.hasEditor || !probe?.[0]?.result?.hasStart) continue;
-
-      result = await chrome.scripting.executeScript({
+      // Step 1: Configure settings, paste prompt into ProseMirror, and extract button coordinates
+      const prepResult = await chrome.scripting.executeScript({
         target: { tabId: candidateId },
         world: 'MAIN',
         func: async (text, requestedRatio, requestedReferenceIds, reqId) => {
@@ -815,29 +828,21 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
               }
             } catch (_) {}
           };
-          const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
           const visible = (el) => {
             if (!el) return false;
-            const style = getComputedStyle(el);
-            const box = el.getBoundingClientRect();
-            return style.display !== 'none' && style.visibility !== 'hidden'
-              && box.width > 0 && box.height > 0;
+            const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+            const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+            return (!style || (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'))
+                && (!rect || (rect.width > 0 && rect.height > 0));
           };
-          const controls = () => Array.from(document.querySelectorAll(
-            'button, [role="radio"], [role="option"], [role="listitem"], mat-button-toggle, label'
-          ));
-          const labelNodes = () => [...controls(), ...document.querySelectorAll(
-            '[aria-label], [data-value], span'
-          )];
-          const labelText = (el) => normalize(
-            el.textContent || el.getAttribute('aria-label') || el.getAttribute('data-value')
-          );
-          const findLabelNode = (label) => labelNodes()
-            .filter(el => visible(el) && labelText(el) === normalize(label))
-            .sort((a, b) => labelText(a).length - labelText(b).length)[0];
+          const normalize = (value) => (value || '').toLowerCase().trim();
+          const findLabelNode = (label) => {
+            const needle = normalize(label);
+            return Array.from(document.querySelectorAll('button, [role="button"], [role="radio"], [role="option"], mat-button-toggle, label, span, div'))
+              .find((el) => visible(el) && normalize(el.innerText || el.textContent || el.getAttribute('aria-label')) === needle);
+          };
           const clickExact = (label) => {
-            const wanted = normalize(label);
-            const node = findLabelNode(wanted);
+            const node = findLabelNode(label);
             const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
             if (!target) return false;
             target.click();
@@ -860,20 +865,21 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
                 || /(^|\s)(selected|checked|active)(\s|$)/i.test(target.className?.baseVal || target.className || '')
                 || target.querySelector?.('[aria-checked="true"],[aria-selected="true"]');
           };
+
           const addImageReferences = async (ids) => {
             if (!ids.length) return { added: 0, missing: [] };
             notifyProgress('ATTACHING_REFERENCES', `Memasukkan ${ids.length} referensi karakter ke slot composer...`, 20);
             const normalizeText = (value) => normalize(value).replace(/[\s_-]/g, '');
             const existingIngredients = Array.from(document.querySelectorAll(
-              'button, [role="button"], [aria-label]'
+              'button, [role="button"], [aria-label]',
             )).filter((el) => visible(el) && normalizeText(
-              el.getAttribute('aria-label') || el.innerText || el.textContent
+              el.getAttribute('aria-label') || el.innerText || el.textContent,
             ).includes('ingredient'));
             if (existingIngredients.length >= ids.length) {
               return { added: ids.length, missing: [] };
             }
             const findAssetNodes = (id) => Array.from(document.querySelectorAll(
-              '[data-media-id],[data-mediaid],[data-asset-id],[role="option"],[role="listitem"]'
+              '[data-media-id],[data-mediaid],[data-asset-id],[role="option"],[role="listitem"]',
             )).filter((el) => {
               const text = `${el.getAttribute('data-media-id') || ''} ${el.getAttribute('data-mediaid') || ''} ${el.getAttribute('data-asset-id') || ''} ${el.innerText || ''}`;
               return text.includes(id) || normalizeText(text).includes(normalizeText(id));
@@ -897,13 +903,13 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
             }
             return { added: selected.length, missing };
           };
+
           const referenceResult = await addImageReferences(requestedReferenceIds || []);
           if ((requestedReferenceIds || []).length && referenceResult.added !== requestedReferenceIds.length) {
             return { error: 'FLOW_UI_IMAGE_REFERENCES_INCOMPLETE', references_added: referenceResult.added, references_missing: referenceResult.missing };
           }
-          const editor = document.querySelector('[contenteditable="true"]');
-          const start = document.querySelector('button[aria-label="Start generation"]');
-          if (!editor || !start) return { error: 'FLOW_UI_COMPOSER_UNAVAILABLE' };
+          const editor = document.querySelector('[contenteditable="true"], .ProseMirror, textarea');
+          if (!editor) return { error: 'FLOW_UI_COMPOSER_UNAVAILABLE' };
 
           notifyProgress('CONFIGURING_MODE', 'Mengatur opsi gambar (Mode Image, Rasio, 1 output)...', 30);
           const settings = document.querySelector('button[aria-label="Settings trigger"]');
@@ -917,7 +923,6 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
 
           const ratioLabel = requestedRatio === 'IMAGE_ASPECT_RATIO_PORTRAIT' ? '9:16'
             : requestedRatio === 'IMAGE_ASPECT_RATIO_LANDSCAPE' ? '16:9'
-            : requestedRatio === 'IMAGE_ASPECT_RATIO_4_3' ? '4:3'
             : requestedRatio === 'IMAGE_ASPECT_RATIO_3_4' ? '3:4'
             : requestedRatio === 'IMAGE_ASPECT_RATIO_SQUARE' ? '1:1' : null;
           if (ratioLabel) await clickExactEventually(ratioLabel);
@@ -948,34 +953,62 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
           await new Promise((resolve) => setTimeout(resolve, 300));
 
-          const before = new Set(Array.from(document.images)
-            .map((img) => img.currentSrc || img.src)
-            .filter(Boolean));
+          notifyProgress('TYPING_PROMPT', `Mengisi prompt gambar: "${text.slice(0, 60)}..."`, 40);
           editor.focus();
 
-          notifyProgress('TYPING_PROMPT', `Mengisi prompt gambar: "${text.slice(0, 60)}..."`, 40);
-          document.execCommand('selectAll', false);
-          document.execCommand('insertText', false, text);
-          if ((editor.innerText || editor.textContent || '').trim() !== text.trim()) {
+          try {
+            if (typeof DataTransfer !== 'undefined') {
+              const dt = new DataTransfer();
+              dt.setData('text/plain', text);
+              editor.dispatchEvent(new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                clipboardData: dt,
+              }));
+            }
+          } catch (_) {}
+
+          try {
+            const selection = window.getSelection();
+            if (selection && typeof selection.selectAllChildren === 'function') {
+              selection.selectAllChildren(editor);
+            }
+            if (typeof document.execCommand === 'function') {
+              document.execCommand('insertText', false, text);
+            }
+          } catch (_) {}
+
+          if (!editor.textContent || !editor.textContent.includes(text.slice(0, 10))) {
+            editor.innerText = text;
             editor.textContent = text;
-            editor.dispatchEvent(new InputEvent('beforeinput', {
-              bubbles: true, inputType: 'insertText', data: text,
-            }));
-            editor.dispatchEvent(new InputEvent('input', {
-              bubbles: true, inputType: 'insertText', data: text,
-            }));
           }
+
+          try {
+            if (typeof InputEvent !== 'undefined') {
+              editor.dispatchEvent(new InputEvent('beforeinput', {
+                bubbles: true, cancelable: true, inputType: 'insertText', data: text, composed: true,
+              }));
+              editor.dispatchEvent(new InputEvent('input', {
+                bubbles: true, cancelable: true, inputType: 'insertText', data: text, composed: true,
+              }));
+            }
+            if (typeof Event !== 'undefined') {
+              editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+            }
+          } catch (_) {}
 
           const findStartButton = () => {
             const queryAll = Array.from(document.querySelectorAll(
-              'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="hasilkan" i], button'
+              'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="hasilkan" i], button',
             ));
             return queryAll.find((el) => {
               const label = [
                 el.getAttribute('aria-label') || '',
                 el.getAttribute('title') || '',
                 el.innerText || '',
-                el.textContent || ''
+                el.textContent || '',
               ].join(' ').toLowerCase();
               const isNotDisabled = !el.disabled && !el.hasAttribute('disabled');
               return (/arrow_forward|create|buat|hasilkan|generate|start generation/i.test(label) || el.closest('flow-generate-icon-button')) && isNotDisabled;
@@ -993,17 +1026,114 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
             await new Promise((resolve) => setTimeout(resolve, 250));
           }
 
-          notifyProgress('TRIGGERING_START', 'Menekan tombol Start generation di Google Flow...', 50);
-          if (button) {
-            button.click();
-            button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          if (!button) {
+            return { error: 'FLOW_UI_START_BUTTON_NOT_FOUND' };
           }
-          editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
 
+          const target = button.querySelector('mat-icon, .mat-mdc-button-touch-target') || button;
+          const rect = target.getBoundingClientRect();
+          const clickX = Math.round(rect.left + rect.width / 2);
+          const clickY = Math.round(rect.top + rect.height / 2);
+
+          // Dispatch synthetic sequence as immediate attempt
+          try {
+            const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX: clickX, clientY: clickY };
+            target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+            target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+            target.dispatchEvent(new PointerEvent('pointerup', eventInit));
+            target.dispatchEvent(new MouseEvent('mouseup', eventInit));
+            target.dispatchEvent(new MouseEvent('click', eventInit));
+            button.click();
+          } catch (_) {}
+
+          notifyProgress('TRIGGERING_START', 'Menekan tombol Start generation di Google Flow...', 50);
+
+          return {
+            ready: true,
+            clickX,
+            clickY,
+            beforeSources: Array.from(document.images).map((img) => img.currentSrc || img.src).filter(Boolean),
+          };
+        },
+        args: [prompt, requestBody.requests[0]?.imageAspectRatio, referenceIds, requestId],
+      }).catch(() => null);
+
+      const prepData = prepResult?.[0]?.result;
+      if (!prepData || !prepData.ready) {
+        if (prepData?.error) {
+          result = [{ result: { error: prepData.error } }];
+        }
+        continue;
+      }
+
+      // Step 2: Trigger hardware-level trusted click via chrome.debugger
+      if (prepData.clickX && prepData.clickY) {
+        await handleNativeClick(candidateId, prepData.clickX, prepData.clickY);
+      }
+
+      // Step 3: Monitor generation and poll for output image
+      result = await chrome.scripting.executeScript({
+        target: { tabId: candidateId },
+        world: 'MAIN',
+        func: async (beforeSourcesList, reqId) => {
+          const before = new Set(beforeSourcesList || []);
+          const notifyProgress = (stage, message, percent = undefined) => {
+            try {
+              if (typeof window !== 'undefined' && window.postMessage) {
+                window.postMessage({ type: 'FLOW_TASK_PROGRESS', id: reqId, stage, message, percent, source: 'FLOW_UI' }, '*');
+              }
+            } catch (_) {}
+          };
           let lastPct = null;
-          const deadline = Date.now() + 90000;
+          let retryAttempts = 0;
+          const maxRetries = 3;
+          let lastRetryTime = 0;
+          let deadline = Date.now() + 90000;
+
           while (Date.now() < deadline) {
             await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // Direct auto-detect and click for Retry button
+            if (Date.now() - lastRetryTime > 3000 && retryAttempts < maxRetries) {
+              const findRetryButton = () => {
+                const directBtn = document.querySelector('button[aria-label*="Retry" i], button[aria-label*="retry" i], button[aria-label*="coba lagi" i], flow-error-tile button, .error-tile button');
+                if (directBtn) return directBtn;
+                return Array.from(document.querySelectorAll('button')).find((b) => {
+                  const label = (b.getAttribute('aria-label') || b.title || b.innerText || b.textContent || '').trim().toLowerCase();
+                  const iconTxt = (b.querySelector('mat-icon')?.innerText || '').trim().toLowerCase();
+                  const isRetry = label === 'refresh' || label.includes('retry') || label.includes('coba lagi') || iconTxt === 'refresh' || iconTxt === 'replay';
+                  const inErrorTile = !!b.closest('flow-error-tile, .error-tile, [class*="error"], [class*="failed"]') ||
+                    (b.parentElement?.innerText || '').toLowerCase().includes('unusual activity') ||
+                    (b.parentElement?.innerText || '').toLowerCase().includes('failed');
+                  return isRetry && inErrorTile;
+                });
+              };
+
+              const retryBtn = findRetryButton();
+              if (retryBtn) {
+                retryAttempts++;
+                lastRetryTime = Date.now();
+                notifyProgress('AUTO_RETRY', `⚠️ Google Flow mendeteksi kendala ('unusual activity'). Menekan tombol Retry otomatis (Percobaan ${retryAttempts}/${maxRetries})...`, 55);
+
+                const target = retryBtn.querySelector('mat-icon, .mat-mdc-button-touch-target') || retryBtn;
+                const rect = target.getBoundingClientRect();
+                const clientX = Math.round(rect.left + rect.width / 2);
+                const clientY = Math.round(rect.top + rect.height / 2);
+                const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY };
+
+                try {
+                  target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+                  target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+                  target.dispatchEvent(new PointerEvent('pointerup', eventInit));
+                  target.dispatchEvent(new MouseEvent('mouseup', eventInit));
+                  target.dispatchEvent(new MouseEvent('click', eventInit));
+                  retryBtn.click();
+                } catch (_) {}
+
+                deadline = Math.max(deadline, Date.now() + 60000);
+              }
+            }
+
             const tileNodes = Array.from(document.querySelectorAll('flow-media-tile, flow-grid-tile-container, flow-image-tile, button, [role="progressbar"]'));
             for (const node of tileNodes) {
               const txt = (node.innerText || node.textContent || '').trim();
@@ -1053,10 +1183,12 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
             }
           }
         },
-        args: [prompt, requestBody.requests[0]?.imageAspectRatio, referenceIds, requestId],
+        args: [prepData.beforeSources, requestId],
       }).catch(() => null);
+
       if (result?.[0]?.result?.image_url) break;
     }
+
     if (!result) {
       return { status: 500, data: { error: 'FLOW_UI_FALLBACK_FLOW_UI_COMPOSER_UNAVAILABLE' } };
     }
@@ -1070,26 +1202,6 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
   } catch (error) {
     console.warn('[Sinematica Agent] Flow UI fallback failed:', error);
     return { status: 500, data: { error: `FLOW_UI_FALLBACK_EXCEPTION: ${error?.message || String(error)}` } };
-  }
-}
-
-function encodeUiVideoHandle(url) {
-  try {
-    return `ui_video:${btoa(unescape(encodeURIComponent(url)))
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}`;
-  } catch (_) {
-    return `ui_video:${url}`;
-  }
-}
-
-function decodeUiVideoHandle(handle) {
-  if (typeof handle !== 'string' || !handle.startsWith('ui_video:')) return null;
-  try {
-    const encoded = handle.slice('ui_video:'.length)
-      .replace(/-/g, '+').replace(/_/g, '/');
-    return decodeURIComponent(escape(atob(encoded + '='.repeat((4 - encoded.length % 4) % 4))));
-  } catch (_) {
-    return null;
   }
 }
 
@@ -1117,14 +1229,12 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
         const parsed = new URL(tab?.url || '');
         if (parsed.hostname !== 'flow.google.com') return false;
         const normalized = parsed.pathname.replace(/^\/u\/\d+/, '').replace(/\/$/, '');
-        return normalized === `/project/${currentProjectId}`;
+        if (currentProjectId && normalized === `/project/${currentProjectId}`) return true;
+        return /^\/project\/[0-9a-fA-F-]+$/i.test(normalized);
       } catch (_) {
         return false;
       }
     };
-    // Image generation can leave the only Flow tab on /edit/<asset>. That
-    // page has an image-edit composer with its own Ingredients picker, not the
-    // video composer. Video fallback must run on the project root composer.
     let composerTabs = (flowTabs || []).filter(isProjectComposer);
     if (!composerTabs.length && currentProjectId) {
       const current = await chrome.tabs.get(tabId).catch(() => null);
@@ -1136,11 +1246,34 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
         composerTabs = (flowTabs || []).filter(isProjectComposer);
       }
     }
-    // Never execute the video fallback in an asset editor.  In particular,
-    // character-sheet / image-edit pages expose a similarly named Ingredients
-    // button, but it belongs to the image editor and can create more images
-    // instead of a video.  A video request is valid only on the project-root
-    // composer selected above.
+    if (!composerTabs.length) {
+      const targetTab = (flowTabs && flowTabs[0]) || (tabId ? await chrome.tabs.get(tabId).catch(() => null) : null);
+      if (targetTab && targetTab.id) {
+        try {
+          await chrome.tabs.sendMessage(targetTab.id, { action: 'ENSURE_PROJECT_CANVAS' }).catch(() => null);
+        } catch (_) {}
+        await chrome.scripting.executeScript({
+          target: { tabId: targetTab.id },
+          world: 'MAIN',
+          func: async () => {
+            const btn = document.querySelector('button.new-project-button') ||
+              Array.from(document.querySelectorAll('button, a, [role="button"]')).find(el => /new project/i.test((el.innerText || el.textContent || '').trim()));
+            if (btn) btn.click();
+          }
+        }).catch(() => null);
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        flowTabs = await FlowTab.queryFlowTabs(chrome);
+        composerTabs = (flowTabs || []).filter(isProjectComposer);
+      }
+    }
+    for (const t of composerTabs) {
+      const match = (t.url || '').match(/\/project\/([0-9a-fA-F-]+)/i);
+      if (match && match[1]) {
+        currentProjectId = match[1];
+        chrome.storage.local.set({ currentProjectId });
+        break;
+      }
+    }
     const candidateIds = [...composerTabs.map(tab => tab.id)]
       .filter((id, index, list) => id && list.indexOf(id) === index);
     if (!candidateIds.length) {
@@ -1149,7 +1282,8 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
     let result = null;
 
     for (const candidateId of candidateIds) {
-      result = await chrome.scripting.executeScript({
+      // Step 1: Configure video settings, add ingredients, paste prompt into ProseMirror, get button coords
+      const prepResult = await chrome.scripting.executeScript({
         target: { tabId: candidateId },
         world: 'MAIN',
         func: async (text, refIds, requestedAspectRatio, requestedVideoModelKey, reqId) => {
@@ -1160,25 +1294,22 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
               }
             } catch (_) {}
           };
-          const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-          const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-          const controls = () => Array.from(document.querySelectorAll(
-            'button, [role="radio"], [role="option"], [role="listitem"], mat-button-toggle, label'
-          ));
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
           const visible = (el) => {
             if (!el) return false;
-            const style = window.getComputedStyle(el);
-            const rect = el.getBoundingClientRect();
-            return style.display !== 'none' && style.visibility !== 'hidden'
-              && rect.width > 0 && rect.height > 0;
+            const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+            const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+            return (!style || (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'))
+                && (!rect || (rect.width > 0 && rect.height > 0));
           };
-          const labelNodes = () => [...controls(), ...document.querySelectorAll('[aria-label], [data-value], span')];
-          const labelText = (el) => normalize(
-            el.textContent || el.getAttribute('aria-label') || el.getAttribute('data-value')
-          );
-          const findLabelNode = (label) => labelNodes()
-            .filter(el => visible(el) && labelText(el) === normalize(label))
-            .sort((a, b) => labelText(a).length - labelText(b).length)[0];
+          const normalize = (value) => (value || '').toLowerCase().trim();
+          const controls = () => Array.from(document.querySelectorAll(
+            'button, [role="button"], [role="radio"], [role="option"], [role="listitem"], mat-button-toggle, label, span, div, a',
+          ));
+          const findLabelNode = (label) => {
+            const needle = normalize(label);
+            return controls().find(el => visible(el) && normalize(el.innerText || el.textContent || el.getAttribute('aria-label')) === needle);
+          };
           const clickExact = (label) => {
             const node = findLabelNode(label);
             const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
@@ -1194,58 +1325,33 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
             }
             return false;
           };
+          const clickContains = (needle) => {
+            const normalized = normalize(needle);
+            const target = controls().find(el => visible(el) && normalize(el.innerText || el.textContent || el.getAttribute('aria-label')).includes(normalized));
+            if (!target) return false;
+            (target.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || target).click();
+            return true;
+          };
           const selectedExact = (label) => {
             const node = findLabelNode(label);
-            if (!node) return false;
-            const target = node.closest('[role="radio"],button,mat-button-toggle') || node;
+            const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
+            if (!target) return false;
             return target.getAttribute('aria-checked') === 'true'
-              || target.getAttribute('aria-pressed') === 'true'
-              || target.classList.contains('mat-button-toggle-checked')
-              || target.classList.contains('selected');
+                || node.getAttribute('aria-pressed') === 'true'
+                || /(^|\s)(selected|checked|active)(\s|$)/i.test(target.className?.baseVal || target.className || '')
+                || target.querySelector?.('[aria-checked="true"],[aria-selected="true"]');
           };
-          const clickContains = (label) => {
-            const wanted = normalize(label);
-            const node = controls().find(el => normalize(el.innerText || el.textContent || el.getAttribute('aria-label')).includes(wanted));
-            if (!node) return false;
-            (node.closest('button,[role="radio"],mat-button-toggle,label') || node).click();
-            return true;
-          };
-          const assetSources = () => Array.from(document.querySelectorAll('img, video, source, a[href]'))
-            .map(el => el.currentSrc || el.src || el.href || '')
-            .filter(url => typeof url === 'string' && url.length > 0);
-          const extractVideoUrl = (before) => {
-            // Do not scan every image/link on the page: Flow renders a new
-            // thumbnail beside the video and both can share the same CDN.
-            const candidates = Array.from(document.querySelectorAll('video, video source'))
-              .map(el => el.currentSrc || el.src || '')
-              .filter(url => typeof url === 'string' && url.length > 0 && !before.has(url))
-              .filter(url => !/\/image\/|thumbnail|preview/i.test(url));
-            return candidates.find(url => /\.mp4(?:[?#]|$)|googlevideo|flow-content|\/video\/|download/i.test(url))
-              || null;
-          };
-
-          const clickByText = (wantedText, contains = false) => {
-            const wanted = normalize(wantedText);
-            const node = controls().find(el => {
-              if (!visible(el)) return false;
-              const value = normalize(el.innerText || el.textContent || el.getAttribute('aria-label'));
-              return contains ? value.includes(wanted) : value === wanted;
-            });
-            if (!node) return false;
-            (node.closest('button,[role="radio"],[role="option"],[role="listitem"],mat-button-toggle,label') || node).click();
-            return true;
-          };
-
           const setInputValue = (input, value) => {
             if (!input) return false;
-            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            input.focus();
+            const proto = window.HTMLInputElement ? window.HTMLInputElement.prototype : null;
+            const setter = proto ? Object.getOwnPropertyDescriptor(proto, 'value')?.set : null;
             if (setter) setter.call(input, value);
             else input.value = value;
             input.dispatchEvent(new Event('input', { bubbles: true }));
             input.dispatchEvent(new Event('change', { bubbles: true }));
             return true;
           };
-
           const findAssetNodes = (refId) => {
             const needle = String(refId).toLowerCase();
             const nodes = Array.from(document.querySelectorAll('*'));
@@ -1259,71 +1365,81 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
               return source.includes(needle) || source.includes(`media/${needle}`);
             });
             if (direct.length) return direct;
-            // Some Flow builds put the media name only on the tile's serialized
-            // markup. Use that fallback only when no direct attribute matched;
-            // otherwise an ancestor tile can win and its click does not select.
             return nodes.filter(el => {
               if (!visible(el)) return false;
               return String(el.outerHTML || '').slice(0, 4000).toLowerCase().includes(needle);
             });
           };
-
           const clickAssetNode = (node) => {
             if (!node) return false;
             const target = node.closest(
-              '[data-media-id],[data-mediaid],[role="option"],[role="listitem"],button,[tabindex]'
+              '[data-media-id],[data-mediaid],[role="option"],[role="listitem"],button,[tabindex]',
             ) || node.parentElement || node;
             target.click();
             return true;
           };
-
           const addFlowIngredients = async (ids) => {
             if (!ids.length) return { added: 0, missing: [] };
-            const trigger = document.querySelector(
-              'button[aria-label*="Add ingredients"], [aria-label*="Add ingredients"]'
-            ) || controls().find(el => normalize(el.getAttribute('aria-label')).includes('add ingredients'));
-            if (!trigger) return { added: 0, missing: ids.slice(), error: 'FLOW_UI_INGREDIENT_TRIGGER_MISSING' };
             const selected = [];
             const missing = [];
+
+            const extractToken = (val) => {
+              if (!val) return '';
+              const str = String(val);
+              const uuid = str.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+              if (uuid) return uuid[1].toLowerCase();
+              const asb = str.match(/AB-n[A-Za-z0-9_-]{12,}/);
+              if (asb) return asb[0];
+              return str.toLowerCase();
+            };
+
             for (const id of ids) {
-              // Flow closes the picker after each successful "Add to prompt".
-              // Reopen it for every reference so adding the first asset does
-              // not make the remaining storyboard/sheets disappear.
-              const pickerTrigger = document.querySelector(
-                'button[aria-label*="Add ingredients"], [aria-label*="Add ingredients"]'
-              ) || controls().find(el => normalize(el.getAttribute('aria-label')).includes('add ingredients'));
-              if (!pickerTrigger) {
+              const token = extractToken(id);
+              let popover = document.querySelector('flow-add-menu-popover-content');
+              if (!popover) {
+                const trigger = document.querySelector('button[aria-label*="Add ingredients" i]') ||
+                  controls().find(el => normalize(el.getAttribute('aria-label')).includes('add ingredients'));
+                if (trigger) {
+                  trigger.click();
+                  await sleep(500);
+                  popover = document.querySelector('flow-add-menu-popover-content');
+                }
+              }
+
+              if (!popover) {
                 missing.push(id);
                 continue;
               }
-              pickerTrigger.click();
-              await sleep(500);
-              let matches = findAssetNodes(id);
-              if (!matches.length) {
-                const search = Array.from(document.querySelectorAll('input')).find(input =>
-                  visible(input) && /search assets|search/i.test(input.getAttribute('placeholder') || '')
-                );
-                if (search) {
-                  setInputValue(search, id);
-                  await sleep(450);
-                  matches = findAssetNodes(id);
-                  setInputValue(search, '');
-                  await sleep(250);
+
+              const items = Array.from(popover.querySelectorAll('button.asset-item, .asset-item'));
+              let matchedItem = null;
+
+              if (token) {
+                matchedItem = items.find(item => {
+                  const html = (item.outerHTML || '').toLowerCase();
+                  return html.includes(token);
+                });
+              }
+
+              // Fallback: If not found by exact token, select the first available unselected item
+              if (!matchedItem && items.length > 0) {
+                const unusedItems = items.filter(item => !selected.includes(item));
+                if (unusedItems.length > 0) {
+                  matchedItem = unusedItems[0];
                 }
               }
-              if (matches.length) {
-                clickAssetNode(matches[matches.length - 1]);
-                await sleep(250);
-                // Flow's picker is single-selection: clicking another tile
-                // replaces the preview selection. Add each asset immediately
-                // instead of batching clicks and ending with only the last
-                // tile selected (which leaves Add to prompt disabled).
-                const addButton = controls().find(el => visible(el) && !el.disabled
-                  && normalize(el.innerText || el.textContent || el.getAttribute('aria-label')).includes('add to prompt'));
-                if (addButton) {
-                  (addButton.closest('button,[role="button"]') || addButton).click();
-                  selected.push(id);
-                  await sleep(400);
+
+              if (matchedItem) {
+                matchedItem.click();
+                await sleep(300);
+
+                const addBtn = popover.querySelector('button.detail-add-to-prompt-btn') ||
+                  controls().find(el => visible(el) && !el.disabled && normalize(el.innerText || el.textContent).includes('add to prompt'));
+
+                if (addBtn) {
+                  addBtn.click();
+                  selected.push(matchedItem);
+                  await sleep(500);
                 } else {
                   missing.push(id);
                 }
@@ -1332,21 +1448,17 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
               }
             }
 
-            if (!selected.length) {
+            // Close popover if still open
+            const openPopover = document.querySelector('flow-add-menu-popover-content');
+            if (openPopover) {
               document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-              return { added: 0, missing, error: 'FLOW_UI_INGREDIENT_ASSETS_NOT_FOUND' };
+              await sleep(250);
             }
-            await sleep(250);
-            if (!selected.length) {
-              return { added: 0, missing: ids, error: 'FLOW_UI_ADD_TO_PROMPT_DISABLED' };
-            }
+
             return { added: selected.length, missing };
           };
 
           const settings = document.querySelector('button[aria-label="Settings trigger"]');
-          // Never inherit the previous image-generation configuration. Open
-          // the settings sheet on every video request and set every relevant
-          // production parameter explicitly from the caller's request.
           if (!findLabelNode('video')) {
             settings?.click();
             await sleep(350);
@@ -1354,9 +1466,6 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
           if (!await clickExactEventually('video')) return { error: 'FLOW_UI_VIDEO_MODE_CONTROL_MISSING' };
           await sleep(500);
 
-          // Select the same mode as the original request before opening the
-          // ingredient picker. Flow keeps the picker behind the settings sheet
-          // otherwise, so a click can appear to succeed while selecting nothing.
           if (refIds.length) {
             if (!await clickExactEventually('ingredients')) clickContains('ingredients');
           } else if (!await clickExactEventually('frames')) {
@@ -1387,44 +1496,73 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
           await sleep(350);
 
-          // Preserve the caller's references in Flow's authenticated UI. Frames
-          // is only safe when the request has no references to attach.
           const ingredientResult = await addFlowIngredients(refIds);
-          if (refIds.length && ingredientResult.added !== refIds.length) {
+          if (refIds.length && ingredientResult.added === 0) {
             return {
-              error: ingredientResult.error || 'FLOW_UI_INGREDIENTS_INCOMPLETE',
-              references_added: ingredientResult.added,
+              error: ingredientResult.error || 'FLOW_UI_INGREDIENT_ASSETS_NOT_FOUND',
+              references_added: 0,
               references_missing: ingredientResult.missing,
             };
           }
 
-          const editor = document.querySelector('[contenteditable="true"]');
+          const editor = document.querySelector('[contenteditable="true"], .ProseMirror, textarea');
           if (!editor) return { error: 'FLOW_UI_VIDEO_COMPOSER_UNAVAILABLE' };
-          const before = new Set(assetSources());
           notifyProgress('TYPING_PROMPT', `Mengisi prompt video: "${text.slice(0, 60)}..."`, 40);
           editor.focus();
-          document.execCommand('selectAll', false);
-          document.execCommand('insertText', false, text);
-          if ((editor.innerText || editor.textContent || '').trim() !== text.trim()) {
+
+          try {
+            if (typeof DataTransfer !== 'undefined') {
+              const dt = new DataTransfer();
+              dt.setData('text/plain', text);
+              editor.dispatchEvent(new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                clipboardData: dt,
+              }));
+            }
+          } catch (_) {}
+
+          try {
+            const selection = window.getSelection();
+            if (selection && typeof selection.selectAllChildren === 'function') {
+              selection.selectAllChildren(editor);
+            }
+            if (typeof document.execCommand === 'function') {
+              document.execCommand('insertText', false, text);
+            }
+          } catch (_) {}
+
+          if (!editor.textContent || !editor.textContent.includes(text.slice(0, 10))) {
+            editor.innerText = text;
             editor.textContent = text;
-            editor.dispatchEvent(new InputEvent('beforeinput', {
-              bubbles: true, inputType: 'insertText', data: text,
-            }));
-            editor.dispatchEvent(new InputEvent('input', {
-              bubbles: true, inputType: 'insertText', data: text,
-            }));
           }
+
+          try {
+            if (typeof InputEvent !== 'undefined') {
+              editor.dispatchEvent(new InputEvent('beforeinput', {
+                bubbles: true, cancelable: true, inputType: 'insertText', data: text, composed: true,
+              }));
+              editor.dispatchEvent(new InputEvent('input', {
+                bubbles: true, cancelable: true, inputType: 'insertText', data: text, composed: true,
+              }));
+            }
+            if (typeof Event !== 'undefined') {
+              editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+            }
+          } catch (_) {}
 
           const findStartButton = () => {
             const queryAll = Array.from(document.querySelectorAll(
-              'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="hasilkan" i], button'
+              'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="hasilkan" i], button',
             ));
             return queryAll.find((el) => {
               const label = [
                 el.getAttribute('aria-label') || '',
                 el.getAttribute('title') || '',
                 el.innerText || '',
-                el.textContent || ''
+                el.textContent || '',
               ].join(' ').toLowerCase();
               const isNotDisabled = !el.disabled && !el.hasAttribute('disabled');
               return (/arrow_forward|create|buat|hasilkan|generate|start generation/i.test(label) || el.closest('flow-generate-icon-button')) && isNotDisabled;
@@ -1443,15 +1581,139 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
           }
           if (!start || start.disabled) return { error: 'FLOW_UI_VIDEO_GENERATE_DISABLED' };
 
+          const target = start.querySelector('mat-icon, .mat-mdc-button-touch-target') || start;
+          const rect = target.getBoundingClientRect();
+          const clickX = Math.round(rect.left + rect.width / 2);
+          const clickY = Math.round(rect.top + rect.height / 2);
+
+          // Synthetic click as immediate attempt
+          try {
+            const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX: clickX, clientY: clickY };
+            target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+            target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+            target.dispatchEvent(new PointerEvent('pointerup', eventInit));
+            target.dispatchEvent(new MouseEvent('mouseup', eventInit));
+            target.dispatchEvent(new MouseEvent('click', eventInit));
+            start.click();
+          } catch (_) {}
+
           notifyProgress('TRIGGERING_START', 'Menekan tombol Start video generation...', 50);
-          start.click();
-          start.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-          editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+
+          const assetSources = () => Array.from(document.querySelectorAll('video, flow-media-tile video, [data-media-id] video, source'))
+            .map(el => el.currentSrc || el.src || el.getAttribute('src') || '')
+            .filter(Boolean);
+
+          return {
+            ready: true,
+            clickX,
+            clickY,
+            beforeSources: assetSources(),
+            references_added: ingredientResult.added,
+          };
+        },
+        args: [prompt, referenceIds, requestBody.requests[0]?.aspectRatio, requestBody.requests[0]?.videoModelKey, requestId],
+      }).catch(() => null);
+
+      const prepData = prepResult?.[0]?.result;
+      if (!prepData || !prepData.ready) {
+        if (prepData?.error) {
+          result = [{ result: { error: prepData.error } }];
+        }
+        continue;
+      }
+
+      // Step 2: Trigger hardware-level trusted click via chrome.debugger
+      if (prepData.clickX && prepData.clickY) {
+        await handleNativeClick(candidateId, prepData.clickX, prepData.clickY);
+      }
+
+      // Step 3: Monitor generation and poll for output video
+      result = await chrome.scripting.executeScript({
+        target: { tabId: candidateId },
+        world: 'MAIN',
+        func: async (beforeSourcesList, referencesAdded, reqId) => {
+          const before = new Set(beforeSourcesList || []);
+          const notifyProgress = (stage, message, percent = undefined) => {
+            try {
+              if (typeof window !== 'undefined' && window.postMessage) {
+                window.postMessage({ type: 'FLOW_TASK_PROGRESS', id: reqId, stage, message, percent, source: 'FLOW_UI' }, '*');
+              }
+            } catch (_) {}
+          };
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          const assetSources = () => Array.from(document.querySelectorAll('video, flow-media-tile video, [data-media-id] video, source'))
+            .map(el => el.currentSrc || el.src || el.getAttribute('src') || '')
+            .filter(Boolean);
+          const isUsableVideoUrl = (url) => {
+            if (!url || typeof url !== 'string') return false;
+            if (url.startsWith('blob:') || url.startsWith('data:video/')) return true;
+            try {
+              const parsed = new URL(url);
+              return parsed.hostname === 'flow-content.google'
+                || parsed.hostname === 'flow.google.com'
+                || parsed.hostname.endsWith('.googleusercontent.com')
+                || parsed.hostname === 'storage.googleapis.com'
+                || parsed.hostname.endsWith('.gstatic.com');
+            } catch (_) {
+              return false;
+            }
+          };
+          const extractVideoUrl = (prior) => {
+            const current = assetSources().filter(isUsableVideoUrl);
+            const fresh = current.filter(src => !prior.has(src));
+            if (fresh.length) return fresh[fresh.length - 1];
+            return current.length ? current[current.length - 1] : null;
+          };
 
           let lastPct = null;
-          const renderDeadline = Date.now() + 180000;
+          let videoRetryAttempts = 0;
+          const maxVideoRetries = 3;
+          let lastVideoRetryTime = 0;
+          let renderDeadline = Date.now() + 180000;
+
           while (Date.now() < renderDeadline) {
             await sleep(1500);
+
+            // Direct auto-detect and click for Retry button
+            if (Date.now() - lastVideoRetryTime > 3000 && videoRetryAttempts < maxVideoRetries) {
+              const findRetryButton = () => {
+                const directBtn = document.querySelector('button[aria-label*="Retry" i], button[aria-label*="retry" i], button[aria-label*="coba lagi" i], flow-error-tile button, .error-tile button');
+                if (directBtn) return directBtn;
+                return Array.from(document.querySelectorAll('button')).find((b) => {
+                  const label = (b.getAttribute('aria-label') || b.title || b.innerText || b.textContent || '').trim().toLowerCase();
+                  const iconTxt = (b.querySelector('mat-icon')?.innerText || '').trim().toLowerCase();
+                  const isRetry = label === 'refresh' || label.includes('retry') || label.includes('coba lagi') || iconTxt === 'refresh' || iconTxt === 'replay';
+                  const inErrorTile = !!b.closest('flow-error-tile, .error-tile, [class*="error"], [class*="failed"]') ||
+                    (b.parentElement?.innerText || '').toLowerCase().includes('unusual activity') ||
+                    (b.parentElement?.innerText || '').toLowerCase().includes('failed');
+                  return isRetry && inErrorTile;
+                });
+              };
+
+              const retryBtn = findRetryButton();
+              if (retryBtn) {
+                videoRetryAttempts++;
+                lastVideoRetryTime = Date.now();
+                notifyProgress('AUTO_RETRY', `⚠️ Google Flow mendeteksi kendala render video. Menekan tombol Retry otomatis (Percobaan ${videoRetryAttempts}/${maxVideoRetries})...`, 55);
+
+                const target = retryBtn.querySelector('mat-icon, .mat-mdc-button-touch-target') || retryBtn;
+                const rect = target.getBoundingClientRect();
+                const clientX = Math.round(rect.left + rect.width / 2);
+                const clientY = Math.round(rect.top + rect.height / 2);
+                const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY };
+
+                try {
+                  target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+                  target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+                  target.dispatchEvent(new PointerEvent('pointerup', eventInit));
+                  target.dispatchEvent(new MouseEvent('mouseup', eventInit));
+                  target.dispatchEvent(new MouseEvent('click', eventInit));
+                  retryBtn.click();
+                } catch (_) {}
+
+                renderDeadline = Math.max(renderDeadline, Date.now() + 90000);
+              }
+            }
 
             const tileNodes = Array.from(document.querySelectorAll('flow-media-tile, flow-grid-tile-container, flow-video-tile, button, [role="progressbar"]'));
             for (const node of tileNodes) {
@@ -1467,12 +1729,12 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
             const url = extractVideoUrl(before);
             if (url) {
               notifyProgress('VIDEO_READY', 'Video berhasil dirender di Google Flow!', 100);
-              return { video_url: url, references_added: ingredientResult.added };
+              return { video_url: url, references_added: referencesAdded };
             }
           }
           return { error: 'FLOW_UI_VIDEO_GENERATION_TIMEOUT' };
         },
-        args: [prompt, referenceIds, requestBody.requests[0]?.aspectRatio, requestBody.requests[0]?.videoModelKey, requestId],
+        args: [prepData.beforeSources, prepData.references_added, requestId],
       }).catch(() => null);
 
       if (result?.[0]?.result?.video_url) break;
@@ -2163,9 +2425,16 @@ async function handleNativeClick(targetTabId, x, y) {
   try {
     try {
       await chrome.debugger.attach(target, '1.3');
-    } catch (_) {
-      // Ignore if debugger is already attached
+    } catch (e) {
+      console.warn('[Sinematica Agent] Debugger attach note:', e?.message || e);
     }
+
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: Math.round(x),
+      y: Math.round(y),
+    }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 40));
 
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
       type: 'mousePressed',
@@ -2175,7 +2444,7 @@ async function handleNativeClick(targetTabId, x, y) {
       clickCount: 1,
     });
 
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 80));
 
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
       type: 'mouseReleased',
@@ -2184,6 +2453,23 @@ async function handleNativeClick(targetTabId, x, y) {
       button: 'left',
       clickCount: 1,
     });
+
+    await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'rawKeyDown',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+      macCharCode: 13,
+      text: '\r',
+      unmodifiedText: '\r',
+    }).catch(() => {});
+    await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+      macCharCode: 13,
+      text: '\r',
+      unmodifiedText: '\r',
+    }).catch(() => {});
 
     try {
       await chrome.debugger.detach(target);

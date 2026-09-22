@@ -2866,7 +2866,21 @@ function initStoryboardForm() {
         }
       } catch (_) {}
     }
+
+    const tryFallbackExecution = () => {
+      if (currentStoryboard && Array.isArray(currentStoryboard.scenes) && currentStoryboard.scenes.length > 0) {
+        showToast('Memulai eksekusi baru dari storyboard aktif...', 'info');
+        const btnSend = document.getElementById('btnSendToExecution');
+        if (btnSend) {
+          btnSend.click();
+          return true;
+        }
+      }
+      return false;
+    };
+
     if (!jid) {
+      if (tryFallbackExecution()) return;
       showToast('Belum ada job eksekusi yang tersimpan untuk dilanjutkan. Buat storyboard terlebih dahulu.', 'warning');
       return;
     }
@@ -2884,14 +2898,19 @@ function initStoryboardForm() {
         })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Gagal melanjutkan job');
+      if (!res.ok) {
+        if (tryFallbackExecution()) return;
+        throw new Error(data.detail || 'Gagal melanjutkan job');
+      }
       showToast(data.message || 'Job berhasil dilanjutkan!', 'success');
       document.querySelector('.nav-item[data-tab="tab-execution"]')?.click();
       const stopBtn = document.getElementById('btnStopExecution');
       if (stopBtn) stopBtn.style.display = 'block';
       startJobPolling(jid);
     } catch (err) {
-      showToast('Gagal melanjutkan job: ' + err.message, 'error');
+      if (!tryFallbackExecution()) {
+        showToast('Gagal melanjutkan job: ' + err.message, 'error');
+      }
     }
   };
 
@@ -3468,9 +3487,12 @@ function bindStoryboardLiveEditing() {
 }
 
 // Execution Terminal Polling
+const jobNotFoundAttempts = new Map();
+
 function startJobPolling(jobId) {
   if (!jobId) return;
   currentJobId = jobId;
+  jobNotFoundAttempts.set(jobId, 0);
   try {
     localStorage.setItem('sinematica_last_job_id', jobId);
   } catch (_) {}
@@ -3523,6 +3545,12 @@ async function pollJobStatus(jobId) {
   try {
     const res = await fetch(`/api/jobs/${jobId}`);
     if (res.status === 404) {
+      const attempts = (jobNotFoundAttempts.get(jobId) || 0) + 1;
+      jobNotFoundAttempts.set(jobId, attempts);
+      if (attempts <= 3) {
+        console.warn(`Job ${jobId} not yet returned by backend (attempt ${attempts}/3), retrying...`);
+        return;
+      }
       if (pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
@@ -3535,6 +3563,7 @@ async function pollJobStatus(jobId) {
       showToast('Polling dihentikan: job lama hilang setelah backend dimuat ulang.', 'warning');
       return;
     }
+    jobNotFoundAttempts.set(jobId, 0);
     if (!res.ok) {
       throw new Error(`Server mengembalikan HTTP ${res.status}`);
     }

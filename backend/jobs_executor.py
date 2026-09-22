@@ -372,6 +372,91 @@ def mark_render_job_completed(job_id: str, film_path: str):
         _save_history()
 
 
+def create_and_register_job(
+    storyboard: Dict[str, Any],
+    theme_image_path: Optional[str] = None,
+    aspect_ratio: str = "landscape",
+    duration: int = 10,
+    flow_project_id: Optional[str] = None,
+    force_uniform_duration: bool = False,
+    render_scene_limit: Optional[int] = None,
+    render_scene_start: Optional[int] = None,
+    render_scene_end: Optional[int] = None,
+    job_id: Optional[str] = None,
+) -> str:
+    """Create and immediately register a storyboard job state synchronously in memory and history.
+
+    This ensures that GET /api/jobs/{job_id} returns a valid job immediately when
+    the frontend starts polling, even before the async worker coroutine acquires the
+    execution lock or begins scene processing.
+    """
+    if not job_id:
+        job_id = f"job_{uuid.uuid4().hex[:8]}"
+
+    job_dir = settings.JOBS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    all_scenes = storyboard.get("scenes", [])
+    scenes = [s for i, s in enumerate(all_scenes, 1)
+              if (render_scene_start is None or int(s.get("scene_number") or i) >= render_scene_start)
+              and (render_scene_end is None or int(s.get("scene_number") or i) <= render_scene_end)]
+    total_scenes = len(scenes)
+
+    seo_scene_lines = []
+    for scene_index, scene in enumerate(scenes, start=1):
+        scene_number = scene.get("scene_number") or scene_index
+        scene_title = scene.get("title") or f"Adegan {scene_number}"
+        scene_action = scene.get("action_summary") or ""
+        scene_narration = scene.get("narration_id") or scene.get("voiceover_script") or ""
+        seo_scene_lines.append(
+            f"Adegan {scene_number} — {scene_title}: {scene_action}"
+            + (f" Narasi: {scene_narration}" if scene_narration else "")
+        )
+    seo_story_context = "\n".join(filter(None, [
+        storyboard.get("premise") or storyboard.get("source_script") or storyboard.get("theme") or "",
+        *seo_scene_lines,
+    ]))[:16000]
+    seo_storyboard = {
+        key: storyboard.get(key)
+        for key in ("film_title", "premise", "source_script", "theme", "genre_style", "characters", "scenes")
+        if storyboard.get(key) is not None
+    }
+
+    started_at = time.time()
+    job_state = {
+        "job_id": job_id,
+        "title": storyboard.get("film_title", "Sinematica Story"),
+        "status": "processing",
+        "current_scene": 0,
+        "total_scenes": total_scenes,
+        "aspect_ratio": aspect_ratio,
+        "scenes": [],
+        "cinematic_film_path": None,
+        "cancelled": False,
+        "created_at": started_at,
+        "started_at": started_at,
+        "created_at_formatted": time.strftime("%d %b %Y, %H:%M"),
+        "initial_prompt": storyboard.get("premise") or storyboard.get("theme") or "",
+        "storyboard": storyboard,
+        "theme_image_path": theme_image_path,
+        "duration": duration,
+        "force_uniform_duration": force_uniform_duration,
+        "flow_project_id": flow_project_id,
+        "render_scene_limit": render_scene_limit,
+        "render_scene_start": render_scene_start,
+        "render_scene_end": render_scene_end,
+        "seo_story_context": seo_story_context,
+        "seo_storyboard": seo_storyboard,
+        "target_lang": storyboard.get("target_lang") or "",
+        "target_country": storyboard.get("target_country") or "",
+        "profile_failures": {},
+        "execution_stage": "registered",
+    }
+    _active_jobs[job_id] = job_state
+    _save_history()
+    return job_id
+
+
 FLOW_ALLOWED_DURATIONS = (4, 6, 8, 10)
 TEXTLESS_CHARACTER_SHEET_REVISION = "textless-v2"
 
@@ -961,34 +1046,42 @@ async def execute_storyboard_job(
     }
 
     started_at = time.time()
-    job_state = {
-        "job_id": job_id,
-        "title": storyboard.get("film_title", "Sinematica Story"),
-        "status": "processing",
-        "current_scene": 0,
-        "total_scenes": total_scenes,
-        "aspect_ratio": aspect_ratio,
-        "scenes": [],
-        "cinematic_film_path": None,
-        "cancelled": False,
-        "created_at": started_at,
-        "started_at": started_at,
-        "created_at_formatted": time.strftime("%d %b %Y, %H:%M"),
-        "initial_prompt": storyboard.get("premise") or storyboard.get("theme") or "",
-        "storyboard": storyboard,
-        "theme_image_path": theme_image_path,
-        "duration": duration,
-        "force_uniform_duration": force_uniform_duration,
-        "flow_project_id": flow_project_id,
-        "render_scene_limit": render_scene_limit,
-        "seo_story_context": seo_story_context,
-        "seo_storyboard": seo_storyboard,
-        "target_lang": storyboard.get("target_lang") or "",
-        "target_country": storyboard.get("target_country") or "",
-        "profile_failures": {},
-        "execution_stage": "character_sheets",
-    }
-    _active_jobs[job_id] = job_state
+    existing_state = _active_jobs.get(job_id)
+    if existing_state:
+        job_state = existing_state
+        job_state["execution_stage"] = "character_sheets"
+        job_state["started_at"] = started_at
+        job_state["cancelled"] = False
+        job_state["status"] = "processing"
+    else:
+        job_state = {
+            "job_id": job_id,
+            "title": storyboard.get("film_title", "Sinematica Story"),
+            "status": "processing",
+            "current_scene": 0,
+            "total_scenes": total_scenes,
+            "aspect_ratio": aspect_ratio,
+            "scenes": [],
+            "cinematic_film_path": None,
+            "cancelled": False,
+            "created_at": started_at,
+            "started_at": started_at,
+            "created_at_formatted": time.strftime("%d %b %Y, %H:%M"),
+            "initial_prompt": storyboard.get("premise") or storyboard.get("theme") or "",
+            "storyboard": storyboard,
+            "theme_image_path": theme_image_path,
+            "duration": duration,
+            "force_uniform_duration": force_uniform_duration,
+            "flow_project_id": flow_project_id,
+            "render_scene_limit": render_scene_limit,
+            "seo_story_context": seo_story_context,
+            "seo_storyboard": seo_storyboard,
+            "target_lang": storyboard.get("target_lang") or "",
+            "target_country": storyboard.get("target_country") or "",
+            "profile_failures": {},
+            "execution_stage": "character_sheets",
+        }
+        _active_jobs[job_id] = job_state
     # Persist the complete storyboard immediately so a backend restart before
     # the first scene/error checkpoint can still resume this job.
     _save_history()

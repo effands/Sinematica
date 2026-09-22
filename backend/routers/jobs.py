@@ -7,7 +7,15 @@ from typing import Dict, Any, List, Optional
 import uuid
 import logging
 
-from ..jobs_executor import execute_storyboard_job, get_job_status, get_job_logs, list_jobs, cancel_job, resume_job
+from ..jobs_executor import (
+    execute_storyboard_job,
+    create_and_register_job,
+    get_job_status,
+    get_job_logs,
+    list_jobs,
+    cancel_job,
+    resume_job,
+)
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
 log = logging.getLogger("sinematica.routers.jobs")
@@ -35,7 +43,17 @@ class JobResumeRequest(BaseModel):
 
 @router.post("/create")
 async def create_job(req: JobCreateRequest):
-    job_id = f"job_{uuid.uuid4().hex[:8]}"
+    job_id = create_and_register_job(
+        storyboard=req.storyboard,
+        theme_image_path=req.theme_image_path,
+        aspect_ratio=req.aspect_ratio,
+        duration=req.duration,
+        flow_project_id=req.flow_project_id,
+        force_uniform_duration=req.force_uniform_duration,
+        render_scene_limit=req.render_scene_limit,
+        render_scene_start=req.render_scene_start,
+        render_scene_end=req.render_scene_end,
+    )
 
     log.info("Spawning immediate asyncio task for job %s...", job_id)
     asyncio.create_task(
