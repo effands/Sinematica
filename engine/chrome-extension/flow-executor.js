@@ -518,12 +518,18 @@
       const url = typeof window !== 'undefined' ? window.location.href : '';
 
       if (typeof document !== 'undefined') {
+        if (/\/project\/[0-9a-fA-F-]{36}/i.test(url) && (document.querySelector('.ProseMirror') || document.querySelector('[contenteditable="true"]'))) {
+          return true;
+        }
+
         const findNewProjectBtn = () => {
-          return [...document.querySelectorAll('button, a, [role="button"], div, span')].find((el) => {
-            const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim();
-            return /^(new project|proyek baru|buat project|\+ new project)$/i.test(text) ||
-                   (/new project/i.test(text) && !el.closest('flow-prompt-box'));
-          });
+          return document.querySelector('button.new-project-button') ||
+                 Array.from(document.querySelectorAll('button, a, [role="button"]')).find((el) => {
+                   const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim();
+                   return /new project/i.test(text) && !el.closest('flow-prompt-box');
+                 }) ||
+                 document.querySelector('[aria-label*="new project" i]') ||
+                 document.querySelector('.new-project-card');
         };
 
         let newProjectBtn = findNewProjectBtn();
@@ -538,12 +544,13 @@
         }
 
         if (newProjectBtn) {
-          await simulateClick(newProjectBtn);
+          if (typeof newProjectBtn.click === 'function') newProjectBtn.click();
+          else simulateClick(newProjectBtn);
           await sleep(2000);
         }
 
         await waitFor(() => {
-          return document.querySelector(SELECTORS.PROMPT_INPUT) || document.body?.innerText?.includes('project');
+          return document.querySelector('.ProseMirror') || document.querySelector(SELECTORS.PROMPT_INPUT) || /\/project\/[0-9a-fA-F-]{36}/i.test(window.location.href);
         }, 20000).catch(() => {});
       }
 

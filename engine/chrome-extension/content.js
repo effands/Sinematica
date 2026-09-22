@@ -91,6 +91,18 @@
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+    if (msg.type === 'ENSURE_PROJECT_CANVAS' || msg.action === 'ENSURE_PROJECT_CANVAS') {
+      const btn = document.querySelector('button.new-project-button') ||
+                  Array.from(document.querySelectorAll('button')).find(b => /new project/i.test(b.innerText || ''));
+      if (btn) {
+        btn.click();
+        reply({ ok: true, clicked: true });
+      } else {
+        reply({ ok: false, message: 'Button not found or already in project' });
+      }
+      return true;
+    }
+
     if (msg.type === 'GET_PAGE_AUTH_TOKEN') {
       let token = null;
       try {
@@ -303,5 +315,20 @@
     document.addEventListener('DOMContentLoaded', ensureMainWorldScripts);
   } else {
     ensureMainWorldScripts();
+  }
+  // Auto-detect and enter project canvas if idle on home page
+  if (typeof window !== 'undefined' && window.location.hostname.includes('flow.google.com')) {
+    if (!window.location.pathname.includes('/project/')) {
+      setTimeout(() => {
+        if (!window.location.pathname.includes('/project/')) {
+          const btn = document.querySelector('button.new-project-button') ||
+                      Array.from(document.querySelectorAll('button')).find(b => /new project/i.test(b.innerText || ''));
+          if (btn) {
+            console.log('[Sinematica Agent] Auto-clicking New project button to initialize canvas...');
+            btn.click();
+          }
+        }
+      }, 1500);
+    }
   }
 })();

@@ -83,6 +83,9 @@ function initSidePanel() {
       if (tabs && tabs.length > 0) {
         chrome.tabs.update(tabs[0].id, { active: true });
         if (tabs[0].windowId) chrome.windows.update(tabs[0].windowId, { focused: true });
+        if (!tabs[0].url || !tabs[0].url.includes('/project/')) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'ENSURE_PROJECT_CANVAS' }).catch(() => null);
+        }
       } else {
         chrome.tabs.create({ url: 'https://flow.google.com/' });
       }
@@ -106,6 +109,8 @@ function initSidePanel() {
           const match = (activeTab.url || activeTab.pendingUrl || '').match(/project\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
           if (match && match[1]) {
             chrome.storage.local.set({ currentProjectId: match[1] });
+          } else {
+            chrome.tabs.sendMessage(activeTab.id, { type: 'ENSURE_PROJECT_CANVAS' }).catch(() => null);
           }
           chrome.tabs.sendMessage(activeTab.id, { type: 'GET_PAGE_AUTH_TOKEN' }).catch(() => null);
           btnSyncSession.textContent = '✓ Synced!';
