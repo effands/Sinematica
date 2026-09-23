@@ -1,10 +1,12 @@
 import pytest
 from pathlib import Path
+from unittest.mock import patch
 from scripts.test_e2e_generation import (
     format_log_line,
     find_latest_scene_master_job,
     parse_cli_arguments,
     check_fleet_ready,
+    wait_for_fleet_interactive,
 )
 
 
@@ -62,3 +64,43 @@ def test_check_fleet_ready_helper():
     assert is_ready is True
     assert "profile-test1" in msg
     assert len(profiles) == 1
+
+
+def test_wait_for_fleet_interactive_ready_immediately():
+    with patch("scripts.test_e2e_generation.check_fleet_ready") as mock_check:
+        mock_check.return_value = (True, "Ready", [{"instance_id": "p1"}])
+        ready, msg, profiles = wait_for_fleet_interactive("http://127.0.0.1:8888", interactive=True)
+        assert ready is True
+        assert len(profiles) == 1
+
+
+def test_wait_for_fleet_interactive_retry_on_enter():
+    with patch("scripts.test_e2e_generation.check_fleet_ready") as mock_check, \
+         patch("builtins.input", return_value=""), \
+         patch("time.sleep"):
+        mock_check.side_effect = [
+            (False, "Belum terhubung", []),
+            (True, "Fleet Siap", [{"instance_id": "p2"}]),
+        ]
+        ready, msg, profiles = wait_for_fleet_interactive("http://127.0.0.1:8888", interactive=True)
+        assert ready is True
+        assert "p2" in profiles[0]["instance_id"]
+        assert mock_check.call_count == 2
+
+
+def test_wait_for_fleet_interactive_cancelled_by_user():
+    with patch("scripts.test_e2e_generation.check_fleet_ready") as mock_check, \
+         patch("builtins.input", return_value="q"):
+        mock_check.return_value = (False, "Belum terhubung", [])
+        ready, msg, profiles = wait_for_fleet_interactive("http://127.0.0.1:8888", interactive=True)
+        assert ready is False
+        assert "Dibatalkan" in msg
+
+
+def test_wait_for_fleet_interactive_non_interactive():
+    with patch("scripts.test_e2e_generation.check_fleet_ready") as mock_check:
+        mock_check.return_value = (False, "Belum terhubung", [])
+        ready, msg, profiles = wait_for_fleet_interactive("http://127.0.0.1:8888", interactive=False)
+        assert ready is False
+        assert profiles == []
+

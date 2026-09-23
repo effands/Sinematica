@@ -7,6 +7,7 @@ and streams crystal-clear real-time generation logs.
 """
 
 import argparse
+import datetime
 import json
 import os
 import subprocess
@@ -22,6 +23,8 @@ WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 if str(WORKSPACE_DIR) not in sys.path:
     sys.path.insert(0, str(WORKSPACE_DIR))
 
+from backend import settings
+
 DEFAULT_HISTORY_FILE = WORKSPACE_DIR / "data" / "jobs_history.json"
 DEFAULT_PORT = 8888
 
@@ -35,6 +38,204 @@ RED = "\033[91m"
 BLUE = "\033[94m"
 MAGENTA = "\033[95m"
 DIM = "\033[2m"
+
+
+class ProductionExecutionLogger:
+    """Manages high-fidelity production diagnostic logging to console and disk."""
+
+    def __init__(self, log_dir: Optional[Path] = None):
+        self.log_dir = log_dir or (settings.DATA_DIR / "logs")
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.log_file = self.log_dir / f"e2e_test_generation_{timestamp_str}.log"
+        self.jsonl_file = self.log_dir / f"e2e_test_generation_{timestamp_str}.jsonl"
+
+        # Initialize log header
+        with open(self.log_file, "w", encoding="utf-8") as f:
+            f.write("=" * 80 + "\n")
+            f.write(" SINEMATICA AI STUDIO — E2E SCENE TEST EXECUTION & DIAGNOSTIC LOG\n")
+            f.write(f" Started at : {datetime.datetime.now().isoformat()}\n")
+            f.write(f" Python     : {sys.version.split()[0]} ({sys.platform})\n")
+            f.write(f" Log File   : {self.log_file}\n")
+            f.write("=" * 80 + "\n\n")
+
+    def log(
+        self,
+        level: str,
+        component: str,
+        message: str,
+        meta: Optional[Dict[str, Any]] = None,
+        diagnostic: Optional[Dict[str, Any]] = None,
+    ):
+        now = datetime.datetime.now()
+        iso_ts = now.isoformat()
+        time_str = now.strftime("%H:%M:%S.%f")[:-3]
+        lvl = level.upper()
+
+        icon = "ℹ️"
+        color = BLUE
+        if lvl in ("ERROR", "ERR"):
+            icon = "❌"
+            color = RED
+        elif lvl in ("WARN", "WARNING"):
+            icon = "⚠️"
+            color = YELLOW
+        elif lvl in ("RETRY", "AUTO_RETRY"):
+            icon = "🔁"
+            color = MAGENTA
+        elif lvl in ("SUCCESS", "READY", "COMPLETED"):
+            icon = "✅"
+            color = GREEN
+        elif lvl in ("PROG", "PROGRESS"):
+            icon = "⏳"
+            color = CYAN
+        elif lvl in ("DIAG", "DIAGNOSTIC"):
+            icon = "🔬"
+            color = CYAN
+
+        line = f"[{time_str}] [{lvl:5s}] [{component:16s}] {icon} {message}"
+        print(f"{color}{line}{RESET}")
+
+        # Write formatted text to log file
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(f"[{iso_ts}] [{lvl}] [{component}] {message}\n")
+                if meta:
+                    f.write(f"   ├─ META: {json.dumps(meta, ensure_ascii=False)}\n")
+                if diagnostic:
+                    f.write(f"   └─ DIAGNOSTIC: {json.dumps(diagnostic, ensure_ascii=False)}\n")
+        except Exception:
+            pass
+
+        # Write structured JSONL
+        try:
+            record = {
+                "timestamp": iso_ts,
+                "level": lvl,
+                "component": component,
+                "message": message,
+                "meta": meta or {},
+                "diagnostic": diagnostic or {},
+            }
+            with open(self.jsonl_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def log_diagnostic_card(
+        self,
+        classification: str,
+        root_cause: str,
+        evidence: str,
+        action_taken: str,
+        technical_advice: str,
+    ):
+        card = [
+            f"   ┌── 🔬 [PRODUCTION DIAGNOSTIC ANALYSIS] ────────────────────────────",
+            f"   │  • Classification : {classification}",
+            f"   │  • Root Cause     : {root_cause}",
+            f"   │  • Evidence       : {evidence}",
+            f"   │  • Action Taken   : {action_taken}",
+            f"   │  • Troubleshooting: {technical_advice}",
+            f"   └───────────────────────────────────────────────────────────────────",
+        ]
+        formatted_card = "\n".join(card)
+        print(f"{YELLOW}{formatted_card}{RESET}")
+
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(formatted_card + "\n")
+        except Exception:
+            pass
+
+
+prod_logger = ProductionExecutionLogger()
+
+
+def diagnose_log_message(msg: str, lvl: str) -> Optional[Dict[str, str]]:
+    """Extracts technical root-cause diagnostics and remediation advice for an event."""
+    lower_msg = str(msg).lower()
+
+    if (
+        "kartu kendala" in lower_msg
+        or "gagal dibuat" in lower_msg
+        or "failed to generate" in lower_msg
+        or "flow-error-tile" in lower_msg
+        or "image_retry" in lower_msg
+        or "video_retry" in lower_msg
+    ):
+        return {
+            "classification": "GOOGLE_FLOW_MEDIA_GENERATION_FAILED",
+            "root_cause": "Google Flow engine mengalami interupsi render sementara atau model timeout pada kanvas.",
+            "evidence": "Elemen <flow-error-tile> terdeteksi pada kanvas Flow ('Maaf, video/gambar ini gagal dibuat').",
+            "action_taken": "Ekstensi otomatis memicu tombol Retry / Coba Lagi (maksimal 2x percobaan).",
+            "technical_advice": "Jika gagal berulang setelah 2x retry, periksa ketersediaan kuota Google Sandbox atau rotasi profil.",
+        }
+
+    if "401" in lower_msg or "unauthenticated" in lower_msg or "login" in lower_msg or "sesi" in lower_msg:
+        return {
+            "classification": "GOOGLE_FLOW_AUTH_SESSION_EXPIRED",
+            "root_cause": "Token otorisasi OAuth / SAPISID cookie sesi Google Flow telah kedaluwarsa.",
+            "evidence": "Backend menerima respons HTTP 401 Unauthenticated dari API Google Flow.",
+            "action_taken": "Ekstensi mencoba auto-probe cookie sesi SAPISID dari tab aktif.",
+            "technical_advice": "Buka tab Google Flow di Chrome lalu buka sidepanel ekstensi untuk memperbarui token.",
+        }
+
+    if (
+        "429" in lower_msg
+        or "kuota" in lower_msg
+        or "quota" in lower_msg
+        or "credit" in lower_msg
+        or "resource_exhausted" in lower_msg
+        or "kredit habis" in lower_msg
+    ):
+        return {
+            "classification": "GOOGLE_FLOW_RESOURCE_EXHAUSTED_OR_RATE_LIMITED",
+            "root_cause": "Batas kuota harian atau rate-limit per menit pada akun Google aktif telah tercapai.",
+            "evidence": "Respons HTTP 429 atau pesan kuota habis diterima dari server Google.",
+            "action_taken": "Task executor otomatis menjadwalkan rotasi ke profil Chrome alternatif berikutnya.",
+            "technical_advice": "Tambahkan profil Google akun cadangan pada fleet ekstensi atau tunggu periode reset kuota.",
+        }
+
+    if (
+        "kebijakan" in lower_msg
+        or "policy" in lower_msg
+        or "safety" in lower_msg
+        or "filter" in lower_msg
+        or "ditolak google flow" in lower_msg
+    ):
+        return {
+            "classification": "GOOGLE_FLOW_POLICY_SAFETY_TRIGGERED",
+            "root_cause": "Prompt teks atau komposisi referensi memicu sistem filter keamanan Google Flow.",
+            "evidence": "Intersepsi pesan pelanggaran kebijakan konten dari Google Flow.",
+            "action_taken": "Sistem AI Studio otomatis mereformulasi sinonim prompt dramatis yang aman.",
+            "technical_advice": "Pastikan deskripsi visual tidak memuat figur berhak cipta terlarang atau tokoh nyata sensitif.",
+        }
+
+    if (
+        "content_script_unreachable" in lower_msg
+        or "disconnect" in lower_msg
+        or "terputus" in lower_msg
+        or "tidak ada profil chrome" in lower_msg
+    ):
+        return {
+            "classification": "CHROME_EXTENSION_BRIDGE_DISCONNECTED",
+            "root_cause": "Tab Google Flow tertutup atau direfresh sehingga koneksi WebSocket/content script terputus.",
+            "evidence": "Kegagalan pengiriman pesan via chrome.tabs.sendMessage / WebSocket bridge.",
+            "action_taken": "Sistem memicu auto-reconnect backoff (basis 1.5s exponential).",
+            "technical_advice": "Pastikan tab Google Flow tetap terbuka dan saklar ekstensi Sinematica tetap ON.",
+        }
+
+    if "gagal mengunduh" in lower_msg or "unduhan media flow" in lower_msg or "transfer mp4 tidak lengkap" in lower_msg:
+        return {
+            "classification": "MEDIA_DOWNLOAD_CORRUPTED_OR_TIMEOUT",
+            "root_cause": "Kegagalan transfer byte stream chunk atau timeout koneksi saat mengunduh media dari Google CDN.",
+            "evidence": "Ukuran payload tidak sesuai atau status HTTP download gagal.",
+            "action_taken": "Sistem mengulang unduhan media terautentikasi melalui tab Chrome.",
+            "technical_advice": "Periksa kestabilan bandwidth internet dan pastikan sesi download memiliki cookie lengkap.",
+        }
+
+    return None
 
 
 def parse_cli_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -75,6 +276,12 @@ def parse_cli_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
         type=int,
         default=900,
         help="Total test timeout in seconds (default: 900s / 15 minutes)",
+    )
+    parser.add_argument(
+        "--interactive",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Prompt to press Enter to retry if Chrome Extension is not connected (default: True)",
     )
     return parser.parse_args(argv)
 
@@ -209,6 +416,44 @@ def check_fleet_ready(
     )
 
 
+def wait_for_fleet_interactive(
+    base_url: str,
+    interactive: bool = True,
+) -> Tuple[bool, str, List[dict]]:
+    """Check Chrome fleet connectivity. If not ready and interactive=True, prompt the user to connect and press Enter to retry."""
+    while True:
+        fleet_ready, fleet_msg, profiles = check_fleet_ready(base_url)
+        if fleet_ready:
+            return True, fleet_msg, profiles
+
+        print(f"\n{YELLOW}==============================================================================={RESET}")
+        print(f"{YELLOW}{BOLD} ⚠️ [PERINGATAN] Ekstensi Chrome Sinematica Belum Terhubung atau Belum Siap!{RESET}")
+        print(f"{YELLOW}==============================================================================={RESET}")
+        print("  Petunjuk langkah cepat:")
+        print("  1. Buka browser Google Chrome tempat ekstensi Sinematica terpasang.")
+        print("  2. Buka tab Google Flow (https://flow.google.com) dan buka proyek Anda.")
+        print("  3. Pastikan ekstensi Sinematica aktif dan terhubung.")
+        print("-------------------------------------------------------------------------------")
+        print(f"  👉 {GREEN}Tekan [ENTER]{RESET} untuk memeriksa kembali koneksi ekstensi...")
+        print(f"  👉 {RED}Tekan [Ctrl+C]{RESET} atau ketik 'q' lalu Enter untuk membatalkan.")
+        print(f"{YELLOW}==============================================================================={RESET}")
+
+        if not interactive:
+            return False, fleet_msg, profiles
+
+        try:
+            user_input = input("\n[Tekan ENTER untuk coba lagi / ketik 'q' untuk keluar]: ")
+            if user_input.strip().lower() in ("q", "quit", "exit", "batal", "cancel"):
+                print(f"\n{RED}🛑 Eksekusi dibatalkan oleh pengguna.{RESET}")
+                return False, "Dibatalkan oleh pengguna", []
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{RED}🛑 Eksekusi dibatalkan oleh pengguna.{RESET}")
+            return False, "Dibatalkan oleh pengguna", []
+
+        print(f"{CYAN}🔍 Memeriksa ulang status koneksi ekstensi Chrome...{RESET}")
+        time.sleep(1.0)
+
+
 def find_latest_scene_master_job(history_file_path: Path = DEFAULT_HISTORY_FILE) -> Optional[dict]:
     if not history_file_path.exists():
         return None
@@ -286,6 +531,7 @@ def stream_job_logs_until_completion(
 ) -> Tuple[bool, dict]:
     print(f"\n{BOLD}=================== LIVE GENERATION TEST LOG STREAM ==================={RESET}")
     print(f"Memantau eksekusi Job ID: {CYAN}{job_id}{RESET}...")
+    print(f"Log Diagnostik: {CYAN}{prod_logger.log_file}{RESET}")
     print(f"{BOLD}======================================================================={RESET}\n")
 
     seen_log_count = 0
@@ -301,7 +547,38 @@ def stream_job_logs_until_completion(
             # Print fresh logs
             if len(logs) > seen_log_count:
                 for entry in logs[seen_log_count:]:
-                    print(format_log_line(entry))
+                    msg = entry.get("message", "")
+                    if msg:
+                        lvl = entry.get("level", "info")
+                        profile = entry.get("profile") or "FLEET"
+                        meta = entry.get("meta")
+                        diagnostic = entry.get("diagnostic")
+
+                        # Determine component category
+                        comp = "FLOW:EXEC"
+                        if "storyboard" in msg.lower():
+                            comp = "STORYBOARD"
+                        elif "seed" in msg.lower() or "character" in msg.lower():
+                            comp = "CHARACTER"
+                        elif "unduh" in msg.lower() or "download" in msg.lower():
+                            comp = "DOWNLOAD"
+                        elif "stitch" in msg.lower() or "gabung" in msg.lower():
+                            comp = "STITCHER"
+                        elif "retry" in msg.lower() or "coba lagi" in msg.lower():
+                            comp = "AUTO_RETRY"
+
+                        prod_logger.log(lvl, comp, msg, meta=meta, diagnostic=diagnostic)
+
+                        # Render diagnostic card if diagnostic detected or provided
+                        diag_info = diagnostic or diagnose_log_message(msg, lvl)
+                        if diag_info and isinstance(diag_info, dict) and "classification" in diag_info:
+                            prod_logger.log_diagnostic_card(
+                                classification=diag_info.get("classification", "UNKNOWN"),
+                                root_cause=diag_info.get("root_cause", ""),
+                                evidence=diag_info.get("evidence", ""),
+                                action_taken=diag_info.get("action_taken", ""),
+                                technical_advice=diag_info.get("technical_advice", ""),
+                            )
                 seen_log_count = len(logs)
 
             job_status = job.get("status", "processing")
@@ -309,14 +586,17 @@ def stream_job_logs_until_completion(
                 last_status = job_status
 
             if job_status == "completed":
+                prod_logger.log("SUCCESS", "JOB", f"Job {job_id} selesai dengan sukses!")
                 print(f"\n{GREEN}{BOLD}✔ JOB SELESAI DENGAN SUKSES!{RESET}")
                 return True, job
             elif job_status in ("failed", "cancelled"):
+                prod_logger.log("ERROR", "JOB", f"Job {job_id} berakhir dengan status: {job_status.upper()}")
                 print(f"\n{RED}{BOLD}✖ JOB BERAKHIR DENGAN STATUS: {job_status.upper()}{RESET}")
                 return False, job
 
         time.sleep(poll_interval)
 
+    prod_logger.log("ERROR", "JOB", f"Timeout pengujian ({max_timeout}s) tercapai untuk job {job_id}.")
     print(f"\n{RED}{BOLD}✖ TIMEOUT PENGUJIAN ({max_timeout}s) TERCAPAI.{RESET}")
     return False, {}
 
@@ -361,21 +641,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"\n{BOLD}==================================================================={RESET}")
     print(f"   {CYAN}SINEMATICA AI STUDIO — AUTOMATED E2E SCENE TEST RUNNER{RESET}")
     print(f"{BOLD}==================================================================={RESET}\n")
+    prod_logger.log("INFO", "TEST_RUNNER", f"Memulai Automated E2E Scene Test Runner di {base_url}")
 
     # 1. Ensure Backend Server is online
     server_process = None
     if not check_server_health(base_url):
         if args.no_auto_start:
+            prod_logger.log("ERROR", "SERVER", f"Server di {base_url} tidak aktif. Jalankan server terlebih dahulu.")
             print(f"{RED}[ERROR]{RESET} Server di {base_url} tidak aktif. Jalankan server terlebih dahulu.")
             return 1
         server_process = ensure_server_running(base_url, port=args.port)
         if not check_server_health(base_url):
             return 1
     else:
+        prod_logger.log("SUCCESS", "SERVER", f"Terhubung ke Backend Sinematica di {base_url}.")
         print(f"{GREEN}[SYS]{RESET} Terhubung ke Backend Sinematica di {base_url}.")
 
     # 2. Check Chrome Fleet connection
-    fleet_ready, fleet_msg, profiles = check_fleet_ready(base_url)
+    fleet_ready, fleet_msg, profiles = wait_for_fleet_interactive(base_url, interactive=args.interactive)
+    prod_logger.log("INFO" if fleet_ready else "WARN", "FLEET", fleet_msg, meta={"profiles": profiles})
     print(f"{CYAN}[FLEET]{RESET} {fleet_msg}")
     if not fleet_ready:
         print(f"{YELLOW}[TIPS]{RESET} Buka Google Chrome dengan ekstensi Sinematica aktif dan tab Google Flow terbuka.")
@@ -390,9 +674,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         if target_job:
             target_job_id = target_job.get("job_id")
             title = target_job.get("title", "Scene Master Storyboard")
+            prod_logger.log("INFO", "SCENE_MASTER", f"Mengambil storyboard Scene Master terbaru: '{title}' ({target_job_id})")
             print(f"{GREEN}[SCENE MASTER]{RESET} Mengambil storyboard Scene Master terbaru: {BOLD}'{title}'{RESET} ({target_job_id})")
 
     if not target_job_id:
+        prod_logger.log("ERROR", "SCENE_MASTER", "Tidak ditemukan storyboard/job yang tersimpan di Scene Master (data/jobs_history.json).")
         print(f"{RED}[ERROR]{RESET} Tidak ditemukan storyboard/job yang tersimpan di Scene Master (data/jobs_history.json).")
         return 1
 
@@ -401,6 +687,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     scene_start = args.scene if args.scene else None
     scene_end = args.scene if args.scene else None
 
+    prod_logger.log("INFO", "EXEC_TRIGGER", f"Memulai eksekusi otomatis (Limit: {limit or 'Semua'}, Scene: {args.scene or 'Otomatis'})...")
     print(f"{CYAN}[SYS]{RESET} Memulai eksekusi otomatis (Limit: {limit or 'Semua'}, Scene: {args.scene or 'Otomatis'})...")
     try:
         trigger_job_resume(
@@ -411,6 +698,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             scene_end=scene_end,
         )
     except Exception as ex:
+        prod_logger.log("ERROR", "EXEC_TRIGGER", f"Gagal memicu resume job: {ex}")
         print(f"{RED}[ERROR]{RESET} {ex}")
         return 1
 
@@ -424,6 +712,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             max_timeout=args.timeout,
         )
     except KeyboardInterrupt:
+        prod_logger.log("WARN", "USER", "Pengujian dihentikan pengguna.")
         print(f"\n{YELLOW}[USER]{RESET} Pengujian dihentikan pengguna.")
         cancel_running_job(base_url, target_job_id)
         return 130

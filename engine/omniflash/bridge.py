@@ -428,6 +428,42 @@ class ExtensionBridge:
             self._pending.pop(req_id, None)
             raise RuntimeError(f"Task Google Flow via Chrome ({target_instance_id}) mengalami timeout ({timeout}s)")
 
+    async def harvest_project_videos(
+        self, instance_id: str = None, project_id: str = None, timeout: float = 60
+    ) -> dict:
+        """Harvest all rendered videos from the Google Flow canvas in chronological order."""
+        ws, entry = self._get_target_ws_with_entry(instance_id)
+        if not ws:
+            raise RuntimeError("Tidak ada profil Chrome Extension yang terhubung untuk mengambil video kanvas Flow.")
+
+        target_instance_id = entry["instance_id"] if entry else self.active_instance_id
+        target_project_id = project_id or (entry.get("project_id") if entry else None)
+
+        try:
+            res = await self.api_request(
+                "/internal/harvest_project_videos",
+                {"projectId": target_project_id},
+                instance_id=target_instance_id,
+                timeout=timeout,
+            )
+            data = res.get("data", {})
+            if isinstance(data, dict) and "videos" in data:
+                return data
+            if isinstance(res, dict) and "videos" in res:
+                return res
+        except Exception as api_err:
+            log.warning("Harvest via api_request failed (%s), trying execute_task fallback...", api_err)
+
+        task_res = await self.execute_task(
+            {
+                "action": "FLOW_HARVEST_PROJECT_VIDEOS",
+                "projectId": target_project_id,
+            },
+            instance_id=target_instance_id,
+            timeout=timeout,
+        )
+        return task_res.get("data") or task_res.get("result") or task_res
+
     async def trpc_request(
         self, url: str, method: str = "POST", headers: dict = None, body=None,
         timeout: float = 20, instance_id: str = None,

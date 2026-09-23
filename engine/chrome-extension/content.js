@@ -94,11 +94,19 @@
     if (msg.type === 'ENSURE_PROJECT_CANVAS' || msg.action === 'ENSURE_PROJECT_CANVAS') {
       const url = window.location.href || '';
       const userPrefix = url.match(/\/u\/(\d+)/i)?.[0] || '';
-      const projId = msg.projectId;
-      if (projId && /^[0-9a-fA-F-]{36}$/.test(projId) && !url.includes(projId)) {
-        window.location.href = `https://flow.google.com${userPrefix}/project/${projId}`;
-        reply({ ok: true, navigated: true });
-        return true;
+      const projId = msg.projectId || url.match(/\/project\/([0-9a-fA-F-]{36})/i)?.[1];
+      if (projId && /^[0-9a-fA-F-]{36}$/.test(projId)) {
+        let isRoot = false;
+        try {
+          const parsed = new URL(url);
+          const normalized = parsed.pathname.replace(/^\/u\/\d+/, '').replace(/\/$/, '');
+          isRoot = normalized === `/project/${projId}`;
+        } catch (_) {}
+        if (!isRoot) {
+          window.location.href = `https://flow.google.com${userPrefix}/project/${projId}`;
+          reply({ ok: true, navigated: true });
+          return true;
+        }
       }
       const btn = document.querySelector('button.new-project-button') ||
                   Array.from(document.querySelectorAll('button, a, [role="button"], div')).find(b => {
@@ -217,6 +225,14 @@
           }).catch(() => {});
         } catch (_) {}
       }
+      return;
+    }
+
+    // 1b. Flow task & page progress events
+    if (event.data?.type === 'FLOW_TASK_PROGRESS' || event.data?.type === 'FLOW_PAGE_PROGRESS') {
+      try {
+        chrome.runtime.sendMessage(event.data).catch(() => {});
+      } catch (_) {}
       return;
     }
 

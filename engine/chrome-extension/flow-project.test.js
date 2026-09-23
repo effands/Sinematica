@@ -33,7 +33,35 @@ test('isProjectComposerUrl correctly identifies project root versus subpaths', (
   assert.equal(FlowProject.isProjectComposerUrl(`https://flow.google.com/u/0/project/${proj}/`, proj), true);
   assert.equal(FlowProject.isProjectComposerUrl(`https://flow.google.com/project/${proj}/edit/123`, proj), false);
   assert.equal(FlowProject.isProjectComposerUrl(`https://flow.google.com/u/2/project/${proj}/edit/123`, proj), false);
+  assert.equal(FlowProject.isProjectComposerUrl(`https://flow.google.com/u/2/project/${proj}/character`, proj), false);
   assert.equal(FlowProject.isProjectComposerUrl(`https://other.google.com/project/${proj}`, proj), false);
+});
+
+test('isProjectRootUrl validates strict project root without subpaths', () => {
+  const proj = 'aaa1ca86-92ee-4436-b4d5-ace19f4481c9';
+  assert.equal(FlowProject.isProjectRootUrl(`https://flow.google.com/project/${proj}`), true);
+  assert.equal(FlowProject.isProjectRootUrl(`https://flow.google.com/u/2/project/${proj}`), true);
+  assert.equal(FlowProject.isProjectRootUrl(`https://flow.google.com/u/2/project/${proj}/`), true);
+  assert.equal(FlowProject.isProjectRootUrl(`https://flow.google.com/u/2/project/${proj}/character`), false);
+  assert.equal(FlowProject.isProjectRootUrl(`https://flow.google.com/u/2/project/${proj}/actors`), false);
+  assert.equal(FlowProject.isProjectRootUrl(`https://flow.google.com/u/2/project/${proj}/edit/123`), false);
+  assert.equal(FlowProject.isProjectRootUrl(`https://flow.google.com/home`), false);
+});
+
+test('normalizeToProjectRootUrl strips subpaths like /character and /edit back to root composer', () => {
+  const proj = 'cc8d713a-967f-4cec-bdea-7148d64c8821';
+  assert.equal(
+    FlowProject.normalizeToProjectRootUrl(`https://flow.google.com/u/2/project/${proj}/character`),
+    `https://flow.google.com/u/2/project/${proj}`
+  );
+  assert.equal(
+    FlowProject.normalizeToProjectRootUrl(`https://flow.google.com/project/${proj}/edit/abc-123`),
+    `https://flow.google.com/project/${proj}`
+  );
+  assert.equal(
+    FlowProject.normalizeToProjectRootUrl(`https://flow.google.com/u/3/project/${proj}`),
+    `https://flow.google.com/u/3/project/${proj}`
+  );
 });
 
 test('buildProjectUrl formats the full Flow project URL and preserves user prefix', () => {

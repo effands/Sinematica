@@ -105,4 +105,85 @@ test('uploadMultipleImages creates File instances and dispatches composed paste 
   assert.equal(res[0].fileName, 'test_storyboard.png');
 });
 
+test('resolveTileVideoUrl resolves direct video tag src', async () => {
+  const fakeTile = {
+    querySelector: (sel) => {
+      if (sel === 'video') return { src: 'https://flow-content.google/video/scene1.mp4', duration: 10.0 };
+      return null;
+    },
+    getAttribute: (name) => (name === 'aria-label' ? 'Scene 1 Test' : null),
+    innerText: 'Scene 1 Test',
+  };
+
+  const executor = new FlowTaskExecutor();
+  const res = await executor.resolveTileVideoUrl(fakeTile);
+  assert.ok(res);
+  assert.equal(res.videoUrl, 'https://flow-content.google/video/scene1.mp4');
+  assert.equal(res.duration, 10.0);
+  assert.equal(res.label, 'Scene 1 Test');
+});
+
+test('harvestProjectVideos scans canvas and returns videos in chronological order', async () => {
+  const tile1 = {
+    tagName: 'FLOW-VIDEO-TILE',
+    innerText: 'play_arrow\nScene 2 newer',
+    getAttribute: (name) => (name === 'aria-label' ? 'Scene 2 newer' : null),
+    querySelector: (sel) => {
+      if (sel === 'video') return { src: 'https://flow-content.google/video/scene2.mp4', duration: 10.0 };
+      if (sel.includes('mat-icon') || sel.includes('play')) return { innerText: 'play_arrow' };
+      return null;
+    },
+    closest: () => null,
+  };
+  const tile2 = {
+    tagName: 'FLOW-VIDEO-TILE',
+    innerText: 'play_arrow\nScene 1 older',
+    getAttribute: (name) => (name === 'aria-label' ? 'Scene 1 older' : null),
+    querySelector: (sel) => {
+      if (sel === 'video') return { src: 'https://flow-content.google/video/scene1.mp4', duration: 10.0 };
+      if (sel.includes('mat-icon') || sel.includes('play')) return { innerText: 'play_arrow' };
+      return null;
+    },
+    closest: () => null,
+  };
+
+  globalThis.document = {
+    querySelectorAll: (sel) => {
+      if (sel.includes('flow-video-tile')) return [tile1, tile2];
+      if (sel.includes('button')) return [];
+      return [];
+    },
+    querySelector: () => null,
+  };
+  globalThis.window = {
+    location: { pathname: '/project/test-uuid' },
+  };
+
+  const executor = new FlowTaskExecutor();
+  const res = await executor.harvestProjectVideos();
+  assert.equal(res.length, 2);
+  // Chronological order: tile2 (older) first, then tile1 (newer)
+  assert.equal(res[0].scene_index, 1);
+  assert.equal(res[0].label, 'Scene 1 older');
+  assert.equal(res[0].video_url, 'https://flow-content.google/video/scene1.mp4');
+
+  assert.equal(res[1].scene_index, 2);
+  assert.equal(res[1].label, 'Scene 2 newer');
+  assert.equal(res[1].video_url, 'https://flow-content.google/video/scene2.mp4');
+});
+
+test('FlowTaskExecutor execute handles FLOW_HARVEST_PROJECT_VIDEOS task', async () => {
+  const executor = new FlowTaskExecutor();
+  executor.harvestProjectVideos = async () => [
+    { index: 0, scene_index: 1, label: 'Scene 1', video_url: 'https://flow-content.google/video/scene1.mp4', duration: 10 },
+    { index: 1, scene_index: 2, label: 'Scene 2', video_url: 'https://flow-content.google/video/scene2.mp4', duration: 10 },
+  ];
+
+  const result = await executor.execute({ action: 'FLOW_HARVEST_PROJECT_VIDEOS' });
+  assert.ok(result.success);
+  assert.equal(result.count, 2);
+  assert.equal(result.videos.length, 2);
+});
+
+
 

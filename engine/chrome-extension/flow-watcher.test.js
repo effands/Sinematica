@@ -9,8 +9,12 @@ test('FlowWatcher verifies Google Flow CDN hosts and excludes non-media URLs', (
   assert.equal(FlowWatcher.isTrustedMediaUrl('https://flow-content.google/asset.png'), true);
   assert.equal(FlowWatcher.isTrustedMediaUrl('https://lh3.googleusercontent.com/img=w500'), true);
   assert.equal(FlowWatcher.isTrustedMediaUrl('https://storage.googleapis.com/flow-bucket/v.mp4'), true);
+  assert.equal(FlowWatcher.isTrustedMediaUrl('blob:https://flow.google.com/123-abc'), true);
+  assert.equal(FlowWatcher.isTrustedMediaUrl('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), true);
+  assert.equal(FlowWatcher.isTrustedMediaUrl('https://ssl.gstatic.com/gb/images/ring/pr_32px_asknjuyerc.png'), false);
+  assert.equal(FlowWatcher.isTrustedMediaUrl('https://www.gstatic.com/images/branding/googlelogo/svg/googlelogo_clr_74x24px.svg'), false);
   assert.equal(FlowWatcher.isTrustedMediaUrl('https://malicious-site.com/image.png'), false);
-  assert.equal(FlowWatcher.isTrustedMediaUrl('http://flow-content.google/asset.png'), false);
+  assert.equal(FlowWatcher.isTrustedMediaUrl('http://malicious-site.com/asset.png'), false);
   assert.equal(FlowWatcher.isTrustedMediaUrl(''), false);
 });
 

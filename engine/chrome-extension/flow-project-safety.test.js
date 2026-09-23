@@ -8,7 +8,7 @@ test('ensureProject does not click home button or new-project button when alread
 
   const fakeDocument = {
     querySelector: (sel) => {
-      if (sel === '.ProseMirror') return null;
+      if (sel === '.ProseMirror') return {};
       if (sel.includes('home') || sel.includes('flow-logo')) {
         return {
           click: () => { homeClicked = true; },
@@ -42,6 +42,36 @@ test('ensureProject does not click home button or new-project button when alread
     assert.equal(res, true);
     assert.equal(homeClicked, false, 'ensureProject must NEVER click home button when in a project');
     assert.equal(newProjectClicked, false, 'ensureProject must NEVER click new-project button when in a project');
+  } finally {
+    globalThis.window = origWindow;
+    globalThis.document = origDoc;
+  }
+});
+
+test('ensureProject redirects from /character subpath back to root project composer', async () => {
+  let currentHref = 'https://flow.google.com/u/2/project/fc52263d-bdba-4979-92a6-60aa6b63a8e3/character';
+  let redirectedUrl = '';
+
+  const fakeDocument = {
+    querySelector: (sel) => (sel === '.ProseMirror' ? {} : null),
+    querySelectorAll: () => [],
+  };
+
+  const origWindow = globalThis.window;
+  const origDoc = globalThis.document;
+
+  globalThis.window = {
+    location: {
+      get href() { return currentHref; },
+      set href(val) { currentHref = val; redirectedUrl = val; }
+    }
+  };
+  globalThis.document = fakeDocument;
+
+  try {
+    const executor = new FlowTaskExecutor({});
+    await executor.ensureProject();
+    assert.equal(redirectedUrl, 'https://flow.google.com/u/2/project/fc52263d-bdba-4979-92a6-60aa6b63a8e3');
   } finally {
     globalThis.window = origWindow;
     globalThis.document = origDoc;

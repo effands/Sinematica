@@ -37,7 +37,10 @@
 
         const current = (editor.innerText || editor.textContent || '').trim();
         if (current !== text.trim()) {
-          editor.textContent = text;
+          const hasChips = typeof editor.querySelector === 'function' && !!editor.querySelector('flow-media-chip, flow-ingredient-chip, .chip, img, [data-atom]');
+          if (!hasChips) {
+            editor.textContent = text;
+          }
           if (typeof InputEvent !== 'undefined' && typeof editor.dispatchEvent === 'function') {
             editor.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: text }));
             editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));

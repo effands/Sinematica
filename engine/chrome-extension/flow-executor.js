@@ -89,10 +89,201 @@
     return typeof Blob !== 'undefined' ? new Blob(byteArrays, { type: contentType }) : { type: contentType };
   }
 
-  function ensureVisualAutomationElements() {
-    if (typeof document === 'undefined' || typeof document.getElementById !== 'function' || typeof document.createElement !== 'function') return;
-    let fakeCursor = document.getElementById('sinematica-fake-cursor');
-    if (!fakeCursor) {
+  const BLOCKED_EVENT_TYPES = [
+    'click',
+    'dblclick',
+    'mousedown',
+    'mouseup',
+    'pointerdown',
+    'pointerup',
+    'pointermove',
+    'contextmenu',
+    'keydown',
+    'keyup',
+    'keypress',
+    'wheel',
+    'touchstart',
+    'touchend',
+    'touchmove',
+    'selectstart',
+    'dragstart',
+  ];
+
+  function isFlowErrorCard(element) {
+    if (!element) return false;
+    const tagName = (element.tagName || '').toLowerCase();
+    if (tagName === 'flow-error-tile' || (element.classList && (element.classList.contains('error-tile') || element.classList.contains('flow-error-tile')))) {
+      return true;
+    }
+    if (element.querySelector && element.querySelector('flow-error-tile, .error-tile, [class*="error-tile"]')) {
+      return true;
+    }
+    const text = (element.innerText || element.textContent || '').toLowerCase();
+    return (
+      text.includes('gagal') ||
+      text.includes('gagal dibuat') ||
+      text.includes('maaf, video ini gagal') ||
+      text.includes('maaf, gambar ini gagal') ||
+      text.includes('tidak perlu menggunakan kredit') ||
+      text.includes('kebijakan') ||
+      text.includes('policy') ||
+      text.includes('melanggar') ||
+      text.includes('violate') ||
+      text.includes('berbahaya') ||
+      text.includes('harmful') ||
+      text.includes('coba perintah lain') ||
+      text.includes('try another prompt') ||
+      text.includes('tokoh berpengaruh') ||
+      text.includes('public figure') ||
+      text.includes('kesalahan pembuatan') ||
+      text.includes('failed to generate') ||
+      text.includes('generation failed') ||
+      text.includes('video failed') ||
+      text.includes('image failed') ||
+      text.includes('sorry, this video failed') ||
+      text.includes('sorry, this image failed') ||
+      text.includes('will not be charged') ||
+      text.includes('were not charged') ||
+      text.includes('not need to use credits') ||
+      text.includes('could not generate')
+    );
+  }
+
+  function findRetryButtonInCard(card) {
+    if (!card) return null;
+    return card.querySelector(
+      'button[aria-label*="coba lagi" i], button[aria-label*="retry" i], button[aria-label*="try again" i], button[aria-label*="refresh" i], button[aria-label*="ulang" i], button[title*="coba lagi" i], button[title*="retry" i], button[title*="try again" i]'
+    ) || Array.from(card.querySelectorAll('button')).find((b) => {
+      const text = (b.innerText || b.getAttribute('aria-label') || b.title || '').toLowerCase();
+      const matIconText = (b.querySelector('mat-icon, .mat-icon, i, span')?.innerText || '').toLowerCase();
+      return (
+        text.includes('retry') ||
+        text.includes('refresh') ||
+        text.includes('coba lagi') ||
+        text.includes('try again') ||
+        text.includes('ulang') ||
+        matIconText.includes('refresh') ||
+        matIconText.includes('replay') ||
+        matIconText.includes('retry') ||
+        matIconText.includes('redo') ||
+        matIconText.includes('cached') ||
+        matIconText.includes('autorenew') ||
+        matIconText.includes('sync') ||
+        matIconText.includes('restart_alt') ||
+        matIconText.includes('loop')
+      );
+    }) || Array.from(card.querySelectorAll('button')).find((b) => {
+      const txt = (b.innerText || b.getAttribute('aria-label') || b.title || '').toLowerCase();
+      const matIcon = (b.querySelector('mat-icon, .mat-icon, i, span')?.innerText || '').toLowerCase();
+      const isDelete = txt.includes('delete') || txt.includes('hapus') || txt.includes('trash') || matIcon.includes('delete') || matIcon.includes('trash');
+      const isFeedback = txt.includes('feedback') || txt.includes('masukan') || txt.includes('lapor') || matIcon.includes('feedback') || matIcon.includes('chat') || matIcon.includes('flag') || matIcon.includes('comment');
+      return !isDelete && !isFeedback;
+    }) || card.querySelector('button');
+  }
+
+  let isInteractionBlocked = false;
+  const activeBlockerListeners = [];
+
+  function isAllowInput() {
+    if (typeof document !== 'undefined' && document.documentElement && document.documentElement.dataset && document.documentElement.dataset.sinematicaAllowInput === 'true') {
+      return true;
+    }
+    if (typeof window !== 'undefined' && (window.__sinematicaAllowNativeInput || window.__sinematicaAllowInput)) {
+      return true;
+    }
+    if (typeof globalThis !== 'undefined' && (globalThis.__sinematicaAllowNativeInput || globalThis.__sinematicaAllowInput)) {
+      return true;
+    }
+    return false;
+  }
+
+  function setAllowInput(allow) {
+    if (typeof document !== 'undefined' && document.documentElement && document.documentElement.dataset) {
+      if (allow) {
+        document.documentElement.dataset.sinematicaAllowInput = 'true';
+      } else {
+        delete document.documentElement.dataset.sinematicaAllowInput;
+      }
+    }
+    if (typeof window !== 'undefined') {
+      window.__sinematicaAllowNativeInput = Boolean(allow);
+      window.__sinematicaAllowInput = Boolean(allow);
+    }
+    if (typeof globalThis !== 'undefined') {
+      globalThis.__sinematicaAllowNativeInput = Boolean(allow);
+      globalThis.__sinematicaAllowInput = Boolean(allow);
+    }
+    const blocker = typeof document !== 'undefined' && typeof document.getElementById === 'function'
+      ? document.getElementById('sinematica-interaction-blocker')
+      : null;
+    if (blocker && blocker.style) {
+      if (typeof blocker.style.setProperty === 'function') {
+        blocker.style.setProperty('pointer-events', allow ? 'none' : 'auto', 'important');
+      } else {
+        blocker.style.pointerEvents = allow ? 'none' : 'auto';
+      }
+    }
+  }
+
+  const BLOCKED_KEY_TYPES = ['keydown', 'keyup', 'keypress'];
+
+  function blockKeyListener(e) {
+    if (!isInteractionBlocked) return;
+    if (isAllowInput()) return;
+    if (e && (e.__sinematicaSynthetic || !e.isTrusted)) return;
+    try {
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+    } catch (_) {}
+    return false;
+  }
+
+  function blockUserInteraction() {
+    isInteractionBlocked = true;
+    if (typeof document === 'undefined') return;
+
+    let blocker = typeof document.getElementById === 'function' ? document.getElementById('sinematica-interaction-blocker') : null;
+    if (!blocker && typeof document.createElement === 'function') {
+      blocker = document.createElement('div');
+      blocker.id = 'sinematica-interaction-blocker';
+      blocker.style.cssText = [
+        'position: fixed',
+        'top: 0',
+        'left: 0',
+        'width: 100vw',
+        'height: 100vh',
+        'z-index: 2147483646',
+        'background: transparent',
+        'cursor: wait',
+        'user-select: none',
+        '-webkit-user-select: none',
+        'touch-action: none',
+        'pointer-events: auto',
+      ].join('; ');
+
+      const blockPointerEvent = (e) => {
+        if (isAllowInput()) return;
+        if (e && (e.__sinematicaSynthetic || !e.isTrusted)) return;
+        try {
+          e.stopPropagation();
+          e.preventDefault();
+        } catch (_) {}
+      };
+
+      const POINTER_BLOCK_TYPES = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'touchstart', 'touchend', 'touchmove', 'wheel'];
+      POINTER_BLOCK_TYPES.forEach((type) => {
+        try { blocker.addEventListener(type, blockPointerEvent, true); } catch (_) {}
+      });
+
+      const parent = document.body || document.documentElement;
+      if (parent && typeof parent.appendChild === 'function') {
+        parent.appendChild(blocker);
+      }
+    }
+
+    let fakeCursor = typeof document.getElementById === 'function' ? document.getElementById('sinematica-fake-cursor') : null;
+    if (!fakeCursor && typeof document.createElement === 'function') {
       fakeCursor = document.createElement('div');
       fakeCursor.id = 'sinematica-fake-cursor';
       fakeCursor.innerHTML = '<svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 2.5L22.5 10.5L14.5 13.5L11.5 21.5L5.5 2.5Z" fill="#0a84ff" stroke="white" stroke-width="2" stroke-linejoin="round"/></svg>';
@@ -130,36 +321,62 @@
         }
       `;
       fakeCursor.appendChild(style);
-      (document.body || document.documentElement).appendChild(fakeCursor);
+      const parent = document.body || document.documentElement;
+      if (parent && typeof parent.appendChild === 'function') {
+        parent.appendChild(fakeCursor);
+      }
     }
 
-    let blocker = document.getElementById('sinematica-interaction-blocker');
-    if (!blocker) {
-      blocker = document.createElement('div');
-      blocker.id = 'sinematica-interaction-blocker';
-      blocker.style.cssText = [
-        'position: fixed',
-        'top: 0',
-        'left: 0',
-        'width: 100vw',
-        'height: 100vh',
-        'z-index: 2147483646',
-        'background: transparent',
-        'cursor: not-allowed',
-      ].join('; ');
-      
-      const blockEvent = (e) => {
-        if (e.isTrusted) {
-          e.stopPropagation();
-          e.preventDefault();
+    if (activeBlockerListeners.length === 0) {
+      BLOCKED_KEY_TYPES.forEach((type) => {
+        if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+          try { window.addEventListener(type, blockKeyListener, { capture: true, passive: false }); } catch (_) {}
         }
-      };
-      
-      ['click', 'mousedown', 'mouseup', 'keydown', 'keyup', 'keypress', 'wheel', 'contextmenu', 'touchstart', 'touchend', 'touchmove'].forEach(type => {
-        blocker.addEventListener(type, blockEvent, true);
+        activeBlockerListeners.push(type);
       });
-      (document.body || document.documentElement).appendChild(blocker);
     }
+  }
+
+  function unblockUserInteraction() {
+    isInteractionBlocked = false;
+    setAllowInput(false);
+
+    if (activeBlockerListeners.length > 0) {
+      activeBlockerListeners.forEach((type) => {
+        if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+          try {
+            window.removeEventListener(type, blockKeyListener, { capture: true, passive: false });
+            window.removeEventListener(type, blockKeyListener, true);
+            window.removeEventListener(type, blockKeyListener);
+          } catch (_) {}
+        }
+      });
+      activeBlockerListeners.length = 0;
+    }
+
+    if (typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+      const blocker = document.getElementById('sinematica-interaction-blocker');
+      if (blocker) {
+        if (typeof blocker.remove === 'function') {
+          blocker.remove();
+        } else if (blocker.parentNode && typeof blocker.parentNode.removeChild === 'function') {
+          blocker.parentNode.removeChild(blocker);
+        }
+      }
+
+      const fakeCursor = document.getElementById('sinematica-fake-cursor');
+      if (fakeCursor) {
+        if (typeof fakeCursor.remove === 'function') {
+          fakeCursor.remove();
+        } else if (fakeCursor.parentNode && typeof fakeCursor.parentNode.removeChild === 'function') {
+          fakeCursor.parentNode.removeChild(fakeCursor);
+        }
+      }
+    }
+  }
+
+  function ensureVisualAutomationElements() {
+    blockUserInteraction();
   }
 
   async function animateFakeCursor(clientX, clientY, isClick = true) {
@@ -187,50 +404,80 @@
   async function simulateClick(element) {
     if (!element) return false;
     ensureVisualAutomationElements();
+    setAllowInput(true);
     try {
-      if (typeof element.scrollIntoView === 'function') {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-      }
-    } catch {}
-
-    const rect = typeof element.getBoundingClientRect === 'function'
-      ? element.getBoundingClientRect()
-      : { left: 0, top: 0, width: 20, height: 20 };
-    const clientX = Math.round((rect.left || 0) + (rect.width || 0) / 2);
-    const clientY = Math.round((rect.top || 0) + (rect.height || 0) / 2);
-
-    animateFakeCursor(clientX, clientY, true).catch(() => {});
-
-    let nativeClicked = false;
-    if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
       try {
-        const res = await new Promise((resolve) => {
-          chrome.runtime.sendMessage({ type: 'DISPATCH_NATIVE_CLICK', x: clientX, y: clientY }, (response) => {
-            if (chrome.runtime.lastError) resolve(null);
-            else resolve(response);
-          });
-        });
-        if (res && res.ok) {
-          nativeClicked = true;
+        if (typeof element.scrollIntoView === 'function') {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
         }
-      } catch (_) {}
-    }
+      } catch {}
 
-    if (!nativeClicked) {
-      if (typeof MouseEvent !== 'undefined' && typeof element.dispatchEvent === 'function') {
-        const mouseEventInit = {
+      const rect = typeof element.getBoundingClientRect === 'function'
+        ? element.getBoundingClientRect()
+        : { left: 0, top: 0, width: 20, height: 20 };
+      const clientX = Math.round((rect.left || 0) + (rect.width || 0) / 2);
+      const clientY = Math.round((rect.top || 0) + (rect.height || 0) / 2);
+
+      animateFakeCursor(clientX, clientY, true).catch(() => {});
+
+      if (typeof element.focus === 'function') {
+        try { element.focus(); } catch {}
+      }
+
+      const targets = [];
+      const innerTarget = typeof element.querySelector === 'function'
+        ? element.querySelector('.mat-mdc-button-touch-target, mat-icon, svg, button')
+        : null;
+      if (innerTarget && innerTarget !== element) {
+        targets.push(innerTarget);
+      }
+      targets.push(element);
+      if (element.parentElement && element.parentElement.tagName.toLowerCase().startsWith('flow-')) {
+        targets.push(element.parentElement);
+      }
+
+      for (const target of targets) {
+        const downInit = {
           bubbles: true,
           cancelable: true,
+          composed: true,
           view: typeof window !== 'undefined' ? window : null,
           clientX,
           clientY,
+          screenX: clientX,
+          screenY: clientY,
+          button: 0,
+          buttons: 1,
+          pressure: 0.5,
+          isPrimary: true,
+          pointerType: 'mouse',
+          detail: 1,
+          __sinematicaSynthetic: true,
         };
 
-        ['mouseenter', 'mouseover', 'mousedown', 'mouseup', 'click'].forEach((type) => {
-          try {
-            element.dispatchEvent(new MouseEvent(type, mouseEventInit));
-          } catch {}
-        });
+        const upInit = {
+          ...downInit,
+          buttons: 0,
+          pressure: 0,
+        };
+
+        if (typeof PointerEvent !== 'undefined') {
+          try { target.dispatchEvent(new PointerEvent('pointerover', upInit)); } catch {}
+          try { target.dispatchEvent(new PointerEvent('pointerenter', upInit)); } catch {}
+          try { target.dispatchEvent(new PointerEvent('pointerdown', downInit)); } catch {}
+        }
+        if (typeof MouseEvent !== 'undefined') {
+          try { target.dispatchEvent(new MouseEvent('mouseover', upInit)); } catch {}
+          try { target.dispatchEvent(new MouseEvent('mouseenter', upInit)); } catch {}
+          try { target.dispatchEvent(new MouseEvent('mousedown', downInit)); } catch {}
+        }
+        if (typeof PointerEvent !== 'undefined') {
+          try { target.dispatchEvent(new PointerEvent('pointerup', upInit)); } catch {}
+        }
+        if (typeof MouseEvent !== 'undefined') {
+          try { target.dispatchEvent(new MouseEvent('mouseup', upInit)); } catch {}
+          try { target.dispatchEvent(new MouseEvent('click', upInit)); } catch {}
+        }
       }
 
       if (typeof element.click === 'function') {
@@ -238,107 +485,145 @@
           element.click();
         } catch {}
       }
+
+      const form = typeof element.closest === 'function' ? element.closest('form') : null;
+      if (form && typeof form.requestSubmit === 'function') {
+        try { form.requestSubmit(element); } catch {}
+      }
+
+      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+        try {
+          await new Promise((resolve) => {
+            chrome.runtime.sendMessage({ type: 'DISPATCH_NATIVE_CLICK', x: clientX, y: clientY }, (response) => {
+              if (chrome.runtime.lastError) resolve(null);
+              else resolve(response);
+            });
+          });
+        } catch (_) {}
+      }
+
+      if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
+        await new Promise((r) => setTimeout(r, 60));
+      }
+      return true;
+    } finally {
+      setAllowInput(false);
     }
-    return true;
   }
 
   async function simulateInput(element, text) {
     if (!element) return false;
     ensureVisualAutomationElements();
+    setAllowInput(true);
+    try {
+      const rect = typeof element.getBoundingClientRect === 'function'
+        ? element.getBoundingClientRect()
+        : { left: 0, top: 0, width: 20, height: 20 };
+      const clientX = (rect.left || 0) + (rect.width || 0) / 2;
+      const clientY = (rect.top || 0) + (rect.height || 0) / 2;
 
-    const rect = typeof element.getBoundingClientRect === 'function'
-      ? element.getBoundingClientRect()
-      : { left: 0, top: 0, width: 20, height: 20 };
-    const clientX = (rect.left || 0) + (rect.width || 0) / 2;
-    const clientY = (rect.top || 0) + (rect.height || 0) / 2;
+      await animateFakeCursor(clientX, clientY, true);
 
-    await animateFakeCursor(clientX, clientY, true);
+      if (typeof element.focus === 'function') element.focus();
 
-    if (typeof element.focus === 'function') element.focus();
+      const isEditable = element.isContentEditable ||
+        (typeof element.getAttribute === 'function' && element.getAttribute('contenteditable') === 'true');
 
-    const isEditable = element.isContentEditable ||
-      (typeof element.getAttribute === 'function' && element.getAttribute('contenteditable') === 'true');
-
-    if (isEditable) {
-      try {
-        if (typeof document !== 'undefined' && typeof DataTransfer !== 'undefined') {
-          const dt = new DataTransfer();
-          dt.setData('text/plain', text);
-          element.dispatchEvent(new ClipboardEvent('paste', {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            clipboardData: dt,
-          }));
-        }
-      } catch (_) {}
-
-      try {
-        if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-          const selection = window.getSelection();
-          if (selection && typeof selection.selectAllChildren === 'function') {
-            selection.selectAllChildren(element);
-          } else if (selection) {
-            const range = document.createRange();
-            range.selectNodeContents(element);
-            selection.removeAllRanges();
-            selection.addRange(range);
-          }
-          if (typeof document.execCommand === 'function') {
-            document.execCommand('insertText', false, text);
-          }
-        }
-      } catch {}
-
-      if (!element.textContent || !element.textContent.includes(text.slice(0, 10))) {
-        element.innerText = text;
-        element.textContent = text;
-      }
-
-      if (typeof element.dispatchEvent === 'function') {
+      if (isEditable) {
         try {
-          if (typeof InputEvent !== 'undefined') {
-            element.dispatchEvent(new InputEvent('beforeinput', {
+          if (typeof document !== 'undefined' && typeof DataTransfer !== 'undefined') {
+            const dt = new DataTransfer();
+            dt.setData('text/plain', text);
+            element.dispatchEvent(new ClipboardEvent('paste', {
               bubbles: true,
               cancelable: true,
-              inputType: 'insertText',
-              data: text,
               composed: true,
-            }));
-            element.dispatchEvent(new InputEvent('input', {
-              bubbles: true,
-              cancelable: true,
-              inputType: 'insertText',
-              data: text,
-              composed: true,
+              clipboardData: dt,
+              __sinematicaSynthetic: true,
             }));
           }
-          if (typeof Event !== 'undefined') {
-            element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-            element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        } catch (_) {}
+
+        const hasChips = typeof element.querySelector === 'function' && !!element.querySelector('flow-media-chip, flow-ingredient-chip, [data-ingredient-id], .chip, img, [data-atom]');
+        if (!hasChips) {
+          try {
+            if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+              const selection = window.getSelection();
+              if (selection && typeof selection.selectAllChildren === 'function') {
+                selection.selectAllChildren(element);
+              } else if (selection) {
+                const range = document.createRange();
+                range.selectNodeContents(element);
+                selection.removeAllRanges();
+                selection.addRange(range);
+              }
+              if (typeof document.execCommand === 'function') {
+                document.execCommand('insertText', false, text);
+              }
+            }
+          } catch {}
+
+          if (!element.textContent || !element.textContent.includes(text.slice(0, 10))) {
+            element.innerText = text;
+            element.textContent = text;
           }
-          if (typeof KeyboardEvent !== 'undefined') {
+        } else {
+          try {
+            if (typeof document !== 'undefined' && typeof document.execCommand === 'function') {
+              document.execCommand('insertText', false, text);
+            }
+          } catch {}
+        }
+
+        if (typeof element.dispatchEvent === 'function') {
+          try {
+            if (typeof InputEvent !== 'undefined') {
+              element.dispatchEvent(new InputEvent('beforeinput', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertText',
+                data: text,
+                composed: true,
+                __sinematicaSynthetic: true,
+              }));
+              element.dispatchEvent(new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertText',
+                data: text,
+                composed: true,
+                __sinematicaSynthetic: true,
+              }));
+            }
+            if (typeof Event !== 'undefined') {
+              element.dispatchEvent(new Event('input', { bubbles: true, composed: true, __sinematicaSynthetic: true }));
+              element.dispatchEvent(new Event('change', { bubbles: true, composed: true, __sinematicaSynthetic: true }));
+            }
+            if (typeof KeyboardEvent !== 'undefined') {
+              try {
+                element.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', bubbles: true, composed: true, __sinematicaSynthetic: true }));
+                element.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', code: 'KeyA', bubbles: true, composed: true, __sinematicaSynthetic: true }));
+              } catch {}
+            }
+          } catch {
             try {
-              element.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', bubbles: true, composed: true }));
-              element.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', code: 'KeyA', bubbles: true, composed: true }));
+              element.dispatchEvent(new Event('input', { bubbles: true, composed: true, __sinematicaSynthetic: true }));
             } catch {}
           }
-        } catch {
+        }
+      } else {
+        element.value = text;
+        if (typeof element.dispatchEvent === 'function') {
           try {
-            element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+            element.dispatchEvent(new Event('input', { bubbles: true, __sinematicaSynthetic: true }));
+            element.dispatchEvent(new Event('change', { bubbles: true, __sinematicaSynthetic: true }));
           } catch {}
         }
       }
-    } else {
-      element.value = text;
-      if (typeof element.dispatchEvent === 'function') {
-        try {
-          element.dispatchEvent(new Event('input', { bubbles: true }));
-          element.dispatchEvent(new Event('change', { bubbles: true }));
-        } catch {}
-      }
+      return true;
+    } finally {
+      setAllowInput(false);
     }
-    return true;
   }
 
   class FlowTaskExecutor {
@@ -393,10 +678,29 @@
       throw new Error(`Waktu tunggu respon ${eventType} telah habis (${timeoutMs / 1000}s).`);
     }
 
-    async waitForImageGenerationDomDone(timeoutMs = 180000, sinceTimestamp = 0, maxRetries = 5) {
+    async waitForImageGenerationDomDone(timeoutMs = 180000, sinceTimestamp = 0, maxRetries = 2) {
       if (typeof document === 'undefined') return true;
       const startTime = Date.now();
       let retryCount = 0;
+
+      const isGeneratedMediaUrl = (url) => {
+        if (!url || typeof url !== 'string') return false;
+        if (url.startsWith('blob:') || url.startsWith('data:image/')) return true;
+        if (url.includes('avatar') || url.includes('logo') || url.includes('icon') || url.includes('svg') || url.includes('profile_photo') || url.includes('ring') || url.includes('/gb/')) {
+          return false;
+        }
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+          if (parsed.hostname.endsWith('.gstatic.com')) return false;
+          return parsed.hostname === 'flow-content.google'
+            || parsed.hostname === 'flow.google.com'
+            || parsed.hostname.endsWith('.googleusercontent.com')
+            || parsed.hostname === 'storage.googleapis.com';
+        } catch (_) {
+          return false;
+        }
+      };
 
       const tileSelector = 'flow-image-tile, flow-image-card, flow-media-tile, flow-grid-tile-container, flow-tile-container, flow-scene-tile, [class*="project-tile"], [data-tile-type="image"]';
 
@@ -407,7 +711,7 @@
         initialTiles.forEach((tile) => {
           const img = tile.querySelector('img');
           const src = img ? (img.currentSrc || img.src) : null;
-          if (src && !src.startsWith('data:')) {
+          if (src && isGeneratedMediaUrl(src)) {
             initialImageSrcs.add(src);
           }
         });
@@ -422,11 +726,12 @@
 
         const imageTiles = Array.from(document.querySelectorAll(tileSelector));
         const loadedTiles = imageTiles.filter((tile) => {
+          const isError = isFlowErrorCard(tile);
           const text = tile.innerText || tile.textContent || '';
-          const isError = !!tile.querySelector('flow-error-tile') || /failed/i.test(text) || /failed to generate/i.test(text) || /gagal/i.test(text);
           const isProgress = /\b\d{1,2}%\b/.test(text) || /generating/i.test(text);
           const img = tile.querySelector('img');
-          return !isError && !isProgress && img && (img.naturalWidth > 0 || img.complete) && img.src && !img.src.startsWith('data:');
+          const src = img ? (img.currentSrc || img.src) : null;
+          return !isError && !isProgress && img && (img.naturalWidth > 0 || img.complete) && src && isGeneratedMediaUrl(src);
         });
 
         // Newly generated tiles (not present initially)
@@ -455,14 +760,12 @@
         }
 
         const errorSelectors = [
-          '.error-tile', 'flow-error-tile', '.error-message', '.error-tile-content',
+          'flow-error-tile', '.error-tile', '.error-message', '.error-tile-content',
+          'flow-image-tile:has(flow-error-tile)', 'flow-grid-tile-container:has(flow-error-tile)', 'flow-tile-container:has(flow-error-tile)',
           'flow-image-tile:has([class*="error"])', 'flow-grid-tile-container:has([class*="error"])', 'flow-tile-container:has([class*="error"])',
         ];
         let errorTile = document.querySelector(errorSelectors.join(', ')) ||
-          imageTiles.find((t) => {
-            const text = (t.innerText || t.textContent || '').toLowerCase();
-            return text.includes('failed to generate') || text.includes('failed') || text.includes('gagal');
-          }) || null;
+          imageTiles.find((t) => isFlowErrorCard(t)) || null;
 
         const effectiveLoaded = newLoadedTiles.length > 0 ? newLoadedTiles : (initialImageSrcs.size === 0 ? loadedTiles : []);
 
@@ -488,22 +791,19 @@
         }
 
         if (!hasActiveGeneratingSpinner && !hasGeneratingProgressText && errorTile && effectiveLoaded.length === 0) {
-          const retryBtn = errorTile.querySelector(
-            'button[aria-label*="Retry" i], button[aria-label*="retry" i], button[aria-label*="coba lagi" i], button[aria-label*="refresh" i], button:has(mat-icon)'
-          ) || Array.from(errorTile.querySelectorAll('button')).find((b) => {
-            const text = (b.innerText || b.getAttribute('aria-label') || b.title || '').toLowerCase();
-            const matIconText = (b.querySelector('mat-icon')?.innerText || '').toLowerCase();
-            return text.includes('retry') || text.includes('refresh') || text.includes('coba lagi') ||
-                   matIconText.includes('refresh') || matIconText.includes('replay') || matIconText.includes('retry');
-          }) || errorTile.querySelector('button');
+          const retryBtn = findRetryButtonInCard(errorTile);
 
           if (retryBtn) {
             if (retryCount < maxRetries) {
               retryCount++;
-              this.notifyProgress('IMAGE_RETRY', `⚠️ Generasi gambar gagal di Google Flow. Menekan tombol Retry otomatis (Percobaan ${retryCount}/${maxRetries})...`);
+              this.notifyProgress('IMAGE_RETRY', `⚠️ Generasi gambar gagal di Google Flow ("Maaf, gambar gagal dibuat"). Menekan tombol Retry otomatis (Percobaan ${retryCount}/${maxRetries})...`);
+              if (typeof retryBtn.click === 'function') retryBtn.click();
               await simulateClick(retryBtn);
               await sleep(4000);
               continue;
+            } else if (!this._maxImageRetriesNotified) {
+              this._maxImageRetriesNotified = true;
+              this.notifyProgress('IMAGE_RETRY_MAX', `⛔ Telah mencapai batas maksimal ${maxRetries}x retry untuk gambar ini.`);
             }
           }
         }
@@ -518,15 +818,18 @@
       const url = typeof window !== 'undefined' ? window.location.href : '';
 
       if (typeof document !== 'undefined') {
-        // If already in project URL, stay in project and wait for composer
+        // If already in project URL, ensure we are on the project root composer (not /character, /edit, etc.)
         if (/\/project\/[0-9a-fA-F-]{36}/i.test(url)) {
-          // If on an asset edit subpath, navigate back to project root
-          if (/\/edit\//i.test(url)) {
-            const rootMatch = url.match(/(https:\/\/[^/]+(?:\/u\/\d+)?\/project\/[0-9a-fA-F-]{36})/i);
-            if (rootMatch && typeof window !== 'undefined') {
-              window.location.href = rootMatch[1];
-              await sleep(1500);
-            }
+          const rootMatch = url.match(/(https:\/\/[^/]+(?:\/u\/\d+)?\/project\/[0-9a-fA-F-]{36})/i);
+          if (rootMatch && typeof window !== 'undefined') {
+            try {
+              const currentParsed = new URL(url);
+              const rootParsed = new URL(rootMatch[1]);
+              if (currentParsed.pathname.replace(/\/$/, '') !== rootParsed.pathname.replace(/\/$/, '')) {
+                window.location.href = rootMatch[1];
+                await sleep(2000);
+              }
+            } catch (_) {}
           }
           await waitFor(() => {
             return document.querySelector('.ProseMirror') || document.querySelector(SELECTORS.PROMPT_INPUT) || document.querySelector('[contenteditable="true"]');
@@ -837,28 +1140,13 @@
       this.notifyProgress('TRIGGERING_GENERATION', 'Menjalankan pembuatan gambar awal...');
 
       if (typeof document !== 'undefined') {
+        if (typeof window !== 'undefined') {
+          window.__sinematicaAllowNativeInput = true;
+        }
+
         const promptInput = typeof document.querySelector === 'function'
           ? (document.querySelector('.ProseMirror') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea'))
           : null;
-
-        const findGenerateButton = () => {
-          const directBtn = document.querySelector('flow-generate-icon-button button, button[aria-label*="Start generation" i], button[type="submit"].generate-icon-button, button.generate-icon-button');
-          if (directBtn) return directBtn;
-
-          const queryAll = typeof document.querySelectorAll === 'function'
-            ? Array.from(document.querySelectorAll('flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="hasilkan" i], button'))
-            : [];
-
-          return queryAll.find((el) => {
-            const text = [
-              typeof el.getAttribute === 'function' ? el.getAttribute('aria-label') : '',
-              typeof el.getAttribute === 'function' ? el.getAttribute('title') : '',
-              el.innerText,
-              el.textContent
-            ].filter(Boolean).join(' ');
-            return (/arrow_forward|create|buat|hasilkan|generate|start generation/i.test(text) || (typeof el.closest === 'function' && el.closest('flow-generate-icon-button')));
-          });
-        };
 
         const isButtonDisabled = (btn) => {
           if (!btn) return true;
@@ -866,6 +1154,50 @@
             (typeof btn.hasAttribute === 'function' && btn.hasAttribute('disabled')) ||
             (typeof btn.getAttribute === 'function' && btn.getAttribute('aria-disabled') === 'true') ||
             (btn.classList && typeof btn.classList.contains === 'function' && btn.classList.contains('mat-mdc-button-disabled'));
+        };
+
+        const findGenerateButton = () => {
+          const directBtn = document.querySelector(
+            'flow-generate-icon-button button, button.generate-icon-button, button[aria-label*="Start generation" i], button[aria-label*="Mulai pembuatan" i], button[aria-label*="Start" i], button[aria-label*="Generate" i], button[aria-label*="Submit" i], button[aria-label*="Send" i], button[aria-label*="Mulai" i], button[aria-label*="Buat" i], button[aria-label*="Hasilkan" i]'
+          );
+          if (directBtn && !isButtonDisabled(directBtn)) return directBtn;
+
+          const promptBox = (typeof document.querySelector === 'function' ? document.querySelector('flow-prompt-box, .flow-prompt-box, [class*="prompt-box"]') : null) || document;
+          const queryAll = typeof promptBox.querySelectorAll === 'function'
+            ? Array.from(promptBox.querySelectorAll(
+                'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="buat" i], button[aria-label*="mulai" i], button[aria-label*="hasilkan" i], button[aria-label*="submit" i], button[aria-label*="send" i], button'
+              ))
+            : [];
+
+          const matched = queryAll.find((el) => {
+            if (!el || isButtonDisabled(el)) return false;
+            const text = [
+              typeof el.getAttribute === 'function' ? el.getAttribute('aria-label') : '',
+              typeof el.getAttribute === 'function' ? el.getAttribute('title') : '',
+              el.innerText,
+              el.textContent
+            ].filter(Boolean).join(' ').toLowerCase();
+            if (text.includes('character') || text.includes('karakter') || text.includes('actor') || text.includes('upload') || text.includes('unggah') || text.includes('sidebar') || text.includes('settings') || text.includes('pemicu setelan')) {
+              return false;
+            }
+            const inComposer = (typeof el.closest === 'function' && (!!el.closest('flow-prompt-box') || !!el.closest('flow-generate-icon-button')));
+            const isGenerateText = /arrow|start|generate|submit|send|buat|mulai|hasilkan/i.test(text) || !!(typeof el.querySelector === 'function' && el.querySelector('mat-icon, svg'));
+            return inComposer && isGenerateText;
+          });
+          if (matched) return matched;
+
+          // Fallback: Last non-sidebar, non-settings button inside prompt box
+          const promptButtons = typeof promptBox.querySelectorAll === 'function'
+            ? Array.from(promptBox.querySelectorAll('button')).filter((b) => {
+                if (!b || isButtonDisabled(b)) return false;
+                const txt = [b.getAttribute('aria-label') || '', b.innerText || '', b.textContent || ''].join(' ').toLowerCase();
+                return !txt.includes('character') && !txt.includes('karakter') && !txt.includes('upload') && !txt.includes('unggah') && !txt.includes('sidebar') && !txt.includes('settings') && !txt.includes('pemicu setelan');
+              })
+            : [];
+          if (promptButtons.length > 0) {
+            return promptButtons[promptButtons.length - 1];
+          }
+          return null;
         };
 
         let createBtn = null;
@@ -876,25 +1208,33 @@
 
           if (promptInput && typeof promptInput.dispatchEvent === 'function') {
             try {
+              promptInput.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: ' ', composed: true }));
               promptInput.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: ' ', composed: true }));
               promptInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', code: 'KeyA', bubbles: true, composed: true }));
+              promptInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              promptInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
             } catch {}
           }
           await sleep(250);
         }
 
+        if (!createBtn) {
+          createBtn = findGenerateButton();
+        }
+
         if (createBtn) {
           await simulateClick(createBtn);
-          if (typeof createBtn.click === 'function') {
-            try { createBtn.click(); } catch {}
-          }
-          if (promptInput) {
-            try {
-              const enterInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true, view: window };
-              promptInput.dispatchEvent(new KeyboardEvent('keydown', enterInit));
-              promptInput.dispatchEvent(new KeyboardEvent('keypress', enterInit));
-              promptInput.dispatchEvent(new KeyboardEvent('keyup', enterInit));
-            } catch {}
+          await sleep(600);
+
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const currentBtn = findGenerateButton();
+            const isGeneratingNow = typeof document !== 'undefined' && !!document.querySelector('mat-spinner, .generating-spinner, [role="progressbar"], [aria-label*="generating" i]');
+            if (!currentBtn || isButtonDisabled(currentBtn) || isGeneratingNow) {
+              break;
+            }
+            await sleep(400);
+            await simulateClick(currentBtn);
+            await sleep(500);
           }
         }
       }
@@ -957,7 +1297,7 @@
           promptButtons.find((btn) => {
             const text = (btn.innerText || btn.textContent || '').trim();
             const aria = typeof btn.getAttribute === 'function' ? (btn.getAttribute('aria-label') || '') : '';
-            return text.includes('·') || /720p|1080p|9:16|16:9|x1|x2|x4|banana|veo|video|image/i.test(text) ||
+            return text.includes('•') || text.includes('·') || /720p|1080p|9:16|16:9|3:4|4:3|1:1|x1|x2|x4|banana|veo|video|image|gambar/i.test(text) ||
                    aria.toLowerCase().includes('settings trigger') || aria.toLowerCase().includes('pemicu setelan') || aria.toLowerCase().includes('settings') || aria.toLowerCase().includes('tune');
           });
 
@@ -1096,7 +1436,7 @@
           promptButtons.find((btn) => {
             const text = (btn.innerText || btn.textContent || '').trim();
             const aria = typeof btn.getAttribute === 'function' ? (btn.getAttribute('aria-label') || '') : '';
-            return text.includes('·') || /720p|1080p|9:16|16:9|x1|x2|x4|banana|veo|video|image/i.test(text) ||
+            return text.includes('•') || text.includes('·') || /720p|1080p|9:16|16:9|3:4|4:3|1:1|x1|x2|x4|banana|veo|video|image|gambar/i.test(text) ||
                    aria.toLowerCase().includes('settings trigger') || aria.toLowerCase().includes('pemicu setelan') || aria.toLowerCase().includes('settings') || aria.toLowerCase().includes('tune');
           });
 
@@ -1252,10 +1592,25 @@
 
             const popover = document.querySelector('flow-add-menu-popover-content');
             if (popover) {
-              const firstAsset = popover.querySelector('button.asset-item');
-              if (firstAsset) {
-                if (typeof firstAsset.click === 'function') firstAsset.click();
-                else simulateClick(firstAsset);
+              const assetItems = typeof popover.querySelectorAll === 'function'
+                ? Array.from(popover.querySelectorAll('button.asset-item, .asset-item, [role="option"]'))
+                : (popover.querySelector('button.asset-item') ? [popover.querySelector('button.asset-item')] : []);
+
+              const validAsset = assetItems.find((el) => {
+                const text = [
+                  el.innerText || '',
+                  el.textContent || '',
+                  typeof el.getAttribute === 'function' ? (el.getAttribute('aria-label') || '') : ''
+                ].join(' ').toLowerCase();
+                if (text.includes('create character') || text.includes('buat karakter') || text.includes('new character') || text.includes('karakter baru') || text.includes('upload new') || text.includes('unggah')) {
+                  return false;
+                }
+                return (typeof el.querySelector === 'function' && !!el.querySelector('img')) || (el.classList && typeof el.classList.contains === 'function' && el.classList.contains('asset-item')) || assetItems.length === 1;
+              }) || assetItems[0];
+
+              if (validAsset) {
+                if (typeof validAsset.click === 'function') validAsset.click();
+                else simulateClick(validAsset);
                 await sleep(250);
               }
 
@@ -1365,28 +1720,13 @@
       this.notifyProgress('TRIGGERING_VIDEO', 'Menjalankan render video di Google Flow...');
 
       if (typeof document !== 'undefined') {
+        if (typeof window !== 'undefined') {
+          window.__sinematicaAllowNativeInput = true;
+        }
+
         const promptInput = typeof document.querySelector === 'function'
           ? (document.querySelector('.ProseMirror') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea'))
           : null;
-
-        const findGenerateButton = () => {
-          const directBtn = document.querySelector('flow-generate-icon-button button, button[aria-label*="Start generation" i], button[type="submit"].generate-icon-button, button.generate-icon-button');
-          if (directBtn) return directBtn;
-
-          const queryAll = typeof document.querySelectorAll === 'function'
-            ? Array.from(document.querySelectorAll('flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="hasilkan" i], button'))
-            : [];
-
-          return queryAll.find((el) => {
-            const text = [
-              typeof el.getAttribute === 'function' ? el.getAttribute('aria-label') : '',
-              typeof el.getAttribute === 'function' ? el.getAttribute('title') : '',
-              el.innerText,
-              el.textContent
-            ].filter(Boolean).join(' ');
-            return (/arrow_forward|create|buat|hasilkan|generate|start generation/i.test(text) || (typeof el.closest === 'function' && el.closest('flow-generate-icon-button')));
-          });
-        };
 
         const isButtonDisabled = (btn) => {
           if (!btn) return true;
@@ -1394,6 +1734,50 @@
             (typeof btn.hasAttribute === 'function' && btn.hasAttribute('disabled')) ||
             (typeof btn.getAttribute === 'function' && btn.getAttribute('aria-disabled') === 'true') ||
             (btn.classList && typeof btn.classList.contains === 'function' && btn.classList.contains('mat-mdc-button-disabled'));
+        };
+
+        const findGenerateButton = () => {
+          const directBtn = document.querySelector(
+            'flow-generate-icon-button button, button.generate-icon-button, button[aria-label*="Start generation" i], button[aria-label*="Mulai pembuatan" i], button[aria-label*="Start" i], button[aria-label*="Generate" i], button[aria-label*="Submit" i], button[aria-label*="Send" i], button[aria-label*="Mulai" i], button[aria-label*="Buat" i], button[aria-label*="Hasilkan" i]'
+          );
+          if (directBtn && !isButtonDisabled(directBtn)) return directBtn;
+
+          const promptBox = (typeof document.querySelector === 'function' ? document.querySelector('flow-prompt-box, .flow-prompt-box, [class*="prompt-box"]') : null) || document;
+          const queryAll = typeof promptBox.querySelectorAll === 'function'
+            ? Array.from(promptBox.querySelectorAll(
+                'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="buat" i], button[aria-label*="mulai" i], button[aria-label*="hasilkan" i], button[aria-label*="submit" i], button[aria-label*="send" i], button'
+              ))
+            : [];
+
+          const matched = queryAll.find((el) => {
+            if (!el || isButtonDisabled(el)) return false;
+            const text = [
+              typeof el.getAttribute === 'function' ? el.getAttribute('aria-label') : '',
+              typeof el.getAttribute === 'function' ? el.getAttribute('title') : '',
+              el.innerText,
+              el.textContent
+            ].filter(Boolean).join(' ').toLowerCase();
+            if (text.includes('character') || text.includes('karakter') || text.includes('actor') || text.includes('upload') || text.includes('unggah') || text.includes('sidebar') || text.includes('settings') || text.includes('pemicu setelan')) {
+              return false;
+            }
+            const inComposer = (typeof el.closest === 'function' && (!!el.closest('flow-prompt-box') || !!el.closest('flow-generate-icon-button')));
+            const isGenerateText = /arrow|start|generate|submit|send|buat|mulai|hasilkan/i.test(text) || !!(typeof el.querySelector === 'function' && el.querySelector('mat-icon, svg'));
+            return inComposer && isGenerateText;
+          });
+          if (matched) return matched;
+
+          // Fallback: Last non-sidebar, non-settings button inside prompt box
+          const promptButtons = typeof promptBox.querySelectorAll === 'function'
+            ? Array.from(promptBox.querySelectorAll('button')).filter((b) => {
+                if (!b || isButtonDisabled(b)) return false;
+                const txt = [b.getAttribute('aria-label') || '', b.innerText || '', b.textContent || ''].join(' ').toLowerCase();
+                return !txt.includes('character') && !txt.includes('karakter') && !txt.includes('upload') && !txt.includes('unggah') && !txt.includes('sidebar') && !txt.includes('settings') && !txt.includes('pemicu setelan');
+              })
+            : [];
+          if (promptButtons.length > 0) {
+            return promptButtons[promptButtons.length - 1];
+          }
+          return null;
         };
 
         let createBtn = null;
@@ -1404,25 +1788,33 @@
 
           if (promptInput && typeof promptInput.dispatchEvent === 'function') {
             try {
+              promptInput.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: ' ', composed: true }));
               promptInput.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: ' ', composed: true }));
               promptInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', code: 'KeyA', bubbles: true, composed: true }));
+              promptInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              promptInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
             } catch {}
           }
           await sleep(250);
         }
 
+        if (!createBtn) {
+          createBtn = findGenerateButton();
+        }
+
         if (createBtn) {
           await simulateClick(createBtn);
-          if (typeof createBtn.click === 'function') {
-            try { createBtn.click(); } catch {}
-          }
-          if (promptInput) {
-            try {
-              const enterInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true, view: window };
-              promptInput.dispatchEvent(new KeyboardEvent('keydown', enterInit));
-              promptInput.dispatchEvent(new KeyboardEvent('keypress', enterInit));
-              promptInput.dispatchEvent(new KeyboardEvent('keyup', enterInit));
-            } catch {}
+          await sleep(600);
+
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const currentBtn = findGenerateButton();
+            const isGeneratingNow = typeof document !== 'undefined' && !!document.querySelector('mat-spinner, .generating-spinner, [role="progressbar"], [aria-label*="generating" i], [aria-label*="rendering" i]');
+            if (!currentBtn || isButtonDisabled(currentBtn) || isGeneratingNow) {
+              break;
+            }
+            await sleep(400);
+            await simulateClick(currentBtn);
+            await sleep(500);
           }
         }
       }
@@ -1514,7 +1906,112 @@
       });
     }
 
-    async monitorVideoRender(timeoutMs = 600000, sinceTimestamp = 0, maxRetries = 5) {
+    async resolveTileVideoUrl(tile) {
+      if (!tile || typeof document === 'undefined') return null;
+
+      const directVid = tile.querySelector('video');
+      const directSrc = directVid?.currentSrc || directVid?.src;
+      if (directSrc && (directSrc.includes('flow-content') || directSrc.startsWith('http') || directSrc.startsWith('blob:'))) {
+        return {
+          videoUrl: directSrc,
+          duration: directVid.duration || 0,
+          label: tile.getAttribute?.('aria-label') || tile.innerText?.replace(/play_arrow|play_circle/g, '').trim() || '',
+        };
+      }
+
+      const clickTarget = tile.querySelector('.mobile-play-badge') ||
+        tile.querySelector('.thumbnail') ||
+        tile.querySelector('img') ||
+        tile;
+
+      try {
+        simulateClick(clickTarget);
+      } catch (_) {
+        clickTarget.click?.();
+      }
+
+      let videoUrl = null;
+      let duration = 0;
+
+      for (let attempt = 0; attempt < 25; attempt++) {
+        await sleep(200);
+        const vid = document.querySelector('video');
+        const vSrc = vid?.currentSrc || vid?.src;
+        if (vSrc && (vSrc.includes('flow-content') || vSrc.startsWith('http') || vSrc.startsWith('blob:'))) {
+          videoUrl = vSrc;
+          duration = vid.duration || 0;
+          break;
+        }
+      }
+
+      const backBtn = Array.from(document.querySelectorAll('button')).find((b) =>
+        (b.innerText && b.innerText.includes('arrow_back')) ||
+        (b.getAttribute('aria-label') && b.getAttribute('aria-label').toLowerCase().includes('back'))
+      );
+      if (backBtn) {
+        try {
+          simulateClick(backBtn);
+        } catch (_) {
+          backBtn.click?.();
+        }
+        await sleep(400);
+      }
+
+      const label = tile.getAttribute?.('aria-label') || tile.innerText?.replace(/play_arrow|play_circle/g, '').trim() || '';
+      return videoUrl ? { videoUrl, duration, label } : null;
+    }
+
+    async harvestProjectVideos() {
+      if (typeof document === 'undefined') return [];
+
+      const backBtn = Array.from(document.querySelectorAll('button')).find((b) =>
+        (b.innerText && b.innerText.includes('arrow_back')) ||
+        (b.getAttribute('aria-label') && b.getAttribute('aria-label').toLowerCase().includes('back'))
+      );
+      if (backBtn && typeof window !== 'undefined' && window.location && window.location.pathname && window.location.pathname.includes('/edit/')) {
+        backBtn.click?.();
+        await sleep(500);
+      }
+
+      const rawTiles = Array.from(document.querySelectorAll('flow-video-tile, flow-grid-tile-container')).filter((t) => {
+        const text = (t.innerText || t.textContent || '').toLowerCase();
+        const isError = !!t.querySelector('flow-error-tile') || /failed|policy/i.test(text);
+        const isProgress = /queued|\b\d{1,2}%\b|generating|rendering/i.test(text);
+        const hasPlay = !!t.querySelector('mat-icon, button[aria-label*="Play" i], .mobile-play-badge') || t.tagName?.toLowerCase() === 'flow-video-tile';
+        return hasPlay && !isError && !isProgress;
+      });
+
+      const uniqueTiles = [];
+      const seenElements = new Set();
+      for (const t of rawTiles) {
+        const container = t.closest('flow-grid-tile-container') || t;
+        if (!seenElements.has(container)) {
+          seenElements.add(container);
+          uniqueTiles.push(container);
+        }
+      }
+
+      const chronologicalTiles = [...uniqueTiles].reverse();
+      const results = [];
+
+      for (let i = 0; i < chronologicalTiles.length; i++) {
+        const tile = chronologicalTiles[i];
+        const resolved = await this.resolveTileVideoUrl(tile);
+        if (resolved && resolved.videoUrl) {
+          results.push({
+            index: i,
+            scene_index: i + 1,
+            label: resolved.label,
+            video_url: resolved.videoUrl,
+            duration: resolved.duration,
+          });
+        }
+      }
+
+      return results;
+    }
+
+    async monitorVideoRender(timeoutMs = 600000, sinceTimestamp = 0, maxRetries = 2) {
       this.notifyProgress('RENDERING_VIDEO', 'Sedang memproses render video di Google Flow...');
 
       const startTime = Date.now();
@@ -1524,38 +2021,32 @@
       while (Date.now() - startTime < timeoutMs) {
         if (typeof document !== 'undefined') {
           const allTiles = Array.from(document.querySelectorAll('flow-video-tile, flow-grid-tile-container, flow-tile-container, [class*="tile"], flow-error-tile, .error-tile'));
-          const failedTile = allTiles.find((t) => {
+          const isAnyTileRendering = allTiles.some((t) => {
+            if (isFlowErrorCard(t)) return false;
             const text = (t.innerText || t.textContent || '').toLowerCase();
-            return text.includes('failed to generate') || text.includes('video failed') || (text.includes('failed') && !text.includes('not been charged'));
-          }) || document.querySelector('.error-tile, flow-error-tile, .error-message');
+            const isProgress = /queued/i.test(text) || /\b\d{1,2}%\b/.test(text) || /rendering/i.test(text) || /generating/i.test(text);
+            const hasSpinner = !!t.querySelector('mat-spinner, .spinner, [role="progressbar"], svg.circular-loader');
+            return isProgress || hasSpinner;
+          });
+
+          const failedTile = allTiles.find((t) => isFlowErrorCard(t)) ||
+            document.querySelector('flow-error-tile, .error-tile, .error-message');
 
           if (failedTile) {
-            const retryBtn = failedTile.querySelector(
-              'button[aria-label*="Retry" i], button[aria-label*="retry" i], button[aria-label*="coba lagi" i], button[aria-label*="refresh" i], button:has(mat-icon)'
-            ) || Array.from(failedTile.querySelectorAll('button')).find((b) => {
-              const text = (b.innerText || b.getAttribute('aria-label') || b.title || '').toLowerCase();
-              const matIconText = (b.querySelector('mat-icon')?.innerText || '').toLowerCase();
-              return (
-                text.includes('retry') ||
-                text.includes('refresh') ||
-                text.includes('coba lagi') ||
-                matIconText.includes('refresh') ||
-                matIconText.includes('replay') ||
-                matIconText.includes('retry')
-              );
-            }) || failedTile.querySelector('button');
+            const retryBtn = findRetryButtonInCard(failedTile);
+            const cardRetriedCount = Number(failedTile.dataset?.retriedCount || 0);
 
-            if (retryBtn) {
-              if (videoRetryCount < maxRetries) {
-                videoRetryCount++;
-                this.notifyProgress(
-                  'VIDEO_RETRY',
-                  `⚠️ Render video gagal di Google Flow. Menekan tombol Retry otomatis (Percobaan ${videoRetryCount}/${maxRetries})...`
-                );
-                simulateClick(retryBtn);
-                await sleep(4000);
-                continue;
-              }
+            if (retryBtn && videoRetryCount < maxRetries && cardRetriedCount < maxRetries) {
+              videoRetryCount++;
+              if (failedTile.dataset) failedTile.dataset.retriedCount = String(cardRetriedCount + 1);
+              this.notifyProgress(
+                'VIDEO_RETRY',
+                `⚠️ Render video ditolak/gagal di Google Flow ("Gagal / Kebijakan"). Menekan tombol Retry otomatis (Percobaan ${videoRetryCount}/${maxRetries})...`
+              );
+              setAllowInput(true);
+              await simulateClick(retryBtn);
+              await sleep(4000);
+              continue;
             }
           }
         }
@@ -1567,35 +2058,37 @@
 
         if (typeof document !== 'undefined') {
           const videoTiles = Array.from(document.querySelectorAll('flow-video-tile, flow-grid-tile-container')).filter((t) => {
-            const text = t.innerText || '';
-            const isError = !!t.querySelector('flow-error-tile') || /failed/i.test(text) || /failed to generate/i.test(text);
+            const isError = isFlowErrorCard(t);
+            const text = (t.innerText || t.textContent || '').toLowerCase();
             const isProgress = /queued/i.test(text) || /\b\d{1,2}%\b/.test(text) || /rendering/i.test(text);
-            const vid = t.querySelector('video');
-            const hasValidSrc = vid && vid.src && !vid.src.startsWith('data:') && (vid.readyState >= 2 || vid.duration > 0 || vid.src.includes('flow-content'));
-            return !isError && !isProgress && hasValidSrc;
+            const hasPlay = !!t.querySelector('mat-icon, button[aria-label*="Play" i], .mobile-play-badge') || t.tagName?.toLowerCase() === 'flow-video-tile';
+            return !isError && !isProgress && hasPlay;
           });
 
           if (videoTiles.length > 0) {
-            const finishedTile = videoTiles[0];
-            const finishedVid = finishedTile.querySelector('video');
-            const vUrl = finishedVid ? finishedVid.src : null;
-            if (vUrl && (!sinceTimestamp || !this._seenVideoUrls || !this._seenVideoUrls.has(vUrl))) {
-              if (!this._seenVideoUrls) this._seenVideoUrls = new Set();
-              this._seenVideoUrls.add(vUrl);
-              const completedVideo = {
-                id: `vid_${Date.now()}`,
-                url: vUrl,
-                downloadUrl: vUrl,
-              };
-              this.notifyProgress('VIDEO_READY', 'Video affiliator selesai dirender dan siap diunduh!', {
-                video: completedVideo,
-                allVideos: [completedVideo],
-              });
-              return {
-                video: completedVideo,
-                videos: [completedVideo],
-                event: null,
-              };
+            for (const tile of videoTiles) {
+              const resolved = await this.resolveTileVideoUrl(tile);
+              const vUrl = resolved?.videoUrl;
+              if (vUrl && (!this._seenVideoUrls || !this._seenVideoUrls.has(vUrl))) {
+                if (!this._seenVideoUrls) this._seenVideoUrls = new Set();
+                this._seenVideoUrls.add(vUrl);
+                const completedVideo = {
+                  id: `vid_${Date.now()}`,
+                  url: vUrl,
+                  downloadUrl: vUrl,
+                  duration: resolved?.duration || 0,
+                  label: resolved?.label || '',
+                };
+                this.notifyProgress('VIDEO_READY', 'Video selesai dirender di Google Flow!', {
+                  video: completedVideo,
+                  allVideos: [completedVideo],
+                });
+                return {
+                  video: completedVideo,
+                  videos: [completedVideo],
+                  event: null,
+                };
+              }
             }
           }
         }
@@ -1624,6 +2117,15 @@
       }
 
       if (!primaryVideoUrl && videos.length === 0) {
+        if (typeof document !== 'undefined') {
+          const allTiles = Array.from(document.querySelectorAll('flow-video-tile, flow-grid-tile-container, flow-tile-container, [class*="tile"], flow-error-tile, .error-tile'));
+          const failedTile = allTiles.find((t) => isFlowErrorCard(t)) ||
+            document.querySelector('flow-error-tile, .error-tile, .error-message');
+          if (failedTile) {
+            const errText = (failedTile.innerText || failedTile.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 150);
+            throw new Error(`FLOW_GENERATION_FAILED_AFTER_RETRIES: Render video ditolak atau gagal di Google Flow: ${errText}`);
+          }
+        }
         throw new Error('Video selesai dirender namun URL unduhan tidak ditemukan.');
       }
 
@@ -1688,16 +2190,17 @@
         await sleep(300);
       }
 
+      await this.fillPrompt(motionPrompt);
+      await sleep(300);
+
       if (currentStartMedia) {
         if (typeof currentStartMedia === 'object' && currentStartMedia.base64Data) {
           await this.attachFrameToStartSlot(currentStartMedia, 30000);
         } else if (typeof currentStartMedia === 'string') {
           await this.attachGeneratedImageToPrompt({ mediaId: currentStartMedia, id: currentStartMedia });
         }
+        await sleep(300);
       }
-
-      await this.fillPrompt(motionPrompt);
-      await sleep(300);
 
       await this.triggerVideoRender(motionPrompt);
 
@@ -1710,6 +2213,7 @@
       this.isCancelled = true;
       this.isRunning = false;
       this.currentTaskId = null;
+      this.unblockUserInteraction();
     }
 
     async execute(taskPayload) {
@@ -1718,8 +2222,20 @@
       this.isRunning = true;
       this.isCancelled = false;
       this.interceptedEvents = [];
+      this.blockUserInteraction();
 
       try {
+        if (taskPayload.action === 'FLOW_HARVEST_PROJECT_VIDEOS' || taskPayload.action === 'HARVEST_PROJECT_VIDEOS' || taskPayload.kind === 'harvest_videos') {
+          this.notifyProgress('HARVESTING_VIDEOS', 'Mengumpulkan seluruh video yang telah dirender di kanvas Google Flow...');
+          const harvested = await this.harvestProjectVideos();
+          this.notifyProgress('HARVEST_COMPLETE', `Berhasil mengumpulkan ${harvested.length} video dari Google Flow.`, { count: harvested.length });
+          return {
+            success: true,
+            videos: harvested,
+            count: harvested.length,
+          };
+        }
+
         this.notifyProgress('INIT', 'Menyiapkan sesi Google Flow...');
         if (this.isCancelled) throw new Error('Task aborted');
 
@@ -1886,10 +2402,14 @@
         this.onError({ taskId: this.currentTaskId, error: friendlyAdvice, rawError: rawMsg });
         throw new Error(friendlyAdvice);
       } finally {
+        this.unblockUserInteraction();
         this.isRunning = false;
       }
     }
   }
+
+  FlowTaskExecutor.prototype.blockUserInteraction = blockUserInteraction;
+  FlowTaskExecutor.prototype.unblockUserInteraction = unblockUserInteraction;
 
   const exportObj = {
     FlowTaskExecutor,
@@ -1897,7 +2417,20 @@
     simulateClick,
     simulateInput,
     b64toBlob,
+    isFlowErrorCard,
+    findRetryButtonInCard,
+    blockUserInteraction,
+    unblockUserInteraction,
   };
+
+  if (typeof window !== 'undefined') {
+    window.__sinematicaBlock = blockUserInteraction;
+    window.__sinematicaUnblock = unblockUserInteraction;
+  }
+  if (typeof globalThis !== 'undefined') {
+    globalThis.__sinematicaBlock = blockUserInteraction;
+    globalThis.__sinematicaUnblock = unblockUserInteraction;
+  }
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = exportObj;

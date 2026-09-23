@@ -54,6 +54,26 @@
       }
     },
 
+    isProjectRootUrl(url) {
+      if (!url || typeof url !== 'string') return false;
+      try {
+        const parsed = new URL(url);
+        if (parsed.hostname !== 'flow.google.com') return false;
+        const normalizedPath = parsed.pathname.replace(/^\/u\/\d+/, '').replace(/\/$/, '');
+        return /^\/project\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalizedPath);
+      } catch (_) {
+        return false;
+      }
+    },
+
+    normalizeToProjectRootUrl(url) {
+      if (!url || typeof url !== 'string') return null;
+      const projectId = this.detectProjectIdFromUrl(url);
+      if (!projectId) return null;
+      const userPrefix = this.extractUserPrefix(url);
+      return this.buildProjectUrl(projectId, userPrefix);
+    },
+
     buildProjectUrl(projectId, userPrefix = '') {
       let prefix = '';
       if (userPrefix) {

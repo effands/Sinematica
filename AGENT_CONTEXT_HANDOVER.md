@@ -137,12 +137,34 @@ node --test engine/chrome-extension/*.test.js
 
 ---
 
-## 7. Status Terakhir Proyek & Siap Lanjut
+## 7. Mekanisme Dual-Card, Deduplikasi Video, dan Ketahanan Ekstensi (Terbaru 23 Sep 2026)
 
-- **Git Commit Terakhir**: `0167289` (*fix: sanitize safety policy filters for biological/medical terms and streamline final video prompt*).
-- **Semua Unit Test**: `62 Node.js tests passed`, `286 Pytest tests passed` (100% Green).
-- **Status Dashboard**: Aktif di `http://127.0.0.1:8888`.
+1. **Efisiensi Token & Screenshot**:
+   - Dilarang mengambil tangkapan layar uncompressed berukuran besar karena dapat menghabiskan limit context window (200G tokens).
+   - Jika tangkapan layar diperlukan, wajib dikompresi di bawah 100 KB. Selalu prioritaskan evaluasi DOM terstruktur melalui `bsk evaluate` / `bsk observe`.
+2. **Resiliensi Dual-Card Google Flow**:
+   - Satu kali klik submit prompt video di Google Flow menghasilkan **2 kartu video** secara bersamaan.
+   - Sering kali salah satu kartu gagal (error tile), sedangkan kartu pasangannya (*sibling tile*) sedang merender (18%..50%..90%).
+   - **Aturan Mutlak**: Ekstensi **DILARANG MEMBATALKAN DINI** (*no early abort*) saat mendeteksi kartu kendala. Tombol *Retry* ditekan otomatis (maksimal 2x), sementara proses polling terus berjalan memantau kartu video hingga batas waktu render selesai.
+3. **Deduplikasi Video Multi-Scene**:
+   - Untuk mencegah Scene 2 mengklaim video yang sama dengan Scene 1, URL video yang berhasil diklaim dicatat ke dalam `claimed_urls` di backend (`backend/jobs_executor.py`) dan `_seenVideoUrls` di ekstensi.
+   - Rekonsiliasi kanvas Google Flow (`harvest_project_videos`) memiliki timeout 90 detik dan hanya memilih video kanvas yang belum diklaim (`available_unclaimed`).
+4. **User Interaction Blocker & Synthetic Bypass**:
+   - Saat ekstensi bekerja, layar ditutup oleh `#sinematica-interaction-blocker` untuk mencegah klik manual yang tidak disengaja.
+   - Ekstensi menggunakan `window.__sinematicaAllowInput = true` dan event sintetis terpadu agar otomasi tetap berjalan lancar.
+   - Ketika proses selesai atau terjadi error, blocker selalu dibersihkan pada blok `finally`.
+5. **Automated End-to-End Pipeline Runner**:
+   - Skrip `run_e2e_pipeline.bat` / `python run_e2e_pipeline.py --scenes 2 --duration 10` mengotomatisasi seluruh alur dari health check backend, konsep AI, pembuatan storyboard, eksekusi karakter & video di Flow, hingga verifikasi berkas fisik output.
+
+---
+
+## 8. Status Terakhir Proyek & Siap Lanjut
+
+- **Spesifikasi Lengkap**: `docs/superpowers/specs/2026-09-23-sinematica-chrome-extension-master-architecture.md`
+- **Rencana & Review Implementasi**: `docs/superpowers/plans/2026-09-23-end-to-end-pipeline-resilience-and-video-deduplication.md`
+- **Semua Unit Test Ekstensi**: `node --test engine/chrome-extension/*.test.js` (100% Green).
+- **Status Server**: Aktif di `http://127.0.0.1:8888`.
 - **Ekstensi Chrome**: Siap di-load dari folder `engine/chrome-extension`.
-- **Branch**: `main` (sinkron dengan `origin/main`).
+- **Branch**: `main`.
 
 Semua memori, aturan, riwayat pengujian, dan arsitektur telah tercatat rapi di file ini untuk digunakan oleh agen AI selanjutnya. 🎬🚀

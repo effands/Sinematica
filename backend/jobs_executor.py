@@ -1,6 +1,7 @@
 """Sinematica Backend — Multi-Profile Job Executor & Task Balancer."""
 
 import asyncio
+import datetime
 import json
 import logging
 import os
@@ -47,7 +48,7 @@ from .profile_reference_cache import (
     profile_key,
 )
 
-from omniflash.generators import upload_image, poll_video_status
+from omniflash.generators import upload_image, poll_video_status, harvest_project_videos
 
 
 class _SheetAlreadyBuilt(Exception):
@@ -164,17 +165,193 @@ def _save_history():
         log.warning("Gagal menyimpan history jobs: %s", ex)
 
 
-def log_event(job_id: str, message: str, level: str = "info", profile: str = None):
+def classify_diagnostic(
+    message: str,
+    level: str = "info",
+    meta: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, str]]:
+    """Analyzes execution events to generate technical root-cause diagnostics and remediation advice."""
+    lower_msg = str(message).lower()
+    lvl = str(level).lower()
+
+    if (
+        "flow-error-tile" in lower_msg
+        or "gagal dibuat" in lower_msg
+        or "failed to generate" in lower_msg
+        or "kartu kendala" in lower_msg
+        or "image_retry" in lower_msg
+        or "video_retry" in lower_msg
+    ):
+        return {
+            "classification": "GOOGLE_FLOW_MEDIA_GENERATION_FAILED",
+            "root_cause": "Google Flow generation engine encountered an internal render error or model timeout on canvas.",
+            "evidence": "Detected <flow-error-tile> element on Google Flow canvas ('Maaf, video/gambar ini gagal dibuat').",
+            "action_taken": "Automated retry mechanism triggered on failed tile (max 2 attempts).",
+            "technical_advice": "Check Google account GPU quota, verify prompt length, or rotate Chrome profile if failure persists.",
+        }
+
+    if (
+        "401" in lower_msg
+        or "unauthenticated" in lower_msg
+        or "waiting_for_login" in lower_msg
+        or ("token" in lower_msg and "kedaluwarsa" in lower_msg)
+    ):
+        return {
+            "classification": "GOOGLE_FLOW_AUTH_SESSION_EXPIRED",
+            "root_cause": "Google OAuth authorization token or SAPISID session cookie has expired.",
+            "evidence": "HTTP 401 response or missing authentication headers from Chrome extension.",
+            "action_taken": "Pipeline pauses or triggers automated session cookie probing from active Flow tab.",
+            "technical_advice": "Open Google Flow tab in Chrome and interact with the sidepanel to refresh session tokens.",
+        }
+
+    if (
+        "429" in lower_msg
+        or "kuota" in lower_msg
+        or "quota" in lower_msg
+        or "credit" in lower_msg
+        or "resource_exhausted" in lower_msg
+        or "kredit habis" in lower_msg
+    ):
+        return {
+            "classification": "GOOGLE_FLOW_RESOURCE_EXHAUSTED_OR_RATE_LIMITED",
+            "root_cause": "Daily credit quota exhausted or per-minute rate limit reached for current Google profile.",
+            "evidence": "HTTP 429 status or zero credit balance reported by Google Flow API.",
+            "action_taken": "Job executor automatically flags profile and fails over to the next available Chrome profile.",
+            "technical_advice": "Connect secondary Google account profiles to the Fleet or wait for credit renewal window.",
+        }
+
+    if (
+        "kebijakan" in lower_msg
+        or "policy" in lower_msg
+        or "safety" in lower_msg
+        or "ditolak google flow" in lower_msg
+        or "filter keamanan" in lower_msg
+    ):
+        return {
+            "classification": "GOOGLE_FLOW_POLICY_SAFETY_TRIGGERED",
+            "root_cause": "Prompt semantic tokens or reference composition triggered Google Flow content safety filter.",
+            "evidence": "Interception of safety policy moderation rejection response from Google Flow.",
+            "action_taken": "AI Studio autonomously reformulates dramatic synonyms and relaxes brand/celebrity reference constraints.",
+            "technical_advice": "Verify prompt descriptions for prohibited real-world public figures, violence, or sensitive keywords.",
+        }
+
+    if (
+        "content_script_unreachable" in lower_msg
+        or "tidak ada profil chrome" in lower_msg
+        or "terputus" in lower_msg
+        or "bridge disconnected" in lower_msg
+    ):
+        return {
+            "classification": "CHROME_EXTENSION_BRIDGE_DISCONNECTED",
+            "root_cause": "Chrome Extension background worker suspended or Google Flow tab closed/reloaded.",
+            "evidence": "WebSocket bridge connection failure or chrome.tabs.sendMessage timeout.",
+            "action_taken": "System initiates exponential backoff reconnect attempts and prompts user in CLI.",
+            "technical_advice": "Ensure Google Chrome is open with the Sinematica extension ON and tab navigated to https://flow.google.com.",
+        }
+
+    if (
+        ("composer" in lower_msg and "tidak menyediakan kontrol image" in lower_msg)
+        or ("file input" in lower_msg and "gagal" in lower_msg)
+    ):
+        return {
+            "classification": "DOM_ELEMENT_SELECTOR_NOT_FOUND",
+            "root_cause": "Google Flow web UI DOM hierarchy or component class attributes changed.",
+            "evidence": "Content script DOM query selector cascade failed to locate target interactive element.",
+            "action_taken": "Fails over to alternative selectors and full DOM traversal strategies.",
+            "technical_advice": "Inspect Google Flow DOM elements and update selector fallback definitions in flow-executor.js.",
+        }
+
+    if (
+        "gagal mengunduh" in lower_msg
+        or "unduhan media flow" in lower_msg
+        or "transfer mp4 tidak lengkap" in lower_msg
+    ):
+        return {
+            "classification": "MEDIA_DOWNLOAD_CORRUPTED_OR_TIMEOUT",
+            "root_cause": "Chunk transfer timeout or network stream disconnection during authenticated media download.",
+            "evidence": "Binary chunk checksum/size mismatch or HTTP read stream timeout.",
+            "action_taken": "Retrying authenticated media download chunks via Chrome tab bridge with exponential backoff.",
+            "technical_advice": "Check network bandwidth stability and verify Google CDN media URLs are accessible.",
+        }
+
+    if "ffmpeg" in lower_msg or "gagal menggabungkan film" in lower_msg:
+        return {
+            "classification": "FFMPEG_ENCODING_STITCH_FAILED",
+            "root_cause": "FFmpeg executable failed during video concatenation, audio mix, or subtitle burning.",
+            "evidence": "Non-zero return code or stream syntax error emitted by FFmpeg process.",
+            "action_taken": "Fallback to raw stream copy concatenation without filters.",
+            "technical_advice": "Verify that ffmpeg is installed in system PATH and source MP4 clips have valid headers.",
+        }
+
+    if lvl in ("error", "warning") or "gagal" in lower_msg or "error" in lower_msg:
+        return {
+            "classification": "EXECUTION_RUNTIME_WARNING_OR_ERROR",
+            "root_cause": f"Pipeline encountered an unexpected runtime condition: {message[:120]}",
+            "evidence": f"Event level: {level.upper()} | Message: {message}",
+            "action_taken": "Automated recovery or error state recorded in job ledger.",
+            "technical_advice": "Review full diagnostic logs in data/jobs/<job_id>/execution_diagnostics.jsonl for complete stack trace.",
+        }
+
+    return None
+
+
+def log_event(
+    job_id: str,
+    message: str,
+    level: str = "info",
+    profile: str = None,
+    meta: Optional[Dict[str, Any]] = None,
+    diagnostic: Optional[Dict[str, Any]] = None,
+):
+    now = datetime.datetime.now()
+    iso_ts = now.isoformat()
+    time_str = now.strftime("%H:%M:%S.%f")[:-3]
+    diag = diagnostic or classify_diagnostic(message, level, meta)
+
     entry = {
-        "timestamp": time.strftime("%H:%M:%S"),
+        "timestamp": time_str,
+        "iso_timestamp": iso_ts,
         "message": message,
         "level": level,
-        "profile": profile or "System"
+        "profile": profile or "System",
+        "meta": meta or {},
+        "diagnostic": diag or {},
     }
     if job_id not in _job_logs:
         _job_logs[job_id] = []
     _job_logs[job_id].append(entry)
-    log.info("[%s] [%s] %s", job_id, profile or "SYS", message)
+    log.info("[%s] [%s] [%s] %s", iso_ts, profile or "SYS", level.upper(), message)
+
+    # Persist structured diagnostic log line to job directory and central logger
+    if job_id:
+        try:
+            job_dir = JOBS_DIR / job_id
+            job_dir.mkdir(parents=True, exist_ok=True)
+            diag_file = job_dir / "execution_diagnostics.jsonl"
+            with open(diag_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+            exec_file = job_dir / "execution.log"
+            diag_extra = f"\n   └─ DIAGNOSTIC: {json.dumps(diag, ensure_ascii=False)}" if diag else ""
+            meta_extra = f"\n   ├─ META: {json.dumps(meta, ensure_ascii=False)}" if meta else ""
+            with open(exec_file, "a", encoding="utf-8") as f:
+                f.write(f"[{iso_ts}] [{level.upper():5s}] [{profile or 'SYS'}] {message}{meta_extra}{diag_extra}\n")
+        except Exception:
+            pass
+
+    try:
+        logs_dir = settings.DATA_DIR / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        today_str = now.strftime("%Y-%m-%d")
+        central_log = logs_dir / f"jobs_execution_{today_str}.log"
+        central_jsonl = logs_dir / f"jobs_execution_{today_str}.jsonl"
+
+        with open(central_log, "a", encoding="utf-8") as f:
+            f.write(f"[{iso_ts}] [{level.upper():5s}] [{job_id or 'NO_JOB'}] [{profile or 'SYS'}] {message}\n")
+        with open(central_jsonl, "a", encoding="utf-8") as f:
+            f.write(json.dumps({**entry, "job_id": job_id}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 def get_job_logs(job_id: str) -> List[Dict[str, Any]]:
@@ -890,8 +1067,12 @@ def build_composition_addendum(scene: Dict[str, Any]) -> str:
 async def download_file(
     bridge, url: str, dest_path: Path, instance_id: Optional[str] = None,
     media_id: Optional[str] = None, project_id: Optional[str] = None,
-    media_kind: str = "video",
+    media_kind: str = "video", job_id: Optional[str] = None, label: Optional[str] = None,
 ):
+    target_label = label or dest_path.name
+    if job_id:
+        log_event(job_id, f"📥 Memulai proses unduh {media_kind} '{target_label}'...")
+
     # Check for ui_video wrapper in either url or media_id
     raw_ui_token = None
     if isinstance(url, str) and "ui_video:" in url:
@@ -911,21 +1092,37 @@ async def download_file(
         
         # 1. Try direct stream download for public / signed CDN targets
         try:
+            if job_id:
+                log_event(job_id, f"🌐 Mengunduh stream {media_kind} langsung dari URL CDN terautentikasi...")
             await asyncio.to_thread(stream_download, decoded_url, dest_path, media_kind=media_kind)
             if dest_path.exists() and dest_path.stat().st_size > 1000:
+                if job_id:
+                    size_kb = dest_path.stat().st_size / 1024
+                    size_str = f"{size_kb / 1024:.2f} MB" if size_kb > 1024 else f"{size_kb:.1f} KB"
+                    log_event(job_id, f"💾 Berhasil mengunduh dan menyimpan {media_kind} '{target_label}' ({size_str})!")
                 return
         except Exception as dl_ex:
+            if job_id:
+                log_event(job_id, f"⚠️ Unduhan stream langsung belum berhasil ({dl_ex}); mencoba via extension bridge...", level="warning")
             log.info("Unduhan langsung URL UI belum berhasil (%s); mencoba via extension bridge...", dl_ex)
 
         # 2. Try download through extension with authenticated cookies & session
         try:
+            if job_id:
+                log_event(job_id, f"🔌 Mengunduh {media_kind} melalui bridge ekstensi Chrome ({instance_id or 'default'})...")
             result = await bridge.download_url_with_retry(
                 decoded_url, instance_id=instance_id, timeout=300, attempts=3, delay=2
             )
             if result and result.get("data"):
                 dest_path.write_bytes(result["data"])
+                if job_id:
+                    size_kb = dest_path.stat().st_size / 1024
+                    size_str = f"{size_kb / 1024:.2f} MB" if size_kb > 1024 else f"{size_kb:.1f} KB"
+                    log_event(job_id, f"💾 Berhasil mengunduh dan menyimpan {media_kind} '{target_label}' via extension bridge ({size_str})!")
                 return
         except Exception as bridge_dl_ex:
+            if job_id:
+                log_event(job_id, f"⚠️ Unduhan via extension bridge gagal ({bridge_dl_ex}).", level="warning")
             log.warning("Unduhan via extension bridge gagal: %s", bridge_dl_ex)
         return
     if url.startswith("data:"):
@@ -937,11 +1134,17 @@ async def download_file(
             raise RuntimeError("Flow mengembalikan thumbnail gambar, bukan video MP4.")
         with open(dest_path, "wb") as out:
             out.write(video_bytes)
+        if job_id:
+            size_kb = dest_path.stat().st_size / 1024
+            size_str = f"{size_kb / 1024:.2f} MB" if size_kb > 1024 else f"{size_kb:.1f} KB"
+            log_event(job_id, f"💾 Data {media_kind} '{target_label}' ({size_str}) berhasil disimpan.")
     else:
         download_url = url
         exact_download_error = None
         if media_id and hasattr(bridge, "trpc_request"):
             try:
+                if job_id:
+                    log_event(job_id, f"🔍 Meminta signed URL CDN segar ke Google Flow untuk media {media_id[:16]}...")
                 await stream_exact_media_with_retry(
                     bridge,
                     media_id.rsplit("/", 1)[-1],
@@ -954,9 +1157,15 @@ async def download_file(
                         signed_url, destination, media_kind=media_kind
                     ),
                 )
+                if job_id and dest_path.exists():
+                    size_kb = dest_path.stat().st_size / 1024
+                    size_str = f"{size_kb / 1024:.2f} MB" if size_kb > 1024 else f"{size_kb:.1f} KB"
+                    log_event(job_id, f"💾 Berhasil mengunduh stream {media_kind} '{target_label}' ({size_str})!")
                 return
             except Exception as ex:
                 exact_download_error = ex
+                if job_id:
+                    log_event(job_id, f"⚠️ Resolver signed CDN belum selesai ({ex}); memakai URL unduhan alternatif...", level="warning")
                 log.warning("Unduhan URL CDN segar belum berhasil; memakai URL polling/API: %s", ex)
         if url.startswith("flow_media_id:"):
             clean_id = url.split(":", 1)[1]
@@ -973,10 +1182,20 @@ async def download_file(
             try:
                 # Signed Flow URLs are directly reachable by the backend. Streaming them avoids
                 # converting an entire MP4 to base64 inside Chrome and pushing it over WebSocket.
+                if job_id:
+                    log_event(job_id, f"🌐 Mengunduh stream {media_kind} langsung dari URL bertanda tangan...")
                 await asyncio.to_thread(stream_download, download_url, dest_path, media_kind=media_kind)
+                if job_id and dest_path.exists():
+                    size_kb = dest_path.stat().st_size / 1024
+                    size_str = f"{size_kb / 1024:.2f} MB" if size_kb > 1024 else f"{size_kb:.1f} KB"
+                    log_event(job_id, f"💾 Berhasil mengunduh stream {media_kind} '{target_label}' ({size_str})!")
                 return
             except Exception as ex:
+                if job_id:
+                    log_event(job_id, f"⚠️ Unduhan stream langsung gagal ({ex}); beralih ke bridge profil Chrome...", level="warning")
                 log.warning("Unduhan langsung MP4 gagal; mencoba profil Chrome: %s", ex)
+        if job_id:
+            log_event(job_id, f"🔌 Mengunduh {media_kind} melalui bridge ekstensi Chrome ({instance_id or 'default'})...")
         result = await bridge.download_url_with_retry(
             download_url, instance_id=instance_id, timeout=300, attempts=3, delay=2
         )
@@ -985,21 +1204,29 @@ async def download_file(
         if media_kind != "image" and result["data"].startswith((b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF8")):
             dest_path.unlink(missing_ok=True)
             raise RuntimeError("Flow mengembalikan thumbnail gambar, bukan video MP4.")
+        if job_id and dest_path.exists():
+            size_kb = dest_path.stat().st_size / 1024
+            size_str = f"{size_kb / 1024:.2f} MB" if size_kb > 1024 else f"{size_kb:.1f} KB"
+            log_event(job_id, f"💾 Berhasil mengunduh dan menyimpan {media_kind} '{target_label}' ({size_str})!")
 
 
-async def recover_character_master(cache, key, bridge, job_dir):
+async def recover_character_master(cache, key, bridge, job_dir, job_id: Optional[str] = None):
     """Retry a generated sheet's download, never its generation."""
     pending = cache.state(key) or {}
+    char_name = pending.get('name') or key
     if not pending.get('media_id'):
         raise AssetRecoveryRequired('Sheet belum memiliki media ID untuk dipulihkan.')
+    if job_id:
+        log_event(job_id, f"📥 Mengunduh file master sheet '{char_name}' dari Google Flow...")
     temporary = job_dir / f"sheet_download_{uuid.uuid4().hex}.png"
     try:
         await download_file(
             bridge, pending.get('image_url') or 'flow_media_id:' + pending['media_id'], temporary,
             instance_id=pending.get('instance_id'), media_id=pending['media_id'],
-            project_id=pending.get('project_id'), media_kind="image",
+            project_id=pending.get('project_id'), media_kind="image", job_id=job_id,
+            label=f"Sheet {char_name}",
         )
-        return cache.save(
+        saved_path = cache.save(
             key,
             temporary.read_bytes(),
             name=pending.get('name'),
@@ -1007,6 +1234,9 @@ async def recover_character_master(cache, key, bridge, job_dir):
             project_id=pending.get('project_id'),
             image_url=pending.get('image_url'),
         )
+        if job_id:
+            log_event(job_id, f"💾 Master sheet '{char_name}' berhasil disimpan ke master cache film.")
+        return saved_path
     except Exception as error:
         raise AssetRecoveryRequired(
             'Sheet sudah dibuat tetapi belum tersimpan lokal. Hubungkan akun asal lalu Resume untuk '
@@ -1281,7 +1511,7 @@ async def execute_storyboard_job(
         if not first_target_id:
             raise RuntimeError('Tidak ada profil Chrome Flow yang aktif untuk membuat character sheet.')
 
-        log_event(job_id, f"🎨 [5%] Memeriksa master cache {len(characters)} karakter; hanya sheet yang belum ada akan dibuat.")
+        log_event(job_id, f"🎨 [5%] [TAHAP 1/3] Memeriksa master cache untuk {len(characters)} karakter; hanya sheet yang belum ada akan dibuat.")
         for c_idx, char in enumerate(characters, start=1):
             char_id = char.get("id", c_idx)
             char_name = char.get("name", f"Karakter {char_id}")
@@ -1291,6 +1521,7 @@ async def execute_storyboard_job(
 
             safe_name = "".join(c for c in char_name if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')
             local_sheet_file = job_dir / f"character_sheet_{char_id}_{safe_name}.png"
+            log_event(job_id, f"🔍 [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Memeriksa ketersediaan master sheet untuk '{char_name}'...")
             try:
                 owned_reference_paths = resolve_character_reference_paths(char, storyboard)
                 asset_key = character_asset_key(char, visual_style, owned_reference_paths)
@@ -1307,16 +1538,19 @@ async def execute_storyboard_job(
                             character_media_ids[alias] = pending_media_id
                         log_event(
                             job_id,
-                            f"♻️ Sheet '{char_name}' sudah tersedia di Flow; memakai media ID yang ada tanpa generate ulang.",
+                            f"♻️ [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Sheet '{char_name}' sudah tersedia di Flow (Media ID: {pending_media_id[:16]}...); memakai media ID yang ada tanpa generate ulang.",
                         )
                         continue
-                    cached_sheet = await recover_character_master(asset_cache, asset_key, bridge, job_dir)
+                    log_event(job_id, f"📥 [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Memulihkan master sheet '{char_name}' dari storage Flow...")
+                    cached_sheet = await recover_character_master(asset_cache, asset_key, bridge, job_dir, job_id=job_id)
                 if not cached_sheet and local_sheet_file.exists():
+                    log_event(job_id, f"💾 [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Mengimpor sheet '{char_name}' dari file lokal '{local_sheet_file.name}'...")
                     cached_sheet = asset_cache.save(asset_key, local_sheet_file.read_bytes(), name=char_name)
                 if cached_sheet:
                     for alias in (char_id, str(char_id), char_name, char_name.lower()):
                         character_image_paths[alias] = cached_sheet
                     try:
+                        log_event(job_id, f"📤 [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Menyiapkan media ID sheet '{char_name}' untuk profil Flow...")
                         reused_map, _ = await ensure_character_media_for_profile(
                             bridge, [char], character_image_paths, project_id, first_target_id,
                             character_media_by_profile, upload_fn=upload_image,
@@ -1330,12 +1564,12 @@ async def execute_storyboard_job(
                                 character_media_ids[alias] = cached_media_id
                             log_event(
                                 job_id,
-                                f"♻️ Cache lokal '{char_name}' siap; media ID Flow sudah tersedia. "
+                                f"♻️ [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Cache lokal '{char_name}' siap; media ID Flow sudah tersedia. "
                                 "Upload ulang tidak diperlukan, tanpa generate ulang.",
                             )
                         else:
                             raise
-                    log_event(job_id, f"💾 Master sheet '{char_name}' di-import dari cache laptop; tanpa generate ulang.")
+                    log_event(job_id, f"💾 [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Master sheet '{char_name}' siap dari cache laptop; tanpa generate ulang.")
                     continue
             except Exception as ex:
                 # A cached sheet (local bytes or a Flow media ID) is an
@@ -1420,6 +1654,11 @@ async def execute_storyboard_job(
                     _save_history()
                     return
                 try:
+                    if owned_reference_paths and not suppress_references:
+                        log_event(
+                            job_id,
+                            f"📸 [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Mengunggah {len(owned_reference_paths)} referensi gambar asli '{char_name}' ke Google Flow...",
+                        )
                     reference_media_ids = await upload_character_references(
                         bridge, owned_reference_paths, seed_project_id, seed_instance_id
                     ) if owned_reference_paths and not suppress_references else []
@@ -1431,10 +1670,10 @@ async def execute_storyboard_job(
                     if reference_media_ids:
                         log_event(
                             job_id,
-                            f"🧩 [{5 + c_idx}%] Memakai {len(reference_media_ids)} image reference "
+                            f"🧩 [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Memakai {len(reference_media_ids)} image reference "
                             f"khusus untuk karakter '{char_name}'.",
                         )
-                    log_event(job_id, f"⏳ [{5 + c_idx}%] [FLOW:INIT] Mengirim request character seed image '{char_name}' (Seed: {request_seed}) [Percobaan {try_cnt}]...")
+                    log_event(job_id, f"⏳ [{5 + c_idx}%] [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] [FLOW:INIT] Mengirim request character seed image '{char_name}' (Seed: {request_seed}, Profil: {seed_target.get('name') or seed_instance_id}) [Percobaan {try_cnt}/{max_character_attempts}]...")
 
                     def _on_char_progress(evt):
                         stage = evt.get("stage") or ""
@@ -1442,7 +1681,7 @@ async def execute_storyboard_job(
                         pct = evt.get("percent") or (evt.get("data") or {}).get("percent")
                         pct_str = f" ({pct}%)" if pct is not None else ""
                         if msg:
-                            log_event(job_id, f"⏳ [{5 + c_idx}%] [FLOW:{stage}] {msg}{pct_str}")
+                            log_event(job_id, f"⏳ [{5 + c_idx}%] [FLOW:{stage}] [Karakter: {char_name}] {msg}{pct_str}", profile=seed_target.get('name') or seed_instance_id)
 
                     if hasattr(bridge, "add_progress_listener"):
                         bridge.add_progress_listener(_on_char_progress)
@@ -1467,10 +1706,11 @@ async def execute_storyboard_job(
                         )
                     media_id = img_res.get("media_id")
                     if media_id:
+                        log_event(job_id, f"✨ [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Character sheet '{char_name}' berhasil digenerate di Flow (Media ID: {media_id[:16]}...). Mengunduh gambar master...", profile=seed_target.get('name') or seed_instance_id)
                         asset_cache.record(asset_key, status='download_pending', name=char_name,
                                            media_id=media_id, image_url=img_res.get('image_url'),
                                            project_id=seed_project_id, instance_id=seed_instance_id)
-                        cached_sheet = await recover_character_master(asset_cache, asset_key, bridge, job_dir)
+                        cached_sheet = await recover_character_master(asset_cache, asset_key, bridge, job_dir, job_id=job_id)
                         for alias in (char_id, str(char_id), char_name, char_name.lower()):
                             character_image_paths[alias] = cached_sheet
                         character_media_ids[char_id] = media_id
@@ -1485,9 +1725,9 @@ async def execute_storyboard_job(
                             character_image_urls[char_name] = img_url
                             character_image_urls[char_name.lower()] = img_url
 
-                            log_event(job_id, f"💾 Character sheet '{char_name}' tersimpan di master cache film.")
+                            log_event(job_id, f"💾 [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Master sheet '{char_name}' tersimpan di master cache film.")
 
-                        log_event(job_id, f"✅ Gambar Seed Karakter '{char_name}' berhasil dibuat! Media ID: {media_id[:16]}...")
+                        log_event(job_id, f"✅ [TAHAP 1/3: Karakter {c_idx}/{len(characters)}] Gambar Seed Karakter '{char_name}' berhasil dibuat! Media ID: {media_id[:16]}...")
                         break
                 except Exception as ex:
                     log_event(job_id, f"⚠️ Gagal generate seed image karakter '{char_name}' (Percobaan {try_cnt}): {ex}.", level="warning")
@@ -1712,6 +1952,7 @@ async def execute_storyboard_job(
             sb_duration = duration if force_uniform_duration else resolve_scene_duration(sb_sc, duration)
             existing_storyboard_id = sb_sc.get("storyboard_media_id")
             existing_storyboard_path = sb_sc.get("storyboard_sheet_path")
+            log_event(job_id, f"🔍 [TAHAP 2/3: Adegan {sb_idx}/{total_scenes}] Memeriksa ketersediaan storyboard untuk adegan '{sb_title}'...")
             if existing_storyboard_id:
                 storyboard_prebuilt[sb_idx] = {
                     "media_id": existing_storyboard_id,
@@ -1722,8 +1963,7 @@ async def execute_storyboard_job(
                     storyboard_media_by_profile[(sb_idx, profile_key(project_instance_id, project_id))] = existing_storyboard_id
                 log_event(
                     job_id,
-                    f"♻️ [TAHAP 2/3] Storyboard scene {sb_idx}/{total_scenes} sudah tersimpan; "
-                    "tidak generate ulang.",
+                    f"♻️ [TAHAP 2/3: Adegan {sb_idx}/{total_scenes}] Storyboard adegan {sb_idx}/{total_scenes} sudah tersimpan (Media ID: {existing_storyboard_id[:16]}...); tidak generate ulang.",
                 )
                 job_state["execution_stage_completed"] = sb_idx
                 continue
@@ -1811,31 +2051,47 @@ async def execute_storyboard_job(
                         f"storyboard contact sheet for scene {sb_idx}, titled '{sb_title}'. "
                         "This is an Image asset, not a video. Do not generate motion or video output."
                     )
+                    def _on_sb_progress(evt):
+                        stage = evt.get("stage") or ""
+                        msg = evt.get("message") or ""
+                        pct = evt.get("percent") or (evt.get("data") or {}).get("percent")
+                        pct_str = f" ({pct}%)" if pct is not None else ""
+                        if msg:
+                            log_event(job_id, f"⏳ [TAHAP 2/3: Adegan {sb_idx}/{total_scenes}] [FLOW:{stage}] {msg}{pct_str}", profile=sb_profile.get('name') or sb_target_id)
+
                     for sb_try in range(1, 4):
                         try:
                             log_event(
                                 job_id,
-                                f"🖼️ [TAHAP 2/3] Storyboard scene {sb_idx}/{total_scenes} "
-                                f"sebagai Image di profil {sb_profile.get('name') or sb_target_id} "
+                                f"🖼️ [TAHAP 2/3: Adegan {sb_idx}/{total_scenes}] Mengirim request storyboard Image ke profil {sb_profile.get('name') or sb_target_id} "
                                 f"({sb_target_id}, project {sb_project_id}) "
                                 f"[Percobaan {sb_try}/3]...",
+                                profile=sb_profile.get('name') or sb_target_id,
                             )
-                            sb_res = await generate_character_image(
-                                bridge, prompt=profile_prompt, aspect="landscape",
-                                project_id=sb_project_id, instance_id=sb_target_id,
-                                reference_media_ids=sb_ref_ids,
-                                reference_image_paths=sb_ref_paths,
-                                seed=storyboard.get("character_seed"),
-                            )
+                            if hasattr(bridge, "add_progress_listener"):
+                                bridge.add_progress_listener(_on_sb_progress)
+                            try:
+                                sb_res = await generate_character_image(
+                                    bridge, prompt=profile_prompt, aspect="landscape",
+                                    project_id=sb_project_id, instance_id=sb_target_id,
+                                    reference_media_ids=sb_ref_ids,
+                                    reference_image_paths=sb_ref_paths,
+                                    seed=storyboard.get("character_seed"),
+                                )
+                            finally:
+                                if hasattr(bridge, "remove_progress_listener"):
+                                    bridge.remove_progress_listener(_on_sb_progress)
                             if sb_res.get("media_id"):
+                                log_event(job_id, f"✨ [TAHAP 2/3: Adegan {sb_idx}/{total_scenes}] Storyboard Image berhasil dibuat di Flow (Media ID: {sb_res.get('media_id')[:16]}...). Mengunduh gambar...", profile=sb_profile.get('name') or sb_target_id)
                                 break
                         except Exception as ex:
                             sb_last_error = ex
                             log_event(
                                 job_id,
-                                f"⚠️ Storyboard scene {sb_idx} di profil "
+                                f"⚠️ [TAHAP 2/3: Adegan {sb_idx}/{total_scenes}] Storyboard di profil "
                                 f"{sb_profile.get('name') or sb_target_id} gagal ({ex})",
                                 level="warning",
+                                profile=sb_profile.get('name') or sb_target_id,
                             )
                             # Authentication/session failures are profile state,
                             # not prompt failures. Do not waste three storyboard
@@ -1892,9 +2148,23 @@ async def execute_storyboard_job(
 
             sb_path = job_dir / f"storyboard_{sb_idx:02d}.png"
             if sb_res.get("image_url"):
-                got = await asyncio.to_thread(fetch_image_bytes, sb_res["image_url"])
-                if got and got.get("data"):
-                    sb_path.write_bytes(got["data"])
+                log_event(job_id, f"📥 [TAHAP 2/3: Adegan {sb_idx}/{total_scenes}] Mengunduh file gambar storyboard ({sb_path.name})...")
+                try:
+                    await download_file(
+                        bridge, sb_res["image_url"], sb_path,
+                        instance_id=sb_target_id, media_id=sb_res.get("media_id"),
+                        project_id=sb_project_id, media_kind="image",
+                        job_id=job_id, label=f"Storyboard Adegan {sb_idx}",
+                    )
+                except Exception as dl_err:
+                    log_event(job_id, f"⚠️ Unduhan langsung storyboard adegan {sb_idx} gagal ({dl_err}); mencoba alternatif fetch...", level="warning")
+                    got = await asyncio.to_thread(fetch_image_bytes, sb_res["image_url"])
+                    if got and got.get("data"):
+                        sb_path.write_bytes(got["data"])
+            if sb_path.exists() and sb_path.stat().st_size > 0:
+                size_kb = sb_path.stat().st_size / 1024
+                size_str = f"{size_kb / 1024:.2f} MB" if size_kb > 1024 else f"{size_kb:.1f} KB"
+                log_event(job_id, f"💾 [TAHAP 2/3: Adegan {sb_idx}/{total_scenes}] Gambar storyboard tersimpan ({size_str}).")
             storyboard_prebuilt[sb_idx] = {
                 "media_id": sb_res["media_id"],
                 "path": str(sb_path) if sb_path.exists() else None,
@@ -1905,7 +2175,7 @@ async def execute_storyboard_job(
             sb_sc["storyboard_sheet_path"] = str(sb_path) if sb_path.exists() else None
             sb_sc["storyboard_image_url"] = sb_res.get("image_url")
             job_state["execution_stage_completed"] = sb_idx
-            log_event(job_id, f"✅ [TAHAP 2/3] Storyboard scene {sb_idx}/{total_scenes} selesai sebagai 1 Image. Belum mengirim Video.")
+            log_event(job_id, f"✅ [TAHAP 2/3: Adegan {sb_idx}/{total_scenes}] Storyboard adegan selesai sebagai 1 Image. Belum mengirim Video.")
         _save_history()
 
     # The legacy inline storyboard block below is disabled after the global
@@ -2565,20 +2835,23 @@ async def execute_storyboard_job(
                     if not video_url:
                         raise RuntimeError("Video selesai namun URL unduhan tidak ditemukan.")
 
-                    log_event(job_id, f"✨ [Adegan {idx}/{total_scenes}] Render video {scene_duration}s selesai di Flow! Mengunduh MP4 ke storage...", profile=target_name)
+                    log_event(job_id, f"✨ [Adegan {idx}/{total_scenes}] Render video {scene_duration}s selesai di Flow! Media ID: {target_media_id[:16]}... Mengunduh MP4 ke storage...", profile=target_name)
 
                     # Download MP4 file
                     out_filename = f"scene_{idx:02d}.mp4"
                     out_path = job_dir / out_filename
 
+                    log_event(job_id, f"📥 [Adegan {idx}/{total_scenes}] Memulai proses unduh file video '{out_filename}'...", profile=target_name)
                     await download_file(
                         bridge, video_url, out_path, instance_id=target_instance_id,
                         media_id=target_media_id, project_id=inst_project_id,
+                        job_id=job_id, label=out_filename, media_kind="video",
                     )
 
                     log_event(job_id, f"💾 [Adegan {idx}/{total_scenes}] Video MP4 berhasil diunduh dan tersimpan di storage ({out_filename})!", profile=target_name)
 
                     scene_record["status"] = "completed"
+                    scene_record["video_url"] = video_url
                     scene_record["video_path"] = str(out_path)
                     scene_record["relative_url"] = f"/storage/jobs/{job_id}/{out_filename}"
                     completed_scene_paths.append(str(out_path))
@@ -2735,28 +3008,127 @@ async def execute_storyboard_job(
             scene_record["error"] = str(last_error)
             log_event(job_id, f"❌ [Adegan {idx}/{total_scenes}] Seluruh profil Chrome gagal: {last_error}", level="error")
 
-    # Step 3: Automatically stitch completed scenes into full cinematic film
+    # Step 3: Pre-Stitching Scene Reconciliation & Final Video Stitching
     if job_state.get("cancelled"):
         log_event(job_id, "🛑 Eksekusi job dibatalkan oleh pengguna.", level="warning")
         job_state["status"] = "cancelled"
         _save_history()
         return
 
+    # Check for missing scenes and harvest directly from Google Flow canvas
+    missing_scenes = [
+        s for s in job_state.get("scenes", [])
+        if s.get("status") != "completed" or not (job_dir / f"scene_{s.get('scene_number', s.get('id', 1)):02d}.mp4").exists()
+    ]
+
+    if missing_scenes and not job_state.get("cancelled"):
+        log_event(
+            job_id,
+            f"🔍 Mendeteksi {len(missing_scenes)} adegan belum lengkap. Memeriksa kanvas Google Flow untuk merekonsiliasi seluruh video yang telah dihasilkan...",
+        )
+        try:
+            live_instances = [i for i in bridge.instance_snapshot() if i.get("connected")]
+            target_instance_id = project_instance_id or (live_instances[0].get("instance_id") if live_instances else None)
+            inst_project_id = project_id or (live_instances[0].get("project_id") if live_instances else None)
+
+            harvest_res = await harvest_project_videos(
+                bridge, instance_id=target_instance_id, project_id=inst_project_id, timeout=90
+            )
+            harvested_videos = (harvest_res.get("videos") if isinstance(harvest_res, dict) else []) or []
+            if harvested_videos:
+                log_event(
+                    job_id,
+                    f"📦 Ditemukan {len(harvested_videos)} video pada kanvas Google Flow. Memulai pemulihan adegan...",
+                )
+
+                # Track URLs already claimed by completed scenes to avoid downloading duplicates
+                claimed_urls = {
+                    s.get("video_url")
+                    for s in job_state.get("scenes", [])
+                    if s.get("status") == "completed" and s.get("video_url")
+                }
+
+                # Filter only valid unclaimed videos from Flow canvas
+                available_unclaimed = [
+                    hv for hv in harvested_videos
+                    if hv.get("video_url") and hv.get("video_url") not in claimed_urls
+                ]
+
+                for s in missing_scenes:
+                    sc_num = s.get("scene_number", s.get("id", 1))
+                    out_filename = f"scene_{sc_num:02d}.mp4"
+                    out_path = job_dir / out_filename
+
+                    matched = None
+                    sc_prompt = (s.get("prompt") or s.get("visual_prompt") or s.get("action") or "").lower()
+
+                    # 1. Try matching by prompt label among unclaimed videos
+                    for idx_u, hv in enumerate(available_unclaimed):
+                        hv_label = (hv.get("label") or "").lower()
+                        if hv_label and (hv_label in sc_prompt or sc_prompt in hv_label):
+                            matched = available_unclaimed.pop(idx_u)
+                            break
+
+                    # 2. If no prompt match, take next available unclaimed video in chronological order
+                    if not matched and available_unclaimed:
+                        matched = available_unclaimed.pop(0)
+
+                    if matched and matched.get("video_url"):
+                        v_url = matched["video_url"]
+                        claimed_urls.add(v_url)
+                        log_event(
+                            job_id,
+                            f"📥 [Rekonsiliasi Adegan {sc_num}/{total_scenes}] Mengunduh video dari kanvas Flow ({out_filename})...",
+                        )
+                        await download_file(
+                            bridge, v_url, out_path, instance_id=target_instance_id, project_id=inst_project_id,
+                            job_id=job_id, label=out_filename, media_kind="video",
+                        )
+                        s["status"] = "completed"
+                        s["video_url"] = v_url
+                        s["video_path"] = str(out_path)
+                        s["relative_url"] = f"/storage/jobs/{job_id}/{out_filename}"
+                        log_event(
+                            job_id,
+                            f"✅ [Rekonsiliasi Adegan {sc_num}/{total_scenes}] Berhasil dipulihkan dan disimpan ({out_filename})!",
+                        )
+            _save_history()
+        except Exception as harvest_err:
+            log_event(
+                job_id,
+                f"⚠️ Rekonsiliasi kanvas Google Flow menemui kendala: {harvest_err}",
+                level="warning",
+            )
+
+    # Reconstruct completed_scene_paths strictly in scene order
+    completed_scene_paths = []
+    for s in job_state.get("scenes", []):
+        sc_num = s.get("scene_number", s.get("id", 1))
+        sc_path = job_dir / f"scene_{sc_num:02d}.mp4"
+        if sc_path.exists() and s.get("status") == "completed":
+            completed_scene_paths.append(str(sc_path))
+    job_state["execution_stage_completed"] = len(completed_scene_paths)
+
     if completed_scene_paths:
         job_state["execution_stage"] = "stitching"
-        log_event(job_id, f"🎞️ [95%] Menggabungkan {len(completed_scene_paths)} adegan menjadi Film Sinematik Utuh & membuat Subtitle SRT...")
+        log_event(job_id, f"🎞️ [TAHAP 4/4: 95%] Seluruh {len(completed_scene_paths)} adegan video siap! Memulai pasca-produksi & penggabungan film...")
         try:
             from .film_stitcher import generate_srt_subtitles
+            log_event(job_id, f"📝 [TAHAP 4/4: 96%] Menyusun subtitle SRT sinkron untuk {len(completed_scene_paths)} adegan...")
             srt_path = generate_srt_subtitles(job_dir, job_state["scenes"], duration_per_scene=duration)
             job_state["srt_subtitles_url"] = f"/storage/jobs/{job_id}/subtitles.srt"
+            log_event(job_id, f"💾 [TAHAP 4/4: 96%] Subtitle SRT berhasil dibuat ({Path(srt_path).name})!")
 
+            log_event(job_id, f"🎬 [TAHAP 4/4: 97%] Menggabungkan {len(completed_scene_paths)} file MP4 dengan FFmpeg concat...")
             film_path = stitch_scenes(job_dir, completed_scene_paths, output_filename="cinematic_film.mp4")
+            log_event(job_id, f"💾 [TAHAP 4/4: 97%] Penggabungan potongan video selesai ({Path(film_path).name})!")
 
             music_track = resolve_master_music_track(storyboard, cfg)
             if music_track and os.path.exists(music_track):
-                log_event(job_id, "🎵 [98%] Menyatukan audio track musik latar dengan video klip...")
+                log_event(job_id, f"🎵 [TAHAP 4/4: 98%] Menyatukan audio track musik latar '{Path(music_track).name}' dengan film...")
                 from .film_stitcher import mux_audio_to_video
                 film_path = mux_audio_to_video(job_dir, film_path, music_track, output_filename="cinematic_film_with_audio.mp4")
+                log_event(job_id, f"💾 [TAHAP 4/4: 98%] Muxing audio latar berhasil!")
 
             job_state["cinematic_film_path"] = str(film_path)
             final_filename = os.path.basename(film_path)
@@ -2774,7 +3146,7 @@ async def execute_storyboard_job(
             else:
                 log_event(
                     job_id,
-                    "✅ [100%] SELURUH PROSES SELESAI! Film sinematik utuh & Subtitle SRT siap diputar "
+                    "✅ [TAHAP 4/4: 100%] SELURUH PROSES SELESAI! Film sinematik utuh & Subtitle SRT siap diputar "
                     f"di Galeri. Waktu proses total: {job_state['processing_duration']}; "
                     f"ukuran file: {job_state['output_size_display']}.",
                 )

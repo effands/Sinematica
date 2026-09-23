@@ -13,6 +13,8 @@ storage/film_assets/
 storage/test_*
 data/*.log
 *.log
+data/logs/
+*.jsonl
 data/settings.json
 data/*.json
 data/*.bak

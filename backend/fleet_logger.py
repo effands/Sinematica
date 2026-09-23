@@ -32,6 +32,7 @@ def record_fleet_log(entry: Dict[str, Any], log_dir: Optional[Path] = None) -> N
 
     today_str = datetime.datetime.now().strftime("%Y-%m-%d")
     log_file = target_dir / f"flow_fleet_{today_str}.log"
+    jsonl_file = target_dir / f"flow_fleet_{today_str}.jsonl"
 
     ts = entry.get("timestamp", datetime.datetime.now().isoformat())
     level = str(entry.get("level", "INFO")).upper()
@@ -40,7 +41,7 @@ def record_fleet_log(entry: Dict[str, Any], log_dir: Optional[Path] = None) -> N
     inst = str(entry.get("instance_id", "unknown"))
 
     meta = entry.get("meta")
-    meta_str = f" | meta={json.dumps(meta)}" if meta else ""
+    meta_str = f" | meta={json.dumps(meta, ensure_ascii=False)}" if meta else ""
 
     line = f"[{ts}] [{level}] [{inst}] [{tag}] {msg}{meta_str}\n"
 
@@ -49,6 +50,12 @@ def record_fleet_log(entry: Dict[str, Any], log_dir: Optional[Path] = None) -> N
             f.write(line)
     except Exception as ex:
         log.warning("Gagal menulis log fleet ke %s: %s", log_file, ex)
+
+    try:
+        with open(jsonl_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as ex:
+        log.warning("Gagal menulis JSONL fleet ke %s: %s", jsonl_file, ex)
 
 
 def get_recent_fleet_logs(limit: int = 50) -> List[Dict[str, Any]]:

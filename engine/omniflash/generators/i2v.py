@@ -578,3 +578,11 @@ async def poll_video_status(bridge, media_id: str, project_id: str,
 
     raise TimeoutError(f"Video rendering timeout ({timeout} detik).")
 
+
+async def harvest_project_videos(
+    bridge, instance_id: str = None, project_id: str = None, timeout: float = 60
+) -> dict:
+    """Harvest all generated videos from the Google Flow project canvas in chronological order."""
+    return await bridge.harvest_project_videos(instance_id=instance_id, project_id=project_id, timeout=timeout)
+
+
