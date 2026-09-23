@@ -888,6 +888,14 @@
           if (typeof createBtn.click === 'function') {
             try { createBtn.click(); } catch {}
           }
+          if (promptInput) {
+            try {
+              const enterInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true, view: window };
+              promptInput.dispatchEvent(new KeyboardEvent('keydown', enterInit));
+              promptInput.dispatchEvent(new KeyboardEvent('keypress', enterInit));
+              promptInput.dispatchEvent(new KeyboardEvent('keyup', enterInit));
+            } catch {}
+          }
         }
       }
 
@@ -1407,6 +1415,14 @@
           await simulateClick(createBtn);
           if (typeof createBtn.click === 'function') {
             try { createBtn.click(); } catch {}
+          }
+          if (promptInput) {
+            try {
+              const enterInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true, view: window };
+              promptInput.dispatchEvent(new KeyboardEvent('keydown', enterInit));
+              promptInput.dispatchEvent(new KeyboardEvent('keypress', enterInit));
+              promptInput.dispatchEvent(new KeyboardEvent('keyup', enterInit));
+            } catch {}
           }
         }
       }

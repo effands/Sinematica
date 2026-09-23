@@ -1231,9 +1231,25 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
           await new Promise((resolve) => setTimeout(resolve, 150));
           editor.focus();
 
-          const rect = button.getBoundingClientRect();
+          const target = button.querySelector('mat-icon, .mat-mdc-button-touch-target') || button;
+          const rect = target.getBoundingClientRect();
           const clickX = Math.round(rect.left + rect.width / 2);
           const clickY = Math.round(rect.top + rect.height / 2);
+
+          try {
+            const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX: clickX, clientY: clickY, button: 0, buttons: 1 };
+            target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+            target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+            target.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, buttons: 0 }));
+            target.dispatchEvent(new MouseEvent('mouseup', { ...eventInit, buttons: 0 }));
+            target.dispatchEvent(new MouseEvent('click', { ...eventInit, buttons: 0 }));
+            button.click();
+
+            const enterInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true, view: window };
+            editor.dispatchEvent(new KeyboardEvent('keydown', enterInit));
+            editor.dispatchEvent(new KeyboardEvent('keypress', enterInit));
+            editor.dispatchEvent(new KeyboardEvent('keyup', enterInit));
+          } catch (_) {}
 
           notifyProgress('TRIGGERING_START', 'Menekan tombol Start generation di Google Flow...', 50);
 
@@ -1266,8 +1282,28 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
           target: { tabId: candidateId },
           world: 'MAIN',
           func: () => {
+            const editor = document.querySelector('.ProseMirror, [contenteditable="true"]');
+            if (editor) editor.focus();
             const btn = document.querySelector('flow-generate-icon-button button, button.generate-icon-button, button[aria-label*="Start" i], button[aria-label*="Mulai" i]');
-            if (btn && !btn.disabled) btn.click();
+            if (btn && !btn.disabled) {
+              const target = btn.querySelector('mat-icon, .mat-mdc-button-touch-target') || btn;
+              const rect = target.getBoundingClientRect();
+              const clickX = Math.round(rect.left + rect.width / 2);
+              const clickY = Math.round(rect.top + rect.height / 2);
+              const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX: clickX, clientY: clickY, button: 0, buttons: 1 };
+              target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+              target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+              target.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, buttons: 0 }));
+              target.dispatchEvent(new MouseEvent('mouseup', { ...eventInit, buttons: 0 }));
+              target.dispatchEvent(new MouseEvent('click', { ...eventInit, buttons: 0 }));
+              btn.click();
+            }
+            if (editor) {
+              const enterInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true, view: window };
+              editor.dispatchEvent(new KeyboardEvent('keydown', enterInit));
+              editor.dispatchEvent(new KeyboardEvent('keypress', enterInit));
+              editor.dispatchEvent(new KeyboardEvent('keyup', enterInit));
+            }
           }
         }).catch(() => null);
       }
@@ -1891,9 +1927,25 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
           await sleep(150);
           editor.focus();
 
-          const rect = start.getBoundingClientRect();
+          const target = start.querySelector('mat-icon, .mat-mdc-button-touch-target') || start;
+          const rect = target.getBoundingClientRect();
           const clickX = Math.round(rect.left + rect.width / 2);
           const clickY = Math.round(rect.top + rect.height / 2);
+
+          try {
+            const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX: clickX, clientY: clickY, button: 0, buttons: 1 };
+            target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+            target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+            target.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, buttons: 0 }));
+            target.dispatchEvent(new MouseEvent('mouseup', { ...eventInit, buttons: 0 }));
+            target.dispatchEvent(new MouseEvent('click', { ...eventInit, buttons: 0 }));
+            start.click();
+
+            const enterInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true, view: window };
+            editor.dispatchEvent(new KeyboardEvent('keydown', enterInit));
+            editor.dispatchEvent(new KeyboardEvent('keypress', enterInit));
+            editor.dispatchEvent(new KeyboardEvent('keyup', enterInit));
+          } catch (_) {}
 
           notifyProgress('TRIGGERING_START', 'Menekan tombol Start video generation...', 50);
 
@@ -1942,8 +1994,28 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
           target: { tabId: candidateId },
           world: 'MAIN',
           func: () => {
+            const editor = document.querySelector('.ProseMirror, [contenteditable="true"]');
+            if (editor) editor.focus();
             const btn = document.querySelector('flow-generate-icon-button button, button.generate-icon-button, button[aria-label*="Start" i], button[aria-label*="Mulai" i]');
-            if (btn && !btn.disabled) btn.click();
+            if (btn && !btn.disabled) {
+              const target = btn.querySelector('mat-icon, .mat-mdc-button-touch-target') || btn;
+              const rect = target.getBoundingClientRect();
+              const clickX = Math.round(rect.left + rect.width / 2);
+              const clickY = Math.round(rect.top + rect.height / 2);
+              const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX: clickX, clientY: clickY, button: 0, buttons: 1 };
+              target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+              target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+              target.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, buttons: 0 }));
+              target.dispatchEvent(new MouseEvent('mouseup', { ...eventInit, buttons: 0 }));
+              target.dispatchEvent(new MouseEvent('click', { ...eventInit, buttons: 0 }));
+              btn.click();
+            }
+            if (editor) {
+              const enterInit = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true, view: window };
+              editor.dispatchEvent(new KeyboardEvent('keydown', enterInit));
+              editor.dispatchEvent(new KeyboardEvent('keypress', enterInit));
+              editor.dispatchEvent(new KeyboardEvent('keyup', enterInit));
+            }
           }
         }).catch(() => null);
       }
