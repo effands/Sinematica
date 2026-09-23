@@ -716,6 +716,14 @@ Google Flow (Veo 2 & Imagen) SANGAT KETAT terhadap visual kekerasan, bahaya, dan
 5. **DOKUMEN RESMI NEGARA**:
    - Hindari KTP, paspor, lambang negara resmi. Sebut generik: `a sealed confidential dossier` atau `an official stamped envelope`.
 
+6. **EKSPERIMEN BIOLOGIS, HEWAN, INJEKSI & BIO-HAZARD (Cegah BIO/MEDICAL SAFETY FILTER)**:
+   - DILARANG menggambarkan: penyuntikan/injeksi cairan pada hewan/makhluk hidup (`injecting sedatives into juvenile creature/animal`), ruang karantina isolasi bahaya (`quarantine lab/isolation chamber`), racun/virus, pembedahan, atau eksperimen biologis.
+   - GANTI DENGAN: observasi ilmiah atau studi pusaka fiktif yang aman: `examining glowing mineral crystal/ancient stone relic with precision tools in research study room`, `gentle herbal essence applied to a botanical leaf`.
+
+7. **SENGKETA HUKUM, PENGGUSURAN & TUDUHAN KRIMINAL NYATA**:
+   - Hindari frasa bermakna skandal korupsi/utang kriminal (`30 million debt scandal / 三千万烂账`) atau penggusuran paksa (`eviction eviction order / 驱逐协议`).
+   - GANTI DENGAN: drama pusaka keluarga, arsip rahasia, atau kompetisi bisnis fiktif: `heritage archive box`, `family legacy rights document`, `confidential design contract`.
+
 Intensitas emosi, drama, ketegangan, dan sinematografi WAJIB tetap maksimal dan menegangkan, namun 100% bersih dari kata kunci terlarang!
 """
 

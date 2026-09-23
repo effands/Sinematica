@@ -2028,9 +2028,6 @@ async def execute_storyboard_job(
         # Re-assert after AI pacing rewrites so no later stage can silently change medium.
         prompt += build_visual_style_guard(visual_style, is_children)
         prompt += build_finishing_look_guard(storyboard)
-        prompt += build_scene_blueprint_guard(sc)
-        prompt += build_render_realism_guard(storyboard)
-        prompt += build_physical_execution_guard(sc, prompt=sc.get('prompt_for_flow') or '')
         prompt += "\n\nREFERENCE TEXT EXCLUSION LOCK: Any name, seed number, label, title bar, UI box, caption, border, or printed metadata visible in reference images is not part of the scene. Never render it, copy it, float it, overlay it, or turn it into a sign/card/subtitle. The final video frame must contain only the cinematic scene and physical story objects. No readable text unless explicitly required by the story, and even then use blurred/unreadable marks instead of words."
 
         out_filename = f"scene_{idx:02d}.mp4"
@@ -2721,10 +2718,7 @@ async def execute_storyboard_job(
             prompt = adapt_template_for_visual_style(prompt, visual_style, is_children)
             prompt += build_visual_style_guard(visual_style, is_children)
             prompt += build_finishing_look_guard(storyboard)
-            if policy_attempt < 2:
-                prompt += build_scene_blueprint_guard(sc)
-            prompt += build_render_realism_guard(storyboard)
-            prompt += build_physical_execution_guard(sc, prompt=sc.get('prompt_for_flow') or '')
+            prompt += "\n\nREFERENCE TEXT EXCLUSION LOCK: Any name, seed number, label, title bar, UI box, caption, border, or printed metadata visible in reference images is not part of the scene. Never render it, copy it, float it, overlay it, or turn it into a sign/card/subtitle. The final video frame must contain only the cinematic scene and physical story objects. No readable text unless explicitly required by the story, and even then use blurred/unreadable marks instead of words."
             sc["prompt_for_flow"] = prompt
             scene_record["prompt"] = prompt
             scene_record["prompt_rewritten"] = policy_attempt
