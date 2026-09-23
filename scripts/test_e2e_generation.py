@@ -50,8 +50,8 @@ def parse_cli_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--limit",
         type=int,
-        default=1,
-        help="Maximum number of new scenes to render for this test run (default: 1 for quick E2E verification, set 0 for all)",
+        default=0,
+        help="Maximum number of new scenes to render for this test run (default: 0 for all pending scenes, set 1 for single-scene checkpoint)",
     )
     parser.add_argument(
         "--scene",

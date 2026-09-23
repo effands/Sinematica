@@ -12,12 +12,19 @@
   'use strict';
 
   const PROJECT_UUID_REGEX = /project\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+  const USER_PREFIX_REGEX = /\/u\/(\d+)/i;
 
   const FlowProject = {
     detectProjectIdFromUrl(url) {
       if (!url || typeof url !== 'string') return null;
       const match = url.match(PROJECT_UUID_REGEX);
       return match ? match[1] : null;
+    },
+
+    extractUserPrefix(url) {
+      if (!url || typeof url !== 'string') return '';
+      const match = url.match(USER_PREFIX_REGEX);
+      return match ? `/u/${match[1]}` : '';
     },
 
     extractActiveProjectId(tabs = []) {
@@ -47,8 +54,17 @@
       }
     },
 
-    buildProjectUrl(projectId) {
-      return `https://flow.google.com/project/${encodeURIComponent(projectId)}`;
+    buildProjectUrl(projectId, userPrefix = '') {
+      let prefix = '';
+      if (userPrefix) {
+        if (userPrefix.startsWith('http')) {
+          prefix = this.extractUserPrefix(userPrefix);
+        } else {
+          const match = userPrefix.match(USER_PREFIX_REGEX);
+          prefix = match ? `/u/${match[1]}` : (userPrefix.startsWith('/') ? userPrefix : `/${userPrefix}`);
+        }
+      }
+      return `https://flow.google.com${prefix}/project/${encodeURIComponent(projectId)}`;
     }
   };
 

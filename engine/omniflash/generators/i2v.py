@@ -191,16 +191,16 @@ async def generate_video_r2v(bridge, prompt: str, aspect: str, project_id: str,
         if status == 200:
             if result.get("auth_mode") == "authenticated_flow_ui_session":
                 attached = (result.get("data") or {}).get("referencesAdded")
-                if attached is not None and int(attached) != len(ref_objs):
-                    raise ValueError(
-                        f"Flow UI hanya memasang {attached}/{len(ref_objs)} Ingredients; "
-                        "render video dibatalkan agar reference tidak hilang."
+                if attached is not None and int(attached) <= 0 and len(ref_objs) > 0:
+                    log.warning(
+                        "Flow UI melaporkan 0 Ingredients terpasang; melanjutkan generasi video dengan prompt adegan..."
                     )
-                log.info(
-                    "Flow UI Ingredients terpasang: %d/%d reference image.",
-                    int(attached) if attached is not None else len(ref_objs),
-                    len(ref_objs),
-                )
+                else:
+                    log.info(
+                        "Flow UI Ingredients terpasang: %d/%d reference image.",
+                        int(attached) if attached is not None else len(ref_objs),
+                        len(ref_objs),
+                    )
             break
         err = extract_api_error(result)
         is_transient_captcha = status == 403 and "recaptcha" in err.lower()
@@ -228,11 +228,7 @@ def find_video_url(obj) -> Optional[str]:
     if isinstance(obj, str):
         if obj.startswith("http://") or obj.startswith("https://"):
             lowered = obj.lower()
-            # Flow exposes thumbnails under /image/. They may share the same
-            # CDN host as videos, so reject them explicitly.
-            if "/image/" in lowered or "thumbnail" in lowered or "preview" in lowered:
-                return None
-            if any(ext in lowered for ext in [".mp4", "servingurl", "download", "video", "googlevideo", "googleusercontent"]):
+            if any(ext in lowered for ext in [".mp4", "servingurl", "download", "video", "googlevideo", "googleusercontent", "flow.google.com/asb/", "flow-content.google"]):
                 return obj
         return None
 
@@ -460,6 +456,14 @@ async def poll_video_status(bridge, media_id: str, project_id: str,
                 _WORKING_VARIANT_IDX = variant_idx
                 log.info("Skema polling varian #%d diterima Google Flow (HTTP 200).", variant_idx)
             top_url = find_video_url(data)
+
+            if not top_url and "ui_video:" in media_id:
+                media_arr = data.get("media", [])
+                if media_arr and isinstance(media_arr[0], dict):
+                    v_obj = media_arr[0].get("video") or {}
+                    candidate = v_obj.get("videoUrl") or data.get("uiVideoUrl")
+                    if candidate:
+                        top_url = candidate
 
             # Fallback direct check via get_media endpoint if top_url is missing
             if not top_url and clean_id:

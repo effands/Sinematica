@@ -383,6 +383,11 @@ function initAspectRatioDefault() {
   if (!select) return;
   localStorage.removeItem('sinematica_default_aspect_ratio');
   select.value = 'portrait';
+  select.addEventListener('change', (e) => {
+    if (typeof currentStoryboard !== 'undefined' && currentStoryboard) {
+      currentStoryboard.aspect_ratio = e.target.value;
+    }
+  });
 }
 
 // Toast Notifications Helper
@@ -692,7 +697,7 @@ function initStoryboardImportModal() {
     try {
       const storyboard = parseImportedStoryboard(jsonArea.value);
       const previous = storyboardImportMode === 'replace' ? currentStoryboard : null;
-      storyboard.aspect_ratio = previous?.aspect_ratio || document.getElementById('aspectSelect')?.value || 'portrait';
+      storyboard.aspect_ratio = previous?.aspect_ratio || document.getElementById('aspectSelect')?.value || 'landscape';
       storyboard.scene_count = storyboard.scenes.length;
       storyboard.target_lang = previous?.target_lang || document.getElementById('targetLanguageInput')?.value || 'Indonesia';
       storyboard.target_country = previous?.target_country || document.getElementById('targetCountryInput')?.value || '';
@@ -2522,7 +2527,7 @@ function initStoryboardForm() {
       : 1;
 
     const aspectSelect = document.getElementById('aspectSelect') || document.getElementById('aspectRatioSelect') || document.getElementById('settingAspectRatio');
-    const aspectRatio = aspectSelect ? aspectSelect.value : 'portrait';
+    const aspectRatio = aspectSelect ? aspectSelect.value : 'landscape';
 
     const seedEl = document.getElementById('characterSeedInput') || document.getElementById('characterSeed');
     const seed = seedEl ? seedEl.value.trim() : '';
@@ -2787,7 +2792,7 @@ function initStoryboardForm() {
       }
 
       const aspectEl = document.getElementById('aspectSelect') || document.getElementById('settingAspectRatio');
-      const aspect = (currentStoryboard && currentStoryboard.aspect_ratio) || (aspectEl ? aspectEl.value : 'portrait');
+      const aspect = (currentStoryboard && currentStoryboard.aspect_ratio) || (aspectEl ? aspectEl.value : 'landscape');
       const durSel = document.getElementById('durationPerSceneSelect').value;
       const isAutoDur = durSel === 'auto';
       const durPerScene = isAutoDur ? 10 : (parseInt(durSel) || 10);

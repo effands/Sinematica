@@ -92,8 +92,19 @@
 
   chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (msg.type === 'ENSURE_PROJECT_CANVAS' || msg.action === 'ENSURE_PROJECT_CANVAS') {
+      const url = window.location.href || '';
+      const userPrefix = url.match(/\/u\/(\d+)/i)?.[0] || '';
+      const projId = msg.projectId;
+      if (projId && /^[0-9a-fA-F-]{36}$/.test(projId) && !url.includes(projId)) {
+        window.location.href = `https://flow.google.com${userPrefix}/project/${projId}`;
+        reply({ ok: true, navigated: true });
+        return true;
+      }
       const btn = document.querySelector('button.new-project-button') ||
-                  Array.from(document.querySelectorAll('button')).find(b => /new project/i.test(b.innerText || ''));
+                  Array.from(document.querySelectorAll('button, a, [role="button"], div')).find(b => {
+                    const text = (b.innerText || b.textContent || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                    return text.includes('new project') || text.includes('project baru') || text.includes('proyek baru');
+                  });
       if (btn) {
         btn.click();
         reply({ ok: true, clicked: true });
@@ -316,19 +327,19 @@
   } else {
     ensureMainWorldScripts();
   }
-  // Auto-detect and enter project canvas if idle on home page
+  // Auto-detect and enter project canvas ONLY on initial home landing without interfering with active canvas
   if (typeof window !== 'undefined' && window.location.hostname.includes('flow.google.com')) {
-    if (!window.location.pathname.includes('/project/')) {
+    if (window.location.pathname === '/' || window.location.pathname === '') {
       setTimeout(() => {
-        if (!window.location.pathname.includes('/project/')) {
+        if (window.location.pathname === '/' || window.location.pathname === '') {
           const btn = document.querySelector('button.new-project-button') ||
                       Array.from(document.querySelectorAll('button')).find(b => /new project/i.test(b.innerText || ''));
           if (btn) {
-            console.log('[Sinematica Agent] Auto-clicking New project button to initialize canvas...');
+            console.log('[Sinematica Agent] Initializing project canvas on root landing...');
             btn.click();
           }
         }
-      }, 1500);
+      }, 2500);
     }
   }
 })();

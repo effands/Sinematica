@@ -514,35 +514,52 @@
     }
 
     async ensureProject() {
-      this.notifyProgress('ENSURE_PROJECT', 'Membuka atau membuat proyek baru di Google Flow...');
+      this.notifyProgress('ENSURE_PROJECT', 'Memeriksa kanvas proyek Google Flow...');
       const url = typeof window !== 'undefined' ? window.location.href : '';
 
       if (typeof document !== 'undefined') {
-        if (/\/project\/[0-9a-fA-F-]{36}/i.test(url) && (document.querySelector('.ProseMirror') || document.querySelector('[contenteditable="true"]'))) {
+        // If already in project URL, stay in project and wait for composer
+        if (/\/project\/[0-9a-fA-F-]{36}/i.test(url)) {
+          // If on an asset edit subpath, navigate back to project root
+          if (/\/edit\//i.test(url)) {
+            const rootMatch = url.match(/(https:\/\/[^/]+(?:\/u\/\d+)?\/project\/[0-9a-fA-F-]{36})/i);
+            if (rootMatch && typeof window !== 'undefined') {
+              window.location.href = rootMatch[1];
+              await sleep(1500);
+            }
+          }
+          await waitFor(() => {
+            return document.querySelector('.ProseMirror') || document.querySelector(SELECTORS.PROMPT_INPUT) || document.querySelector('[contenteditable="true"]');
+          }, 8000).catch(() => {});
           return true;
         }
 
-        const findNewProjectBtn = () => {
-          return document.querySelector('button.new-project-button') ||
-                 Array.from(document.querySelectorAll('button, a, [role="button"]')).find((el) => {
-                   const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim();
-                   return /new project/i.test(text) && !el.closest('flow-prompt-box');
-                 }) ||
-                 document.querySelector('[aria-label*="new project" i]') ||
-                 document.querySelector('.new-project-card');
-        };
-
-        let newProjectBtn = findNewProjectBtn();
-
-        if (!newProjectBtn && /\/project\/[0-9a-fA-F-]{36}/i.test(url)) {
-          const homeBtn = document.querySelector('a[href="/"], [aria-label*="home" i], .flow-logo, [data-test-id*="home"]');
-          if (homeBtn) {
-            await simulateClick(homeBtn);
-            await sleep(1500);
-            newProjectBtn = findNewProjectBtn();
+        // If we know the project ID from active state or storage, navigate directly
+        const knownProjectId = this.currentProjectId || (typeof window !== 'undefined' && window.__sinematicaActiveProjectId);
+        if (knownProjectId && /^[0-9a-fA-F-]{36}$/.test(knownProjectId)) {
+          const userPrefix = url.match(/\/u\/(\d+)/i)?.[0] || '';
+          if (typeof window !== 'undefined') {
+            window.location.href = `https://flow.google.com${userPrefix}/project/${knownProjectId}`;
+            await sleep(2000);
+            await waitFor(() => {
+              return document.querySelector('.ProseMirror') || document.querySelector(SELECTORS.PROMPT_INPUT) || document.querySelector('[contenteditable="true"]');
+            }, 10000).catch(() => {});
+            return true;
           }
         }
 
+        // Only on root/home page, look for existing project card or new project button
+        const findNewProjectBtn = () => {
+          return document.querySelector('button.new-project-button') ||
+                 Array.from(document.querySelectorAll('button, a, [role="button"], div')).find((el) => {
+                   const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim().toLowerCase();
+                   return (text.includes('new project') || text.includes('project baru') || text.includes('proyek baru')) && !el.closest('flow-prompt-box');
+                 }) ||
+                 document.querySelector('[aria-label*="new project" i], [aria-label*="project baru" i]') ||
+                 document.querySelector('.new-project-card, flow-project-card');
+        };
+
+        const newProjectBtn = findNewProjectBtn();
         if (newProjectBtn) {
           if (typeof newProjectBtn.click === 'function') newProjectBtn.click();
           else simulateClick(newProjectBtn);
@@ -551,7 +568,7 @@
 
         await waitFor(() => {
           return document.querySelector('.ProseMirror') || document.querySelector(SELECTORS.PROMPT_INPUT) || /\/project\/[0-9a-fA-F-]{36}/i.test(window.location.href);
-        }, 20000).catch(() => {});
+        }, 15000).catch(() => {});
       }
 
       return true;
@@ -928,12 +945,12 @@
           ? Array.from(promptBox.querySelectorAll('button, [role="button"], div[role="button"]'))
           : [];
 
-        let settingsTrigger = (typeof promptBox.querySelector === 'function' ? promptBox.querySelector('.settings-trigger-button, button[aria-label="Settings trigger"], [data-test-id*="settings-trigger"]') : null) ||
+        let settingsTrigger = (typeof promptBox.querySelector === 'function' ? promptBox.querySelector('.settings-trigger-button, button[aria-label="Settings trigger"], button[aria-label*="Pemicu setelan" i], [data-test-id*="settings-trigger"]') : null) ||
           promptButtons.find((btn) => {
             const text = (btn.innerText || btn.textContent || '').trim();
             const aria = typeof btn.getAttribute === 'function' ? (btn.getAttribute('aria-label') || '') : '';
             return text.includes('·') || /720p|1080p|9:16|16:9|x1|x2|x4|banana|veo|video|image/i.test(text) ||
-                   aria.toLowerCase().includes('settings trigger') || aria.toLowerCase().includes('settings') || aria.toLowerCase().includes('tune');
+                   aria.toLowerCase().includes('settings trigger') || aria.toLowerCase().includes('pemicu setelan') || aria.toLowerCase().includes('settings') || aria.toLowerCase().includes('tune');
           });
 
         if (!settingsTrigger && promptButtons.length >= 2) {
@@ -1067,12 +1084,12 @@
           ? Array.from(promptBox.querySelectorAll('button, [role="button"], div[role="button"]'))
           : [];
 
-        let settingsTrigger = (typeof promptBox.querySelector === 'function' ? promptBox.querySelector('.settings-trigger-button, button[aria-label="Settings trigger"], [data-test-id*="settings-trigger"]') : null) ||
+        let settingsTrigger = (typeof promptBox.querySelector === 'function' ? promptBox.querySelector('.settings-trigger-button, button[aria-label="Settings trigger"], button[aria-label*="Pemicu setelan" i], [data-test-id*="settings-trigger"]') : null) ||
           promptButtons.find((btn) => {
             const text = (btn.innerText || btn.textContent || '').trim();
             const aria = typeof btn.getAttribute === 'function' ? (btn.getAttribute('aria-label') || '') : '';
             return text.includes('·') || /720p|1080p|9:16|16:9|x1|x2|x4|banana|veo|video|image/i.test(text) ||
-                   aria.toLowerCase().includes('settings trigger') || aria.toLowerCase().includes('settings') || aria.toLowerCase().includes('tune');
+                   aria.toLowerCase().includes('settings trigger') || aria.toLowerCase().includes('pemicu setelan') || aria.toLowerCase().includes('settings') || aria.toLowerCase().includes('tune');
           });
 
         if (!settingsTrigger && promptButtons.length >= 2) {

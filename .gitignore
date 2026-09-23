@@ -9,6 +9,8 @@ env/
 .worktrees/
 storage/jobs/
 storage/uploads/
+storage/film_assets/
+storage/test_*
 data/*.log
 *.log
 data/settings.json

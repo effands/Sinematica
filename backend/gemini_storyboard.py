@@ -1514,7 +1514,7 @@ def generate_storyboard(
     )
     creative_brief_rules = build_creative_brief_prompt(creative_brief)
     visual_style_contracts = {
-        "live_action": "LIVE-ACTION CINEMATIC PHOTOGRAPHY: real human actors, natural skin pores, realistic hair and fabric, physically based lighting. Never cartoon, anime, illustration, cel shading, or stylized 3D.",
+        "live_action": "LIVE-ACTION CINEMATIC PHOTOGRAPHY: original fictional characters, natural skin texture and pores, realistic hair and fabric physics, physically based lighting. Never cartoon, anime, 3D CGI animation, Pixar style, illustration, cel shading, doll-like face, or plastic skin.",
         "3d_cartoon": "STYLIZED 3D ANIMATION: consistent sculpted 3D characters, rounded modeled forms, physically based 3D materials, feature-animation lighting. Never live-action humans, photoreal photography, 2D drawing, anime, or cel animation.",
         "2d_animation": "HAND-DRAWN 2D ANIMATION: consistent line art, flat graphic shapes, controlled cel shading, painted 2D backgrounds, fixed model-sheet proportions. Never live-action photography, realistic skin pores, 3D render, clay, or photorealism.",
         "anime_2d": "2D ANIME PRODUCTION STYLE: consistent anime model sheets, clean ink lines, cel shading, expressive anime faces, painted 2D backgrounds. Never live-action photography, photoreal skin, western 3D cartoon, clay, or realistic CGI.",
@@ -1892,9 +1892,14 @@ tokoh. Jangan membuat nama lokal/generik pengganti seperti Arya, Bagas, atau pen
 {character_info or 'Jika karakter belum diberi nama, rancang karakter baru satu kali lalu kunci identitasnya untuk semua scene.'}
 """
 
+    aspect_display = "16:9 Widescreen Landscape (Film / YouTube)" if str(aspect_ratio).lower() in {"landscape", "16:9"} else "9:16 Vertical Portrait (TikTok / Reels / Shorts)"
+    aspect_instruction = f"FORMAT ASPEK RASIO: {aspect_ratio.upper()} ({aspect_display}). Seluruh komposisi visual, framing kamera, blocking tokoh, gambar storyboard, dan prompt_for_flow WAJIB konsisten dirancang dalam rasio {aspect_display}."
+
     system_prompt = f"""
 Anda adalah Sutradara Film AI Sinematik Kelas Dunia & Visual Director untuk Google Flow Omni Flash.
 Tugas Anda adalah meracik **STORYBOARD SINEMATIK KONSISTEN BANYAK KARAKTER & DYNAMIC MULTI-ANGLE CAMERA ({scene_count} ADEGAN/SCENE)**.
+
+{aspect_instruction}
 
 BAHASA OUTPUT UTAMA: {target_lang} (Semua ringkasan aksi, narasi voiceover, teks overlay, dan dialog WAJIB DITULIS DALAM BAHASA {target_lang} SECARA MUTLAK, MESKIPUN PREMIS AWAL DALAM BAHASA LAIN!).
 REGISTER BAHASA: {target_language_rules}
@@ -2293,6 +2298,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
             storyboard["source_script"] = premise
         if affiliate_config.get("enabled"):
             storyboard["affiliate_product"] = affiliate_config
+        storyboard["aspect_ratio"] = aspect_ratio
         storyboard["generated_via"] = result.provider
         storyboard["generated_model"] = result.model
         storyboard["story_parts"] = _story_parts_meta(
@@ -2390,6 +2396,7 @@ OUTPUT WAJIB FORMAT JSON VALID (Tanpa markdown tambahan di luar JSON):
                 storyboard["source_script"] = premise
             if affiliate_config.get("enabled"):
                 storyboard["affiliate_product"] = affiliate_config
+            storyboard["aspect_ratio"] = aspect_ratio
             storyboard["generated_via"] = "web2api_fallback"
             storyboard["story_parts"] = _story_parts_meta(
                 story_part_number=story_part_number,

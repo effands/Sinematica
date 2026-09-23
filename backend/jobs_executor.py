@@ -652,7 +652,7 @@ def build_visual_style_guard(visual_style: str = "live_action", children_mode: b
     """Lock one rendering medium across character sheets, boards, and final video."""
     style = visual_style or ("3d_cartoon" if children_mode else "live_action")
     contracts = {
-        "live_action": "LIVE-ACTION PHOTOGRAPHY ONLY: real human actors, natural skin pores, realistic hair and fabric, optical cinematic camera capture. NO cartoon, anime, illustration, painting, comic art, stylized 3D, doll-like face, or cel shading.",
+        "live_action": "LIVE-ACTION PHOTOGRAPHY ONLY: original fictional characters, natural skin texture and pores, realistic hair and fabric physics, optical cinematic camera capture. NO cartoon, anime, 3D CGI animation, Pixar style, illustration, painting, comic art, doll-like face, plastic skin, or cel shading.",
         "3d_cartoon": "STYLIZED 3D ANIMATION ONLY: sculpted 3D characters, modeled volume, rounded forms, physically based 3D materials, feature-animation lighting, identical model-sheet proportions. NO live-action people, photography, realistic skin pores, 2D drawing, anime, or flat cel animation.",
         "2d_animation": "HAND-DRAWN 2D ANIMATION ONLY: clean consistent line art, flat graphic shapes, controlled cel shading, painted 2D backgrounds, identical model-sheet proportions. NO live-action photography, photoreal skin, 3D render, clay, CGI volume, or anime-style redesign.",
         "anime_2d": "2D ANIME PRODUCTION STYLE ONLY: clean ink lines, consistent anime model sheets, controlled cel shading, expressive anime faces, painted 2D backgrounds. NO live-action photography, photoreal skin, western 3D cartoon, clay, or realistic CGI.",
@@ -892,20 +892,41 @@ async def download_file(
     media_id: Optional[str] = None, project_id: Optional[str] = None,
     media_kind: str = "video",
 ):
-    # The authenticated Flow UI fallback returns a browser-resolved signed URL
-    # wrapped as ui_video:<base64(url)>.  It is already the concrete download
-    # target; treating the wrapper as a Flow media UUID makes the tRPC resolver
-    # look up the wrong resource (and can yield HTTP 401 or a thumbnail URL).
-    if isinstance(url, str) and url.startswith("ui_video:"):
+    # Check for ui_video wrapper in either url or media_id
+    raw_ui_token = None
+    if isinstance(url, str) and "ui_video:" in url:
+        raw_ui_token = url
+    elif media_id and "ui_video:" in str(media_id):
+        raw_ui_token = str(media_id)
+
+    if raw_ui_token:
         import base64
-        encoded_url = url.split(":", 1)[1]
+        encoded_url = raw_ui_token.split("ui_video:", 1)[1].split("?", 1)[0].strip()
         try:
             decoded_url = base64.urlsafe_b64decode(encoded_url + "=" * (-len(encoded_url) % 4)).decode("utf-8")
         except Exception as ex:
             raise RuntimeError(f"Handle video Flow UI tidak valid: {ex}") from ex
         if not decoded_url.startswith(("https://", "http://")):
-            raise RuntimeError("Handle video Flow UI tidak berisi URL unduhan yang valid.")
+            raise RuntimeError(f"Handle video Flow UI tidak berisi URL unduhan yang valid: {decoded_url}")
+        
+        # 1. Try direct stream download for public / signed CDN targets
+        try:
             await asyncio.to_thread(stream_download, decoded_url, dest_path, media_kind=media_kind)
+            if dest_path.exists() and dest_path.stat().st_size > 1000:
+                return
+        except Exception as dl_ex:
+            log.info("Unduhan langsung URL UI belum berhasil (%s); mencoba via extension bridge...", dl_ex)
+
+        # 2. Try download through extension with authenticated cookies & session
+        try:
+            result = await bridge.download_url_with_retry(
+                decoded_url, instance_id=instance_id, timeout=300, attempts=3, delay=2
+            )
+            if result and result.get("data"):
+                dest_path.write_bytes(result["data"])
+                return
+        except Exception as bridge_dl_ex:
+            log.warning("Unduhan via extension bridge gagal: %s", bridge_dl_ex)
         return
     if url.startswith("data:"):
         import base64
@@ -1431,7 +1452,7 @@ async def execute_storyboard_job(
                             bridge,
                             prompt=(char_prompt + build_visual_style_guard(visual_style, is_children)
                                     + build_finishing_look_guard(storyboard)),
-                            aspect="portrait", project_id=seed_project_id,
+                            aspect="landscape", project_id=seed_project_id,
                             instance_id=seed_instance_id,
                             reference_media_ids=reference_media_ids or None,
                             reference_image_paths=owned_reference_paths or None,
@@ -1771,6 +1792,18 @@ async def execute_storyboard_job(
                         )
                     sb_chars = resolve_scene_characters(sb_sc, characters, sb_character_media_ids)
                     sb_ref_ids = [c["media_id"] for c in sb_chars if c.get("media_id")]
+                    sb_ref_paths = []
+                    for c in sb_chars:
+                        cid = c.get("id")
+                        cname = str(c.get("name") or "").lower()
+                        src = (
+                            character_image_paths.get(cid)
+                            or character_image_paths.get(str(cid))
+                            or character_image_paths.get(cname)
+                        )
+                        if src and Path(src).is_file():
+                            sb_ref_paths.append(str(src))
+
                     profile_prompt = (
                         sb_prompt
                         + build_sheet_manifest(sb_chars)
@@ -1788,9 +1821,10 @@ async def execute_storyboard_job(
                                 f"[Percobaan {sb_try}/3]...",
                             )
                             sb_res = await generate_character_image(
-                                bridge, prompt=profile_prompt, aspect=aspect_ratio,
+                                bridge, prompt=profile_prompt, aspect="landscape",
                                 project_id=sb_project_id, instance_id=sb_target_id,
                                 reference_media_ids=sb_ref_ids,
+                                reference_image_paths=sb_ref_paths,
                                 seed=storyboard.get("character_seed"),
                             )
                             if sb_res.get("media_id"):
@@ -1848,10 +1882,13 @@ async def execute_storyboard_job(
                     log_event(job_id, f"⏸️ [TAHAP 2/3] {job_state['error']}", level="warning")
                     _save_history()
                     return
-                raise RuntimeError(
-                    f"Storyboard scene {sb_idx} tidak berhasil dibuat sebagai Image: "
-                    f"{sb_last_error or 'tidak ada profil Flow yang siap'}"
+                log_event(
+                    job_id,
+                    f"⚠️ [TAHAP 2/3] Storyboard Image scene {sb_idx}/{total_scenes} dilewati ({sb_last_error or 'Image fallback tidak tersedia'}); melanjutkan langsung dengan referensi karakter...",
+                    level="warning",
                 )
+                job_state["execution_stage_completed"] = sb_idx
+                continue
 
             sb_path = job_dir / f"storyboard_{sb_idx:02d}.png"
             if sb_res.get("image_url"):
@@ -1878,6 +1915,7 @@ async def execute_storyboard_job(
 
     # Step 3: Render each scene video across connected Chrome profiles, only
     # after every storyboard above has completed.
+    log_event(job_id, f"🎬 [TRANSISI TAHAP 2 ➔ 3] Seluruh {total_scenes} storyboard Image siap! Memulai perenderan Video Adegan 1..{total_scenes}...")
     job_state["execution_stage"] = "videos"
     job_state["execution_stage_total"] = total_scenes
     job_state["execution_stage_completed"] = 0
@@ -1993,7 +2031,6 @@ async def execute_storyboard_job(
         prompt += build_scene_blueprint_guard(sc)
         prompt += build_render_realism_guard(storyboard)
         prompt += build_physical_execution_guard(sc, prompt=sc.get('prompt_for_flow') or '')
-        prompt += "\n\nREFERENCE TEXT EXCLUSION LOCK: Any name, seed number, label, title bar, UI box, caption, border, or printed metadata visible in reference images is not part of the scene. Never render it, copy it, float it, overlay it, or turn it into a sign/card/subtitle. The final video frame must contain only the cinematic scene and physical story objects. No readable text unless explicitly required by the story, and even then use blurred/unreadable marks instead of words."
         prompt += "\n\nREFERENCE TEXT EXCLUSION LOCK: Any name, seed number, label, title bar, UI box, caption, border, or printed metadata visible in reference images is not part of the scene. Never render it, copy it, float it, overlay it, or turn it into a sign/card/subtitle. The final video frame must contain only the cinematic scene and physical story objects. No readable text unless explicitly required by the story, and even then use blurred/unreadable marks instead of words."
 
         out_filename = f"scene_{idx:02d}.mp4"
@@ -2223,7 +2260,7 @@ async def execute_storyboard_job(
                         log_event(job_id, f"🖼️ [Adegan {idx}/{total_scenes}] Membuat gambar storyboard adegan di Google Flow [Percobaan {sb_try}/3] — melampirkan sheet: {who}...")
                         from omniflash.generators import generate_character_image
                         sb_img_res = await generate_character_image(
-                            bridge, prompt=storyboard_prompt, aspect=aspect_ratio, project_id=project_id,
+                            bridge, prompt=storyboard_prompt, aspect="landscape", project_id=project_id,
                             instance_id=sb_target_id, reference_media_ids=sb_ref_ids,
                             seed=storyboard.get("character_seed"),
                         )

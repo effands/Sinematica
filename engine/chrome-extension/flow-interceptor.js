@@ -29,6 +29,17 @@
   function emitFlowEvent(event) {
     if (!event || !event.type) return;
 
+    if (typeof window !== 'undefined') {
+      window.__sinematicaFlowEvents = window.__sinematicaFlowEvents || [];
+      window.__sinematicaFlowEvents.push({ ...event, time: Date.now() });
+      if (event.type === 'VIDEO_READY' || event.status === 'VIDEO_READY') {
+        window.__sinematicaLastVideoReadyEvent = { ...event, time: Date.now() };
+      }
+      if (event.type === 'IMAGE_READY' || event.status === 'IMAGE_READY') {
+        window.__sinematicaLastImageReadyEvent = { ...event, time: Date.now() };
+      }
+    }
+
     // Deduplicate rapid identical events
     const eventKey = `${event.type}_${event.status}_${event.projectId || ''}_${event.mediaId || ''}_${(event.videoUrls || []).join(',')}_${(event.imageUrls || []).join(',')}_${event.errorCode || ''}`;
     if (eventKey === lastDispatchedEventKey && Date.now() - (event.lastSent || 0) < 500) {

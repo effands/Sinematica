@@ -36,7 +36,11 @@ test('isProjectComposerUrl correctly identifies project root versus subpaths', (
   assert.equal(FlowProject.isProjectComposerUrl(`https://other.google.com/project/${proj}`, proj), false);
 });
 
-test('buildProjectUrl formats the full Flow project URL', () => {
+test('buildProjectUrl formats the full Flow project URL and preserves user prefix', () => {
   const proj = 'aaa1ca86-92ee-4436-b4d5-ace19f4481c9';
   assert.equal(FlowProject.buildProjectUrl(proj), `https://flow.google.com/project/${proj}`);
+  assert.equal(FlowProject.buildProjectUrl(proj, '/u/3'), `https://flow.google.com/u/3/project/${proj}`);
+  assert.equal(FlowProject.buildProjectUrl(proj, 'https://flow.google.com/u/3/project/other-123'), `https://flow.google.com/u/3/project/${proj}`);
+  assert.equal(FlowProject.extractUserPrefix('https://flow.google.com/u/3/project/aaa1ca86-92ee-4436-b4d5-ace19f4481c9'), '/u/3');
+  assert.equal(FlowProject.extractUserPrefix('https://flow.google.com/project/aaa1ca86-92ee-4436-b4d5-ace19f4481c9'), '');
 });

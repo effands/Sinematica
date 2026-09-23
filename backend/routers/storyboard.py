@@ -184,7 +184,7 @@ async def generate_thumbnail_endpoint(req: GenerateThumbnailRequest):
         raise HTTPException(status_code=400, detail="Tidak ada profil Chrome Extension yang terhubung!")
 
     cfg = settings.get_settings()
-    aspect = "portrait" if str(req.aspect_ratio).lower() in {"portrait", "9:16", "vertical"} else "landscape"
+    aspect = "landscape"
 
     from omniflash.generators import generate_character_image
     failures = []

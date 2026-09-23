@@ -1,3 +1,34 @@
+function encodeUiVideoHandle(url) {
+  if (!url || typeof url !== 'string') return `ui_video_${Date.now()}`;
+  try {
+    const b64 = btoa(unescape(encodeURIComponent(url)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    return `ui_video:${b64}`;
+  } catch (_) {
+    return `ui_video:${url.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  }
+}
+
+function decodeUiVideoHandle(handle) {
+  if (!handle || typeof handle !== 'string' || !handle.startsWith('ui_video:')) return null;
+  const raw = handle.slice('ui_video:'.length);
+  try {
+    let b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4 !== 0) b64 += '=';
+    return decodeURIComponent(escape(atob(b64)));
+  } catch (_) {
+    try {
+      let b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4 !== 0) b64 += '=';
+      return atob(b64);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
 /**
  * Sinematica Flow Agent — Chrome Extension Background Service Worker
  * Executes API requests natively in tab main world with real reCAPTCHA Enterprise tokens.
@@ -594,64 +625,6 @@ async function sendDownloadChunk(id, index, bytes) {
   ws.send(JSON.stringify({ type: 'download_chunk', id, index, data_base64: btoa(binary) }));
 }
 
-async function handleFlowTask(msg) {
-  const taskId = msg.id || msg.taskId || msg.task_id || `task_${Date.now()}`;
-  try {
-    const targetTab = await FlowTab.ensureFlowTab(chrome);
-    if (!targetTab || !targetTab.id) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'task_response',
-          id: taskId,
-          status: 500,
-          error: 'FLOW_TAB_NOT_READY'
-        }));
-      }
-      return;
-    }
-
-    const tabInfo = await chrome.tabs.get(targetTab.id).catch(() => null);
-    if (tabInfo && tabInfo.status === 'loading') {
-      await new Promise(r => setTimeout(r, 1500));
-    }
-
-    const payload = {
-      taskId,
-      ...msg.params,
-      ...msg,
-      projectId: msg.params?.projectId || msg.projectId || currentProjectId,
-    };
-
-    chrome.tabs.sendMessage(targetTab.id, {
-      type: 'EXECUTE_FLOW_TASK',
-      payload
-    }, (res) => {
-      const lastErr = chrome.runtime.lastError;
-      if (lastErr) {
-        console.warn('[Sinematica Agent] Error sending task to content script:', lastErr.message);
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'task_response',
-            id: taskId,
-            status: 500,
-            error: `CONTENT_SCRIPT_UNREACHABLE: ${lastErr.message}`
-          }));
-        }
-      }
-    });
-  } catch (err) {
-    console.error('[Sinematica Agent] handleFlowTask error:', err);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'task_response',
-        id: taskId,
-        status: 500,
-        error: err.toString()
-      }));
-    }
-  }
-}
-
 async function notifyRegistration() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   let flowTab = null;
@@ -728,6 +701,89 @@ function sendTaskProgress(requestId, stage, message, extra = {}) {
   } catch (_) {}
 }
 
+async function handleFlowTask(msg) {
+  const taskId = msg.id || msg.taskId || msg.task_id || `task_${Date.now()}`;
+  try {
+    const targetTab = await FlowTab.ensureFlowTab(chrome);
+    if (!targetTab || !targetTab.id) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'task_response',
+          id: taskId,
+          status: 500,
+          error: 'FLOW_TAB_NOT_READY'
+        }));
+      }
+      return;
+    }
+
+    const tabInfo = await chrome.tabs.get(targetTab.id).catch(() => null);
+    if (tabInfo && tabInfo.status === 'loading') {
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    const payload = {
+      taskId,
+      ...msg.params,
+      ...msg,
+      projectId: msg.params?.projectId || msg.projectId || currentProjectId,
+    };
+
+    const sendTaskWithInjectionFallback = () => {
+      chrome.tabs.sendMessage(targetTab.id, {
+        type: 'EXECUTE_FLOW_TASK',
+        payload
+      }, async (res) => {
+        const lastErr = chrome.runtime.lastError;
+        if (lastErr) {
+          console.warn('[Sinematica Agent] Content script unreachable, injecting scripts dynamically...');
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: targetTab.id },
+              files: ['flow-network-parser.js', 'flow-executor.js', 'content.js'],
+            });
+            await new Promise(r => setTimeout(r, 600));
+            chrome.tabs.sendMessage(targetTab.id, {
+              type: 'EXECUTE_FLOW_TASK',
+              payload
+            }, (retryRes) => {
+              const retryErr = chrome.runtime.lastError;
+              if (retryErr && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                  type: 'task_response',
+                  id: taskId,
+                  status: 500,
+                  error: `CONTENT_SCRIPT_UNREACHABLE: ${retryErr.message}`
+                }));
+              }
+            });
+          } catch (injectErr) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: 'task_response',
+                id: taskId,
+                status: 500,
+                error: `CONTENT_SCRIPT_UNREACHABLE: ${lastErr.message}`
+              }));
+            }
+          }
+        }
+      });
+    };
+    sendTaskWithInjectionFallback();
+  } catch (err) {
+    console.error('[Sinematica Agent] handleFlowTask error:', err);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'task_response',
+        id: taskId,
+        status: 500,
+        error: err.toString()
+      }));
+    }
+  }
+}
+
 async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId = null) {
   if (!tabId || !requestBody?.requests?.length) {
     return { status: 500, data: { error: 'FLOW_UI_FALLBACK_INVALID_REQUEST' } };
@@ -771,29 +827,40 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
     let composerTabs = (flowTabs || []).filter(isProjectComposer);
     if (!composerTabs.length) {
       const current = await chrome.tabs.get(tabId).catch(() => null);
-      if (current && /\/edit\//i.test(current.url || '') && currentProjectId) {
-        await chrome.tabs.update(tabId, {
-          url: `https://flow.google.com/project/${encodeURIComponent(currentProjectId)}`,
-        });
-        await new Promise(resolve => setTimeout(resolve, 1800));
+      const tabProjId = (current?.url || '').match(/\/project\/([0-9a-fA-F-]+)/i)?.[1] || currentProjectId;
+      const userPrefix = (current?.url || '').match(/\/u\/\d+/i)?.[0] || '';
+      if (tabProjId) {
+        const projectUrl = `https://flow.google.com${userPrefix}/project/${encodeURIComponent(tabProjId)}`;
+        await chrome.tabs.update(tabId, { url: projectUrl });
+        await new Promise(resolve => setTimeout(resolve, 2000));
         flowTabs = await FlowTab.queryFlowTabs(chrome);
         composerTabs = (flowTabs || []).filter(isProjectComposer);
       }
     }
     if (!composerTabs.length) {
       const targetTab = (flowTabs && flowTabs[0]) || (tabId ? await chrome.tabs.get(tabId).catch(() => null) : null);
-      if (targetTab && targetTab.id) {
+      const isAlreadyInProject = targetTab && /\/project\/[0-9a-fA-F-]+/i.test(targetTab.url || '');
+      if (targetTab && targetTab.id && !isAlreadyInProject) {
         try {
-          await chrome.tabs.sendMessage(targetTab.id, { action: 'ENSURE_PROJECT_CANVAS' }).catch(() => null);
+          await chrome.tabs.sendMessage(targetTab.id, { action: 'ENSURE_PROJECT_CANVAS', projectId: currentProjectId }).catch(() => null);
         } catch (_) {}
         await chrome.scripting.executeScript({
           target: { tabId: targetTab.id },
           world: 'MAIN',
-          func: async () => {
+          func: async (knownProjId) => {
+            const userPrefix = window.location.href.match(/\/u\/\d+/i)?.[0] || '';
+            if (knownProjId && /^[0-9a-fA-F-]{36}$/.test(knownProjId)) {
+              window.location.href = `https://flow.google.com${userPrefix}/project/${knownProjId}`;
+              return;
+            }
             const btn = document.querySelector('button.new-project-button') ||
-              Array.from(document.querySelectorAll('button, a, [role="button"]')).find(el => /new project/i.test((el.innerText || el.textContent || '').trim()));
+              Array.from(document.querySelectorAll('button, a, [role="button"], div')).find(el => {
+                const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim().toLowerCase();
+                return (text.includes('new project') || text.includes('project baru') || text.includes('proyek baru')) && !el.closest('flow-prompt-box');
+              });
             if (btn) btn.click();
-          }
+          },
+          args: [currentProjectId]
         }).catch(() => null);
         await new Promise(resolve => setTimeout(resolve, 2500));
         flowTabs = await FlowTab.queryFlowTabs(chrome);
@@ -836,16 +903,24 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
                 && (!rect || (rect.width > 0 && rect.height > 0));
           };
           const normalize = (value) => (value || '').toLowerCase().trim();
+          const allToggles = () => Array.from(document.querySelectorAll(
+            'flow-toggles mat-button-toggle, mat-button-toggle, [role="radio"], [role="option"], [role="button"], button, label, span, div'
+          ));
           const findLabelNode = (label) => {
             const needle = normalize(label);
-            return Array.from(document.querySelectorAll('button, [role="button"], [role="radio"], [role="option"], mat-button-toggle, label, span, div'))
-              .find((el) => visible(el) && normalize(el.innerText || el.textContent || el.getAttribute('aria-label')) === needle);
+            return allToggles().find(el => {
+              if (!visible(el)) return false;
+              const text = normalize(el.innerText || el.textContent || el.getAttribute('aria-label') || '');
+              const parts = text.split(/[\s\n\r_-]+/);
+              return text === needle || parts.includes(needle) || text.endsWith(` ${needle}`) || text.includes(needle);
+            });
           };
           const clickExact = (label) => {
             const node = findLabelNode(label);
             const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
             if (!target) return false;
-            target.click();
+            const clickTarget = target.querySelector('button') || target;
+            clickTarget.click();
             return true;
           };
           const clickExactEventually = async (label, timeout = 5000) => {
@@ -860,129 +935,228 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
             const node = findLabelNode(label);
             const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
             if (!target) return false;
-            return target.getAttribute('aria-checked') === 'true'
+            const parentTog = target.closest('mat-button-toggle') || target;
+            const btn = parentTog.querySelector('button') || target;
+            return parentTog.classList.contains('mat-button-toggle-checked')
+                || parentTog.getAttribute('aria-checked') === 'true'
+                || btn.getAttribute('aria-checked') === 'true'
                 || node.getAttribute('aria-pressed') === 'true'
-                || /(^|\s)(selected|checked|active)(\s|$)/i.test(target.className?.baseVal || target.className || '')
-                || target.querySelector?.('[aria-checked="true"],[aria-selected="true"]');
+                || btn.getAttribute('aria-pressed') === 'true'
+                || /(^|\s)(selected|checked|active)(\s|$)/i.test(parentTog.className)
+                || /(^|\s)(selected|checked|active)(\s|$)/i.test(btn.className);
           };
 
           const addImageReferences = async (ids) => {
             if (!ids.length) return { added: 0, missing: [] };
             notifyProgress('ATTACHING_REFERENCES', `Memasukkan ${ids.length} referensi karakter ke slot composer...`, 20);
             const normalizeText = (value) => normalize(value).replace(/[\s_-]/g, '');
-            const existingIngredients = Array.from(document.querySelectorAll(
-              'button, [role="button"], [aria-label]',
-            )).filter((el) => visible(el) && normalizeText(
-              el.getAttribute('aria-label') || el.innerText || el.textContent,
-            ).includes('ingredient'));
-            if (existingIngredients.length >= ids.length) {
-              return { added: ids.length, missing: [] };
-            }
-            const findAssetNodes = (id) => Array.from(document.querySelectorAll(
-              '[data-media-id],[data-mediaid],[data-asset-id],[role="option"],[role="listitem"]',
-            )).filter((el) => {
-              const text = `${el.getAttribute('data-media-id') || ''} ${el.getAttribute('data-mediaid') || ''} ${el.getAttribute('data-asset-id') || ''} ${el.innerText || ''}`;
-              return text.includes(id) || normalizeText(text).includes(normalizeText(id));
-            });
             const selected = [];
             const missing = [];
+
+            const extractToken = (val) => {
+              if (!val) return '';
+              const str = String(val);
+              const uuid = str.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+              if (uuid) return uuid[1].toLowerCase();
+              const asb = str.match(/AB-n[A-Za-z0-9_-]{12,}/);
+              if (asb) return asb[0];
+              return str.toLowerCase();
+            };
+
             for (const id of ids) {
-              const trigger = Array.from(document.querySelectorAll('button,[aria-label]')).find((el) =>
-                visible(el) && normalizeText(el.getAttribute('aria-label') || el.innerText).includes('addingredients'));
-              if (!trigger) { missing.push(id); continue; }
-              trigger.click(); await new Promise((resolve) => setTimeout(resolve, 500));
-              const match = findAssetNodes(id).pop();
-              if (!match) { missing.push(id); continue; }
-              (match.closest('button,[role="option"],[role="listitem"],[tabindex]') || match).click();
-              await new Promise((resolve) => setTimeout(resolve, 250));
-              const add = Array.from(document.querySelectorAll('button,[role="button"]')).find((el) =>
-                visible(el) && normalizeText(el.innerText || el.textContent || el.getAttribute('aria-label')).includes('addtoprompt'));
-              if (!add) { missing.push(id); continue; }
-              add.click(); selected.push(id);
-              await new Promise((resolve) => setTimeout(resolve, 400));
+              const token = extractToken(id);
+              let popover = document.querySelector('flow-add-menu-popover-content');
+              if (!popover) {
+                const trigger = document.querySelector('button.add-menu-trigger, button[aria-label*="Add ingredients" i], button[aria-label*="Add media" i]') ||
+                  controls().find(el => visible(el) && normalize(el.getAttribute('aria-label') || '').includes('add ingredients'));
+                if (trigger) {
+                  trigger.click();
+                }
+              }
+
+              let items = [];
+              const deadline = Date.now() + 4000;
+              while (Date.now() < deadline) {
+                popover = document.querySelector('flow-add-menu-popover-content');
+                if (popover) {
+                  items = Array.from(popover.querySelectorAll('button.asset-item, .asset-item'));
+                  if (items.length > 0) break;
+                }
+                await sleep(200);
+              }
+
+              if (!popover) {
+                missing.push(id);
+                continue;
+              }
+
+              // Ensure only Image assets (storyboards & character sheets) are targeted
+              const imagesTab = Array.from(popover.querySelectorAll('[role="tab"], button, .mat-mdc-tab')).find(t => normalize(t.innerText || t.textContent).includes('image'));
+              if (imagesTab) {
+                imagesTab.click();
+                await sleep(300);
+              }
+
+              items = Array.from(popover.querySelectorAll('button.asset-item, .asset-item, [role="option"]'));
+
+              // If popover is in detail view from previous item, click back button
+              const backBtn = popover.querySelector('button[aria-label*="Back" i], button[aria-label*="Kembali" i], button.back-button');
+              if (backBtn && visible(backBtn) && popover.querySelector('button.detail-add-to-prompt-btn')) {
+                backBtn.click();
+                await sleep(300);
+                items = Array.from(popover.querySelectorAll('button.asset-item, .asset-item, [role="option"]'));
+              }
+
+              let matchedItem = null;
+
+              if (token) {
+                matchedItem = items.find(item => {
+                  const img = item.querySelector('img');
+                  const imgSrc = (img?.src || img?.currentSrc || '').toLowerCase();
+                  const text = (item.innerText || item.textContent || '').toLowerCase();
+                  const html = (item.outerHTML || '').toLowerCase();
+                  return imgSrc.includes(token) || text.includes(token) || html.includes(token);
+                });
+              }
+
+              if (!matchedItem && items.length > 0) {
+                const unusedItems = items.filter(item => !selected.includes(item));
+                if (unusedItems.length > 0) {
+                  matchedItem = unusedItems[0];
+                }
+              }
+
+              if (matchedItem) {
+                matchedItem.click();
+                await sleep(350);
+
+                let addBtn = null;
+                const addDeadline = Date.now() + 2500;
+                while (Date.now() < addDeadline) {
+                  addBtn = popover.querySelector('button.detail-add-to-prompt-btn') ||
+                    controls().find(el => visible(el) && !el.disabled && normalize(el.innerText || el.textContent || '').includes('add to prompt'));
+                  if (addBtn && !addBtn.disabled) break;
+                  await sleep(150);
+                }
+
+                if (addBtn) {
+                  addBtn.click();
+                  selected.push(matchedItem);
+                  await sleep(600);
+                } else {
+                  missing.push(id);
+                }
+              } else {
+                missing.push(id);
+              }
             }
+
+            // Close popover if still open
+            const openPopover = document.querySelector('flow-add-menu-popover-content');
+            if (openPopover) {
+              document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+              await sleep(250);
+            }
+
             return { added: selected.length, missing };
           };
 
           const referenceResult = await addImageReferences(requestedReferenceIds || []);
-          if ((requestedReferenceIds || []).length && referenceResult.added !== requestedReferenceIds.length) {
-            return { error: 'FLOW_UI_IMAGE_REFERENCES_INCOMPLETE', references_added: referenceResult.added, references_missing: referenceResult.missing };
+          if ((requestedReferenceIds || []).length && referenceResult.added === 0) {
+            notifyProgress('REFERENCE_WARNING', 'Referensi tidak ditemukan di popover; melanjutkan generate gambar dengan prompt...', 25);
           }
           const editor = document.querySelector('[contenteditable="true"], .ProseMirror, textarea');
           if (!editor) return { error: 'FLOW_UI_COMPOSER_UNAVAILABLE' };
 
           notifyProgress('CONFIGURING_MODE', 'Mengatur opsi gambar (Mode Image, Rasio, 1 output)...', 30);
-          const settings = document.querySelector('button[aria-label="Settings trigger"]');
-          if (!findLabelNode('image')) {
-            settings?.click();
-            await new Promise((resolve) => setTimeout(resolve, 350));
+          // Close any stray top-bar or context menus before opening prompt settings
+          const strayMenu = document.querySelector('.cdk-overlay-pane:not(:has(flow-toggles)):not(:has(flow-add-menu-popover-content))');
+          if (strayMenu) {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+            await sleep(250);
           }
-          if (!await clickExactEventually('image')) return { error: 'FLOW_UI_IMAGE_MODE_CONTROL_MISSING' };
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          if (!selectedExact('image')) return { error: 'FLOW_UI_IMAGE_MODE_NOT_APPLIED' };
 
-          const ratioLabel = requestedRatio === 'IMAGE_ASPECT_RATIO_PORTRAIT' ? '9:16'
-            : requestedRatio === 'IMAGE_ASPECT_RATIO_LANDSCAPE' ? '16:9'
-            : requestedRatio === 'IMAGE_ASPECT_RATIO_3_4' ? '3:4'
-            : requestedRatio === 'IMAGE_ASPECT_RATIO_SQUARE' ? '1:1' : null;
-          if (ratioLabel) await clickExactEventually(ratioLabel);
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          const settings = document.querySelector('flow-prompt-box button.settings-trigger-button, button.settings-trigger-button, flow-prompt-box [aria-label*="Pemicu setelan" i], flow-prompt-box [aria-label*="Settings trigger" i]') ||
+            controls().find(el => visible(el) && el.closest('flow-prompt-box') && (el.className.includes('settings-trigger') || normalize(el.getAttribute('aria-label') || '').includes('pemicu setelan') || normalize(el.getAttribute('aria-label') || '').includes('settings trigger')));
 
-          const trySelectOutputCount = async (count = '1') => {
-            const candidates = [`x${count}`, count, `${count} output`, `${count} image`];
-            for (const cand of candidates) {
-              if (await clickExactEventually(cand, 600)) {
-                await new Promise((resolve) => setTimeout(resolve, 250));
-                return true;
+          const isSettingsPopoverOpen = () => !!document.querySelector('flow-prompt-box-settings, .cdk-overlay-pane:has(flow-toggles)');
+          if (!isSettingsPopoverOpen()) {
+            settings?.click();
+            await new Promise((resolve) => setTimeout(resolve, 400));
+          }
+          const selectFlowOption = async (type, targetValue) => {
+            const normTarget = normalize(targetValue);
+            const getToggles = () => Array.from(document.querySelectorAll('mat-button-toggle-group mat-button-toggle, flow-prompt-box-settings mat-button-toggle, flow-toggles mat-button-toggle, .cdk-overlay-pane mat-button-toggle, mat-button-toggle'));
+            
+            for (let attempt = 0; attempt < 10; attempt++) {
+              const toggles = getToggles();
+              let matched = null;
+
+              if (type === 'ratio') {
+                const is16_9 = normTarget.includes('16:9') || normTarget.includes('landscape') || normTarget.includes('lanskap');
+                const is9_16 = normTarget.includes('9:16') || normTarget.includes('portrait') || normTarget.includes('potret');
+                const is1_1 = normTarget.includes('1:1') || normTarget.includes('square');
+                const is3_4 = normTarget.includes('3:4');
+                const key = is16_9 ? '16:9' : (is9_16 ? '9:16' : (is1_1 ? '1:1' : (is3_4 ? '3:4' : normTarget)));
+                matched = toggles.find(t => {
+                  const txt = normalize(t.innerText || t.textContent);
+                  return txt.includes(key) || (is16_9 && (txt.includes('16_9') || txt.includes('landscape') || txt.includes('lanskap'))) || (is9_16 && (txt.includes('9_16') || txt.includes('portrait') || txt.includes('potret')));
+                });
+              } else if (type === 'count') {
+                const countNum = (normTarget.match(/\d+/) || ['1'])[0];
+                matched = toggles.find(t => {
+                  const txt = normalize(t.innerText || t.textContent);
+                  return txt === `x${countNum}` || txt === countNum || txt.includes(`x${countNum}`);
+                });
+              } else {
+                matched = toggles.find(t => {
+                  const txt = normalize(t.innerText || t.textContent);
+                  if (normTarget === 'image' || normTarget === 'gambar') return txt.includes('image') || txt.includes('gambar');
+                  return txt.includes(normTarget);
+                });
               }
-            }
-            const toggleNodes = Array.from(document.querySelectorAll('flow-toggles mat-button-toggle, mat-button-toggle, button[role="radio"]'));
-            for (const tog of toggleNodes) {
-              const txt = (tog.textContent || tog.getAttribute('aria-label') || '').trim().toLowerCase();
-              if (txt === `x${count}` || txt === count || txt.includes(`x${count}`)) {
-                const btn = tog.querySelector('button') || tog;
+
+              if (matched) {
+                const btn = matched.querySelector('button') || matched;
                 btn.click();
-                await new Promise((resolve) => setTimeout(resolve, 250));
+                await sleep(200);
                 return true;
               }
+              await sleep(150);
             }
             return false;
           };
-          await trySelectOutputCount('1');
 
-          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await selectFlowOption('mode', 'image');
+          await sleep(200);
+
+          const ratioLabel = (requestedRatio === 'IMAGE_ASPECT_RATIO_LANDSCAPE' || requestedRatio === '16:9' || requestedRatio === 'landscape') ? '16:9'
+            : (requestedRatio === 'IMAGE_ASPECT_RATIO_PORTRAIT' || requestedRatio === '9:16' || requestedRatio === 'portrait') ? '9:16'
+            : (requestedRatio === 'IMAGE_ASPECT_RATIO_3_4' || requestedRatio === '3:4') ? '3:4'
+            : (requestedRatio === 'IMAGE_ASPECT_RATIO_SQUARE' || requestedRatio === '1:1' || requestedRatio === 'square') ? '1:1' : '16:9';
+          if (ratioLabel) await selectFlowOption('ratio', ratioLabel);
+          await selectFlowOption('count', '1');
+          await sleep(250);
+
+          const backdrop = document.querySelector('.cdk-overlay-backdrop');
+          if (backdrop) backdrop.click();
+          else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+          await sleep(300);
 
           notifyProgress('TYPING_PROMPT', `Mengisi prompt gambar: "${text.slice(0, 60)}..."`, 40);
           editor.focus();
 
           try {
-            if (typeof DataTransfer !== 'undefined') {
-              const dt = new DataTransfer();
-              dt.setData('text/plain', text);
-              editor.dispatchEvent(new ClipboardEvent('paste', {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                clipboardData: dt,
-              }));
+            document.execCommand('selectAll', false, null);
+            document.execCommand('delete', false, null);
+            if ((editor.innerText || editor.textContent || '').trim().length > 0) {
+              editor.innerHTML = '<p><br></p>';
             }
           } catch (_) {}
 
           try {
-            const selection = window.getSelection();
-            if (selection && typeof selection.selectAllChildren === 'function') {
-              selection.selectAllChildren(editor);
-            }
-            if (typeof document.execCommand === 'function') {
-              document.execCommand('insertText', false, text);
-            }
+            document.execCommand('insertText', false, text);
           } catch (_) {}
-
-          if (!editor.textContent || !editor.textContent.includes(text.slice(0, 10))) {
-            editor.innerText = text;
-            editor.textContent = text;
-          }
 
           try {
             if (typeof InputEvent !== 'undefined') {
@@ -999,9 +1173,19 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
             }
           } catch (_) {}
 
+          const isButtonDisabled = (btn) => {
+            if (!btn) return true;
+            return btn.disabled ||
+              (typeof btn.hasAttribute === 'function' && btn.hasAttribute('disabled')) ||
+              (typeof btn.getAttribute === 'function' && btn.getAttribute('aria-disabled') === 'true') ||
+              (btn.classList && typeof btn.classList.contains === 'function' && btn.classList.contains('mat-mdc-button-disabled'));
+          };
+
           const findStartButton = () => {
+            const direct = document.querySelector('flow-generate-icon-button button, button.generate-icon-button');
+            if (direct && !isButtonDisabled(direct)) return direct;
             const queryAll = Array.from(document.querySelectorAll(
-              'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="hasilkan" i], button',
+              'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="mulai" i], button[aria-label*="hasilkan" i], button',
             ));
             return queryAll.find((el) => {
               const label = [
@@ -1010,41 +1194,46 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
                 el.innerText || '',
                 el.textContent || '',
               ].join(' ').toLowerCase();
-              const isNotDisabled = !el.disabled && !el.hasAttribute('disabled');
-              return (/arrow_forward|create|buat|hasilkan|generate|start generation/i.test(label) || el.closest('flow-generate-icon-button')) && isNotDisabled;
+              return (/arrow_forward|create|buat|mulai|hasilkan|generate|start generation/i.test(label) || el.closest('flow-generate-icon-button')) && !isButtonDisabled(el);
             });
           };
 
           let button = null;
-          const buttonDeadline = Date.now() + 8000;
+          const buttonDeadline = Date.now() + 10000;
           while (Date.now() < buttonDeadline) {
-            button = document.querySelector('button[aria-label="Start generation"]')
+            button = findStartButton()
               || document.querySelector('flow-generate-icon-button button')
-              || findStartButton();
-            const editorText = (editor.innerText || editor.textContent || '').trim();
-            if (button && editorText.length > 0) break;
+              || document.querySelector('button[aria-label*="Start" i], button[aria-label*="Mulai" i]');
+            const isReady = button && !isButtonDisabled(button) && (editor.innerText || editor.textContent || '').trim().length > 0;
+            if (isReady) break;
+
+            try {
+              editor.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: ' ', composed: true }));
+              editor.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', code: 'KeyA', bubbles: true, composed: true }));
+              editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+            } catch (_) {}
+
             await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+
+          if (!button) {
+            button = findStartButton()
+              || document.querySelector('flow-generate-icon-button button')
+              || document.querySelector('button[aria-label*="Start" i], button[aria-label*="Mulai" i]');
           }
 
           if (!button) {
             return { error: 'FLOW_UI_START_BUTTON_NOT_FOUND' };
           }
 
-          const target = button.querySelector('mat-icon, .mat-mdc-button-touch-target') || button;
-          const rect = target.getBoundingClientRect();
+          button.scrollIntoView({ block: 'center', inline: 'center' });
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          editor.focus();
+
+          const rect = button.getBoundingClientRect();
           const clickX = Math.round(rect.left + rect.width / 2);
           const clickY = Math.round(rect.top + rect.height / 2);
-
-          // Dispatch synthetic sequence as immediate attempt
-          try {
-            const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX: clickX, clientY: clickY };
-            target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
-            target.dispatchEvent(new MouseEvent('mousedown', eventInit));
-            target.dispatchEvent(new PointerEvent('pointerup', eventInit));
-            target.dispatchEvent(new MouseEvent('mouseup', eventInit));
-            target.dispatchEvent(new MouseEvent('click', eventInit));
-            button.click();
-          } catch (_) {}
 
           notifyProgress('TRIGGERING_START', 'Menekan tombol Start generation di Google Flow...', 50);
 
@@ -1067,8 +1256,20 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
       }
 
       // Step 2: Trigger hardware-level trusted click via chrome.debugger
+      let clickSucceeded = false;
       if (prepData.clickX && prepData.clickY) {
-        await handleNativeClick(candidateId, prepData.clickX, prepData.clickY);
+        const nativeRes = await handleNativeClick(candidateId, prepData.clickX, prepData.clickY);
+        if (nativeRes?.ok) clickSucceeded = true;
+      }
+      if (!clickSucceeded) {
+        await chrome.scripting.executeScript({
+          target: { tabId: candidateId },
+          world: 'MAIN',
+          func: () => {
+            const btn = document.querySelector('flow-generate-icon-button button, button.generate-icon-button, button[aria-label*="Start" i], button[aria-label*="Mulai" i]');
+            if (btn && !btn.disabled) btn.click();
+          }
+        }).catch(() => null);
       }
 
       // Step 3: Monitor generation and poll for output image
@@ -1086,54 +1287,33 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
           };
           let lastPct = null;
           let retryAttempts = 0;
-          const maxRetries = 3;
           let lastRetryTime = 0;
           let deadline = Date.now() + 90000;
 
           while (Date.now() < deadline) {
             await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            // Direct auto-detect and click for Retry button
-            if (Date.now() - lastRetryTime > 3000 && retryAttempts < maxRetries) {
-              const findRetryButton = () => {
-                const directBtn = document.querySelector('button[aria-label*="Retry" i], button[aria-label*="retry" i], button[aria-label*="coba lagi" i], flow-error-tile button, .error-tile button');
-                if (directBtn) return directBtn;
-                return Array.from(document.querySelectorAll('button')).find((b) => {
-                  const label = (b.getAttribute('aria-label') || b.title || b.innerText || b.textContent || '').trim().toLowerCase();
-                  const iconTxt = (b.querySelector('mat-icon')?.innerText || '').trim().toLowerCase();
-                  const isRetry = label === 'refresh' || label.includes('retry') || label.includes('coba lagi') || iconTxt === 'refresh' || iconTxt === 'replay';
-                  const inErrorTile = !!b.closest('flow-error-tile, .error-tile, [class*="error"], [class*="failed"]') ||
-                    (b.parentElement?.innerText || '').toLowerCase().includes('unusual activity') ||
-                    (b.parentElement?.innerText || '').toLowerCase().includes('failed');
-                  return isRetry && inErrorTile;
-                });
-              };
-
-              const retryBtn = findRetryButton();
-              if (retryBtn) {
-                retryAttempts++;
-                lastRetryTime = Date.now();
-                notifyProgress('AUTO_RETRY', `⚠️ Google Flow mendeteksi kendala ('unusual activity'). Menekan tombol Retry otomatis (Percobaan ${retryAttempts}/${maxRetries})...`, 55);
-
-                const target = retryBtn.querySelector('mat-icon, .mat-mdc-button-touch-target') || retryBtn;
-                const rect = target.getBoundingClientRect();
-                const clientX = Math.round(rect.left + rect.width / 2);
-                const clientY = Math.round(rect.top + rect.height / 2);
-                const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY };
-
-                try {
-                  target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
-                  target.dispatchEvent(new MouseEvent('mousedown', eventInit));
-                  target.dispatchEvent(new PointerEvent('pointerup', eventInit));
-                  target.dispatchEvent(new MouseEvent('mouseup', eventInit));
-                  target.dispatchEvent(new MouseEvent('click', eventInit));
-                  retryBtn.click();
-                } catch (_) {}
-
-                deadline = Math.max(deadline, Date.now() + 60000);
+            // 1. Check window.__sinematicaLastImageReadyEvent from interceptor
+            if (typeof window !== 'undefined' && window.__sinematicaLastImageReadyEvent) {
+              const lastEvt = window.__sinematicaLastImageReadyEvent;
+              const imgUrl = (lastEvt.imageUrls && lastEvt.imageUrls[0]) || (lastEvt.images && lastEvt.images[0] && (lastEvt.images[0].url || lastEvt.images[0].fifeUrl));
+              if (imgUrl && imgIsUsable(imgUrl)) {
+                notifyProgress('IMAGE_READY', 'Gambar karakter berhasil dibuat!', 100);
+                return { image_url: imgUrl };
               }
             }
 
+            // 2. Check newly rendered image tiles on canvas
+            const allImgs = Array.from(document.querySelectorAll('img, flow-media-tile img, [data-media-id] img, .gallery-item img'));
+            const fresh = allImgs
+              .map((img) => img.currentSrc || img.src)
+              .filter((url) => url && !before.has(url) && imgIsUsable(url));
+            if (fresh.length > 0) {
+              notifyProgress('IMAGE_READY', 'Gambar karakter berhasil dibuat!', 100);
+              return { image_url: fresh[fresh.length - 1] };
+            }
+
+            // 3. Progress percentage tracking
             const tileNodes = Array.from(document.querySelectorAll('flow-media-tile, flow-grid-tile-container, flow-image-tile, button, [role="progressbar"]'));
             for (const node of tileNodes) {
               const txt = (node.innerText || node.textContent || '').trim();
@@ -1145,13 +1325,21 @@ async function generateImageViaAuthenticatedFlowUi(tabId, requestBody, requestId
               }
             }
 
-            const allImgs = Array.from(document.querySelectorAll('img, flow-media-tile img, [data-media-id] img, .gallery-item img'));
-            const fresh = allImgs
-              .map((img) => img.currentSrc || img.src)
-              .filter((url) => url && !before.has(url) && imgIsUsable(url));
-            if (fresh.length) {
-              notifyProgress('IMAGE_READY', 'Gambar berhasil dibuat! Mengambil URL aset...', 100);
-              return { image_url: fresh[fresh.length - 1] };
+            // 4. Controlled 1x Auto-Retry on genuine error tiles
+            if (retryAttempts < 1 && Date.now() - lastRetryTime > 8000) {
+              const errorCards = Array.from(document.querySelectorAll('flow-error-tile, .error-tile, [class*="error"], [class*="failed"]')).filter(card => !card.dataset.retried);
+              if (errorCards.length > 0) {
+                const targetCard = errorCards[0];
+                targetCard.dataset.retried = 'true';
+                const retryBtn = targetCard.querySelector('button[aria-label*="Retry" i], button[aria-label*="retry" i], button');
+                if (retryBtn) {
+                  retryAttempts++;
+                  lastRetryTime = Date.now();
+                  notifyProgress('AUTO_RETRY', 'Google Flow menampilkan kartu kendala; mencoba 1x retry...', 55);
+                  retryBtn.click();
+                  deadline = Math.max(deadline, Date.now() + 60000);
+                }
+              }
             }
           }
 
@@ -1236,30 +1424,42 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
       }
     };
     let composerTabs = (flowTabs || []).filter(isProjectComposer);
-    if (!composerTabs.length && currentProjectId) {
+    if (!composerTabs.length) {
       const current = await chrome.tabs.get(tabId).catch(() => null);
-      if (current && /\/edit\//i.test(current.url || '')) {
-        const projectUrl = `https://flow.google.com/project/${encodeURIComponent(currentProjectId)}`;
+      const tabProjId = (current?.url || '').match(/\/project\/([0-9a-fA-F-]+)/i)?.[1] || currentProjectId;
+      const userPrefix = (current?.url || '').match(/\/u\/\d+/i)?.[0] || '';
+      if (tabProjId) {
+        const projectUrl = `https://flow.google.com${userPrefix}/project/${encodeURIComponent(tabProjId)}`;
         await chrome.tabs.update(tabId, { url: projectUrl });
-        await new Promise(resolve => setTimeout(resolve, 1800));
+        await new Promise(resolve => setTimeout(resolve, 2000));
         flowTabs = await FlowTab.queryFlowTabs(chrome);
         composerTabs = (flowTabs || []).filter(isProjectComposer);
       }
     }
     if (!composerTabs.length) {
       const targetTab = (flowTabs && flowTabs[0]) || (tabId ? await chrome.tabs.get(tabId).catch(() => null) : null);
-      if (targetTab && targetTab.id) {
+      const isAlreadyInProject = targetTab && /\/project\/[0-9a-fA-F-]+/i.test(targetTab.url || '');
+      if (targetTab && targetTab.id && !isAlreadyInProject) {
         try {
-          await chrome.tabs.sendMessage(targetTab.id, { action: 'ENSURE_PROJECT_CANVAS' }).catch(() => null);
+          await chrome.tabs.sendMessage(targetTab.id, { action: 'ENSURE_PROJECT_CANVAS', projectId: currentProjectId }).catch(() => null);
         } catch (_) {}
         await chrome.scripting.executeScript({
           target: { tabId: targetTab.id },
           world: 'MAIN',
-          func: async () => {
+          func: async (knownProjId) => {
+            const userPrefix = window.location.href.match(/\/u\/\d+/i)?.[0] || '';
+            if (knownProjId && /^[0-9a-fA-F-]{36}$/.test(knownProjId)) {
+              window.location.href = `https://flow.google.com${userPrefix}/project/${knownProjId}`;
+              return;
+            }
             const btn = document.querySelector('button.new-project-button') ||
-              Array.from(document.querySelectorAll('button, a, [role="button"]')).find(el => /new project/i.test((el.innerText || el.textContent || '').trim()));
+              Array.from(document.querySelectorAll('button, a, [role="button"], div')).find(el => {
+                const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim().toLowerCase();
+                return (text.includes('new project') || text.includes('project baru') || text.includes('proyek baru')) && !el.closest('flow-prompt-box');
+              });
             if (btn) btn.click();
-          }
+          },
+          args: [currentProjectId]
         }).catch(() => null);
         await new Promise(resolve => setTimeout(resolve, 2500));
         flowTabs = await FlowTab.queryFlowTabs(chrome);
@@ -1304,17 +1504,26 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
           };
           const normalize = (value) => (value || '').toLowerCase().trim();
           const controls = () => Array.from(document.querySelectorAll(
-            'button, [role="button"], [role="radio"], [role="option"], [role="listitem"], mat-button-toggle, label, span, div, a',
+            'flow-prompt-box-settings button, flow-prompt-box-settings [role="button"], flow-prompt-box-settings [role="radio"], flow-prompt-box-settings [role="option"], flow-prompt-box-settings mat-button-toggle, flow-prompt-box button, flow-prompt-box [role="button"], flow-add-menu-popover-content button, flow-mobile-add-menu button, button.settings-trigger-button, button.generate-icon-button, button.add-menu-trigger',
+          ));
+          const allToggles = () => Array.from(document.querySelectorAll(
+            'flow-prompt-box-settings mat-button-toggle, flow-prompt-box-settings [role="radio"], flow-prompt-box-settings [role="option"], flow-prompt-box-settings button, flow-prompt-box mat-button-toggle, flow-toggles mat-button-toggle, mat-button-toggle'
           ));
           const findLabelNode = (label) => {
             const needle = normalize(label);
-            return controls().find(el => visible(el) && normalize(el.innerText || el.textContent || el.getAttribute('aria-label')) === needle);
+            return allToggles().find(el => {
+              if (!visible(el)) return false;
+              const text = normalize(el.innerText || el.textContent || el.getAttribute('aria-label') || '');
+              const parts = text.split(/[\s\n\r_-]+/);
+              return text === needle || parts.includes(needle) || text.endsWith(` ${needle}`) || text.includes(needle);
+            });
           };
           const clickExact = (label) => {
             const node = findLabelNode(label);
             const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
             if (!target) return false;
-            target.click();
+            const clickTarget = target.querySelector('button') || target;
+            clickTarget.click();
             return true;
           };
           const clickExactEventually = async (label, timeout = 5000) => {
@@ -1327,7 +1536,7 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
           };
           const clickContains = (needle) => {
             const normalized = normalize(needle);
-            const target = controls().find(el => visible(el) && normalize(el.innerText || el.textContent || el.getAttribute('aria-label')).includes(normalized));
+            const target = allToggles().find(el => visible(el) && normalize(el.innerText || el.textContent || el.getAttribute('aria-label')).includes(normalized));
             if (!target) return false;
             (target.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || target).click();
             return true;
@@ -1336,10 +1545,15 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
             const node = findLabelNode(label);
             const target = node?.closest('button,[role="radio"],[role="option"],mat-button-toggle,label') || node;
             if (!target) return false;
-            return target.getAttribute('aria-checked') === 'true'
+            const parentTog = target.closest('mat-button-toggle') || target;
+            const btn = parentTog.querySelector('button') || target;
+            return parentTog.classList.contains('mat-button-toggle-checked')
+                || parentTog.getAttribute('aria-checked') === 'true'
+                || btn.getAttribute('aria-checked') === 'true'
                 || node.getAttribute('aria-pressed') === 'true'
-                || /(^|\s)(selected|checked|active)(\s|$)/i.test(target.className?.baseVal || target.className || '')
-                || target.querySelector?.('[aria-checked="true"],[aria-selected="true"]');
+                || btn.getAttribute('aria-pressed') === 'true'
+                || /(^|\s)(selected|checked|active)(\s|$)/i.test(parentTog.className)
+                || /(^|\s)(selected|checked|active)(\s|$)/i.test(btn.className);
           };
           const setInputValue = (input, value) => {
             if (!input) return false;
@@ -1395,15 +1609,31 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
 
             for (const id of ids) {
               const token = extractToken(id);
-              let popover = document.querySelector('flow-add-menu-popover-content');
+              let popover = document.querySelector('flow-add-menu-popover-content, flow-mobile-add-menu, .mobile-add-menu-container');
               if (!popover) {
-                const trigger = document.querySelector('button[aria-label*="Add ingredients" i]') ||
-                  controls().find(el => normalize(el.getAttribute('aria-label')).includes('add ingredients'));
-                if (trigger) {
+                const trigger = document.querySelector('button.add-menu-trigger, button[aria-label*="Add ingredients" i], button[aria-label*="Add media" i]') ||
+                  controls().find(el => normalize(el.getAttribute('aria-label') || '').includes('add ingredients'));
+                if (trigger && !trigger.classList.contains('add-menu-trigger-active')) {
                   trigger.click();
-                  await sleep(500);
-                  popover = document.querySelector('flow-add-menu-popover-content');
                 }
+              }
+
+              let items = [];
+              const deadline = Date.now() + 4000;
+              while (Date.now() < deadline) {
+                popover = document.querySelector('flow-add-menu-popover-content, flow-mobile-add-menu, .mobile-add-menu-container');
+                if (popover) {
+                  // Ensure only Image assets (storyboards & character sheets) are targeted
+                  const imagesTab = Array.from(popover.querySelectorAll('[role="tab"], button, .mat-mdc-tab')).find(t => normalize(t.innerText || t.textContent).includes('image'));
+                  if (imagesTab) {
+                    imagesTab.click();
+                    await sleep(300);
+                  }
+
+                  items = Array.from(popover.querySelectorAll('button.asset-item, .asset-item, [role="option"], flow-add-menu-asset-item'));
+                  if (items.length > 0) break;
+                }
+                await sleep(200);
               }
 
               if (!popover) {
@@ -1411,13 +1641,23 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
                 continue;
               }
 
-              const items = Array.from(popover.querySelectorAll('button.asset-item, .asset-item'));
+              // If popover is in detail view from previous item, click back button
+              const backBtn = popover.querySelector('button[aria-label*="Back" i], button[aria-label*="Kembali" i], button.back-button');
+              if (backBtn && visible(backBtn) && popover.querySelector('button.detail-add-to-prompt-btn')) {
+                backBtn.click();
+                await sleep(300);
+                items = Array.from(popover.querySelectorAll('button.asset-item, .asset-item, [role="option"], flow-add-menu-asset-item'));
+              }
+
               let matchedItem = null;
 
               if (token) {
                 matchedItem = items.find(item => {
+                  const img = item.querySelector('img');
+                  const imgSrc = (img?.src || img?.currentSrc || '').toLowerCase();
+                  const text = (item.innerText || item.textContent || '').toLowerCase();
                   const html = (item.outerHTML || '').toLowerCase();
-                  return html.includes(token);
+                  return imgSrc.includes(token) || text.includes(token) || html.includes(token);
                 });
               }
 
@@ -1430,18 +1670,26 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
               }
 
               if (matchedItem) {
-                matchedItem.click();
-                await sleep(300);
+                (matchedItem.closest('button.asset-item') || matchedItem).click();
+                await sleep(400);
 
-                const addBtn = popover.querySelector('button.detail-add-to-prompt-btn') ||
-                  controls().find(el => visible(el) && !el.disabled && normalize(el.innerText || el.textContent).includes('add to prompt'));
+                let addBtn = null;
+                const addDeadline = Date.now() + 2500;
+                while (Date.now() < addDeadline) {
+                  addBtn = popover.querySelector('button.detail-add-to-prompt-btn') ||
+                    controls().find(el => visible(el) && !el.disabled && normalize(el.innerText || el.textContent).includes('add to prompt'));
+                  if (addBtn && !addBtn.disabled) break;
+                  await sleep(150);
+                }
 
                 if (addBtn) {
                   addBtn.click();
                   selected.push(matchedItem);
-                  await sleep(500);
+                  await sleep(600);
                 } else {
-                  missing.push(id);
+                  // In mobile/direct overlay, clicking the item immediately adds it
+                  selected.push(matchedItem);
+                  await sleep(400);
                 }
               } else {
                 missing.push(id);
@@ -1449,7 +1697,7 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
             }
 
             // Close popover if still open
-            const openPopover = document.querySelector('flow-add-menu-popover-content');
+            const openPopover = document.querySelector('flow-add-menu-popover-content, flow-mobile-add-menu');
             if (openPopover) {
               document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
               await sleep(250);
@@ -1458,51 +1706,101 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
             return { added: selected.length, missing };
           };
 
-          const settings = document.querySelector('button[aria-label="Settings trigger"]');
-          if (!findLabelNode('video')) {
-            settings?.click();
-            await sleep(350);
+          // Close any stray top-bar or context menus before opening prompt settings
+          const strayMenu = document.querySelector('.cdk-overlay-pane:not(:has(flow-toggles)):not(:has(flow-add-menu-popover-content))');
+          if (strayMenu) {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+            await sleep(250);
           }
-          if (!await clickExactEventually('video')) return { error: 'FLOW_UI_VIDEO_MODE_CONTROL_MISSING' };
-          await sleep(500);
+
+          const settings = document.querySelector('flow-prompt-box button.settings-trigger-button, button.settings-trigger-button, flow-prompt-box [aria-label*="Pemicu setelan" i], flow-prompt-box [aria-label*="Settings trigger" i]') ||
+            controls().find(el => visible(el) && el.closest('flow-prompt-box') && (el.className.includes('settings-trigger') || normalize(el.getAttribute('aria-label') || '').includes('pemicu setelan') || normalize(el.getAttribute('aria-label') || '').includes('settings trigger')));
+          
+          const isSettingsPopoverOpen = () => !!document.querySelector('flow-prompt-box-settings, .cdk-overlay-pane:has(flow-toggles)');
+          if (!isSettingsPopoverOpen()) {
+            settings?.click();
+            await sleep(400);
+          }
+          const selectFlowOption = async (type, targetValue) => {
+            const normTarget = normalize(targetValue);
+            const getToggles = () => Array.from(document.querySelectorAll('mat-button-toggle-group mat-button-toggle, flow-prompt-box-settings mat-button-toggle, flow-toggles mat-button-toggle, .cdk-overlay-pane mat-button-toggle, mat-button-toggle'));
+            
+            for (let attempt = 0; attempt < 10; attempt++) {
+              const toggles = getToggles();
+              let matched = null;
+
+              if (type === 'duration') {
+                const durNum = (normTarget.match(/\d+/) || ['8'])[0];
+                matched = toggles.find(t => {
+                  const txt = normalize(t.innerText || t.textContent);
+                  const parts = txt.split(/[\s_-]+/);
+                  return parts.includes(durNum) || txt.includes(`${durNum}s`) || txt.includes(`${durNum} dtk`) || txt.includes(`${durNum} detik`) || txt.includes(`${durNum} sec`);
+                });
+              } else if (type === 'ratio') {
+                const is16_9 = normTarget.includes('16:9') || normTarget.includes('landscape') || normTarget.includes('lanskap');
+                const is9_16 = normTarget.includes('9:16') || normTarget.includes('portrait') || normTarget.includes('potret');
+                const key = is16_9 ? '16:9' : (is9_16 ? '9:16' : normTarget);
+                matched = toggles.find(t => {
+                  const txt = normalize(t.innerText || t.textContent);
+                  return txt.includes(key) || (is16_9 && (txt.includes('16_9') || txt.includes('landscape') || txt.includes('lanskap'))) || (is9_16 && (txt.includes('9_16') || txt.includes('portrait') || txt.includes('potret')));
+                });
+              } else if (type === 'count') {
+                const countNum = (normTarget.match(/\d+/) || ['1'])[0];
+                matched = toggles.find(t => {
+                  const txt = normalize(t.innerText || t.textContent);
+                  return txt === `x${countNum}` || txt === countNum || txt.includes(`x${countNum}`);
+                });
+              } else {
+                matched = toggles.find(t => {
+                  const txt = normalize(t.innerText || t.textContent);
+                  if (normTarget === 'video') return txt.includes('video');
+                  if (normTarget === 'image' || normTarget === 'gambar') return txt.includes('image') || txt.includes('gambar');
+                  if (normTarget === 'ingredients' || normTarget === 'bahan') return txt.includes('ingredient') || txt.includes('bahan');
+                  if (normTarget === 'frames' || normTarget === 'frame') return txt.includes('frame');
+                  return txt.includes(normTarget);
+                });
+              }
+
+              if (matched) {
+                const btn = matched.querySelector('button') || matched;
+                btn.click();
+                await sleep(200);
+                return true;
+              }
+              await sleep(150);
+            }
+            return false;
+          };
+
+          await selectFlowOption('mode', 'video');
+          await sleep(200);
 
           if (refIds.length) {
-            if (!await clickExactEventually('ingredients')) clickContains('ingredients');
-          } else if (!await clickExactEventually('frames')) {
-            clickContains('frames');
+            await selectFlowOption('submode', 'bahan');
+          } else {
+            await selectFlowOption('submode', 'frames');
           }
-          const videoRatioLabel = requestedAspectRatio === 'VIDEO_ASPECT_RATIO_PORTRAIT'
-            ? '9:16' : requestedAspectRatio === 'VIDEO_ASPECT_RATIO_LANDSCAPE'
-              ? '16:9' : null;
+          await sleep(200);
+
+          const videoRatioLabel = (requestedAspectRatio === 'VIDEO_ASPECT_RATIO_PORTRAIT' || requestedAspectRatio === '9:16' || requestedAspectRatio === 'portrait')
+            ? '9:16' : (requestedAspectRatio === 'VIDEO_ASPECT_RATIO_LANDSCAPE' || requestedAspectRatio === '16:9' || requestedAspectRatio === 'landscape')
+              ? '16:9' : (requestedAspectRatio || '16:9');
           const durationMatch = String(requestedVideoModelKey || '').match(/_(\d+)s$/i);
-          const videoDurationLabel = durationMatch ? `${durationMatch[1]}s` : null;
-          if (videoRatioLabel) await clickExactEventually(videoRatioLabel);
-          if (videoDurationLabel) await clickExactEventually(videoDurationLabel);
-          if (!await clickExactEventually('x1')) {
-            const toggleNodes = Array.from(document.querySelectorAll('flow-toggles mat-button-toggle, mat-button-toggle, button[role="radio"]'));
-            for (const tog of toggleNodes) {
-              const txt = (tog.textContent || tog.getAttribute('aria-label') || '').trim().toLowerCase();
-              if (txt === 'x1' || txt === '1' || txt.includes('x1')) {
-                const btn = tog.querySelector('button') || tog;
-                btn.click();
-                break;
-              }
-            }
-          }
-          await sleep(500);
-          if (!selectedExact('video') || (videoRatioLabel && !selectedExact(videoRatioLabel))) {
-            return { error: 'FLOW_UI_VIDEO_SETTINGS_NOT_APPLIED' };
-          }
-          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-          await sleep(350);
+          const videoDurationLabel = durationMatch ? `${durationMatch[1]}s` : '10s';
+
+          if (videoRatioLabel) await selectFlowOption('ratio', videoRatioLabel);
+          if (videoDurationLabel) await selectFlowOption('duration', videoDurationLabel);
+          await selectFlowOption('count', '1');
+          await sleep(250);
+
+          const backdrop = document.querySelector('.cdk-overlay-backdrop');
+          if (backdrop) backdrop.click();
+          else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          await sleep(300);
 
           const ingredientResult = await addFlowIngredients(refIds);
           if (refIds.length && ingredientResult.added === 0) {
-            return {
-              error: ingredientResult.error || 'FLOW_UI_INGREDIENT_ASSETS_NOT_FOUND',
-              references_added: 0,
-              references_missing: ingredientResult.missing,
-            };
+            notifyProgress('INGREDIENT_WARNING', 'Ingredient tidak ditemukan di popover; melanjutkan render video dengan prompt...', 35);
           }
 
           const editor = document.querySelector('[contenteditable="true"], .ProseMirror, textarea');
@@ -1511,32 +1809,16 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
           editor.focus();
 
           try {
-            if (typeof DataTransfer !== 'undefined') {
-              const dt = new DataTransfer();
-              dt.setData('text/plain', text);
-              editor.dispatchEvent(new ClipboardEvent('paste', {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                clipboardData: dt,
-              }));
+            document.execCommand('selectAll', false, null);
+            document.execCommand('delete', false, null);
+            if ((editor.innerText || editor.textContent || '').trim().length > 0) {
+              editor.innerHTML = '<p><br></p>';
             }
           } catch (_) {}
 
           try {
-            const selection = window.getSelection();
-            if (selection && typeof selection.selectAllChildren === 'function') {
-              selection.selectAllChildren(editor);
-            }
-            if (typeof document.execCommand === 'function') {
-              document.execCommand('insertText', false, text);
-            }
+            document.execCommand('insertText', false, text);
           } catch (_) {}
-
-          if (!editor.textContent || !editor.textContent.includes(text.slice(0, 10))) {
-            editor.innerText = text;
-            editor.textContent = text;
-          }
 
           try {
             if (typeof InputEvent !== 'undefined') {
@@ -1553,9 +1835,19 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
             }
           } catch (_) {}
 
+          const isButtonDisabled = (btn) => {
+            if (!btn) return true;
+            return btn.disabled ||
+              (typeof btn.hasAttribute === 'function' && btn.hasAttribute('disabled')) ||
+              (typeof btn.getAttribute === 'function' && btn.getAttribute('aria-disabled') === 'true') ||
+              (btn.classList && typeof btn.classList.contains === 'function' && btn.classList.contains('mat-mdc-button-disabled'));
+          };
+
           const findStartButton = () => {
+            const direct = document.querySelector('flow-generate-icon-button button, button.generate-icon-button');
+            if (direct && !isButtonDisabled(direct)) return direct;
             const queryAll = Array.from(document.querySelectorAll(
-              'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="hasilkan" i], button',
+              'flow-generate-icon-button button, button[type="submit"], [data-test-id*="generate"], button[aria-label*="generate" i], button[aria-label*="start" i], button[aria-label*="create" i], button[aria-label*="buat" i], button[aria-label*="mulai" i], button[aria-label*="hasilkan" i], button',
             ));
             return queryAll.find((el) => {
               const label = [
@@ -1564,38 +1856,44 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
                 el.innerText || '',
                 el.textContent || '',
               ].join(' ').toLowerCase();
-              const isNotDisabled = !el.disabled && !el.hasAttribute('disabled');
-              return (/arrow_forward|create|buat|hasilkan|generate|start generation/i.test(label) || el.closest('flow-generate-icon-button')) && isNotDisabled;
+              return (/arrow_forward|create|buat|mulai|hasilkan|generate|start generation/i.test(label) || el.closest('flow-generate-icon-button')) && !isButtonDisabled(el);
             });
           };
 
           let start = null;
           const deadline = Date.now() + 10000;
           while (Date.now() < deadline) {
-            start = document.querySelector('button[aria-label="Start generation"]')
+            start = findStartButton()
               || document.querySelector('flow-generate-icon-button button')
-              || findStartButton();
-            const editorText = (editor.innerText || editor.textContent || '').trim();
-            if (start && editorText.length > 0) break;
+              || document.querySelector('button[aria-label*="Start" i], button[aria-label*="Mulai" i]');
+            const isReady = start && !isButtonDisabled(start) && (editor.innerText || editor.textContent || '').trim().length > 0;
+            if (isReady) break;
+
+            try {
+              editor.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: ' ', composed: true }));
+              editor.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', code: 'KeyA', bubbles: true, composed: true }));
+              editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+            } catch (_) {}
+
             await sleep(250);
           }
-          if (!start || start.disabled) return { error: 'FLOW_UI_VIDEO_GENERATE_DISABLED' };
 
-          const target = start.querySelector('mat-icon, .mat-mdc-button-touch-target') || start;
-          const rect = target.getBoundingClientRect();
+          if (!start) {
+            start = findStartButton()
+              || document.querySelector('flow-generate-icon-button button')
+              || document.querySelector('button[aria-label*="Start" i], button[aria-label*="Mulai" i]');
+          }
+
+          if (!start) return { error: 'FLOW_UI_START_BUTTON_NOT_FOUND' };
+
+          start.scrollIntoView({ block: 'center', inline: 'center' });
+          await sleep(150);
+          editor.focus();
+
+          const rect = start.getBoundingClientRect();
           const clickX = Math.round(rect.left + rect.width / 2);
           const clickY = Math.round(rect.top + rect.height / 2);
-
-          // Synthetic click as immediate attempt
-          try {
-            const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX: clickX, clientY: clickY };
-            target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
-            target.dispatchEvent(new MouseEvent('mousedown', eventInit));
-            target.dispatchEvent(new PointerEvent('pointerup', eventInit));
-            target.dispatchEvent(new MouseEvent('mouseup', eventInit));
-            target.dispatchEvent(new MouseEvent('click', eventInit));
-            start.click();
-          } catch (_) {}
 
           notifyProgress('TRIGGERING_START', 'Menekan tombol Start video generation...', 50);
 
@@ -1603,11 +1901,22 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
             .map(el => el.currentSrc || el.src || el.getAttribute('src') || '')
             .filter(Boolean);
 
+          const imageSources = () => Array.from(document.querySelectorAll('img, flow-media-tile img, [data-media-id] img'))
+            .map(el => el.currentSrc || el.src || el.getAttribute('src') || '')
+            .filter(Boolean);
+
+          const mediaIdsList = () => Array.from(document.querySelectorAll('[data-media-id]'))
+            .map(el => el.getAttribute('data-media-id'))
+            .filter(Boolean);
+
           return {
             ready: true,
             clickX,
             clickY,
             beforeSources: assetSources(),
+            beforeImages: imageSources(),
+            beforeMediaIds: mediaIdsList(),
+            startTime: Date.now(),
             references_added: ingredientResult.added,
           };
         },
@@ -1623,16 +1932,33 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
       }
 
       // Step 2: Trigger hardware-level trusted click via chrome.debugger
+      let clickSucceeded = false;
       if (prepData.clickX && prepData.clickY) {
-        await handleNativeClick(candidateId, prepData.clickX, prepData.clickY);
+        const nativeRes = await handleNativeClick(candidateId, prepData.clickX, prepData.clickY);
+        if (nativeRes?.ok) clickSucceeded = true;
+      }
+      if (!clickSucceeded) {
+        await chrome.scripting.executeScript({
+          target: { tabId: candidateId },
+          world: 'MAIN',
+          func: () => {
+            const btn = document.querySelector('flow-generate-icon-button button, button.generate-icon-button, button[aria-label*="Start" i], button[aria-label*="Mulai" i]');
+            if (btn && !btn.disabled) btn.click();
+          }
+        }).catch(() => null);
       }
 
       // Step 3: Monitor generation and poll for output video
       result = await chrome.scripting.executeScript({
         target: { tabId: candidateId },
         world: 'MAIN',
-        func: async (beforeSourcesList, referencesAdded, reqId) => {
-          const before = new Set(beforeSourcesList || []);
+        func: async (prepPayload, reqId) => {
+          const before = new Set(prepPayload?.beforeSources || []);
+          const beforeImages = new Set(prepPayload?.beforeImages || []);
+          const beforeMediaIds = new Set(prepPayload?.beforeMediaIds || []);
+          const startTime = prepPayload?.startTime || Date.now();
+          const referencesAdded = prepPayload?.references_added || 0;
+
           const notifyProgress = (stage, message, percent = undefined) => {
             try {
               if (typeof window !== 'undefined' && window.postMessage) {
@@ -1667,54 +1993,62 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
 
           let lastPct = null;
           let videoRetryAttempts = 0;
-          const maxVideoRetries = 3;
           let lastVideoRetryTime = 0;
           let renderDeadline = Date.now() + 180000;
 
           while (Date.now() < renderDeadline) {
             await sleep(1500);
 
-            // Direct auto-detect and click for Retry button
-            if (Date.now() - lastVideoRetryTime > 3000 && videoRetryAttempts < maxVideoRetries) {
-              const findRetryButton = () => {
-                const directBtn = document.querySelector('button[aria-label*="Retry" i], button[aria-label*="retry" i], button[aria-label*="coba lagi" i], flow-error-tile button, .error-tile button');
-                if (directBtn) return directBtn;
-                return Array.from(document.querySelectorAll('button')).find((b) => {
-                  const label = (b.getAttribute('aria-label') || b.title || b.innerText || b.textContent || '').trim().toLowerCase();
-                  const iconTxt = (b.querySelector('mat-icon')?.innerText || '').trim().toLowerCase();
-                  const isRetry = label === 'refresh' || label.includes('retry') || label.includes('coba lagi') || iconTxt === 'refresh' || iconTxt === 'replay';
-                  const inErrorTile = !!b.closest('flow-error-tile, .error-tile, [class*="error"], [class*="failed"]') ||
-                    (b.parentElement?.innerText || '').toLowerCase().includes('unusual activity') ||
-                    (b.parentElement?.innerText || '').toLowerCase().includes('failed');
-                  return isRetry && inErrorTile;
-                });
-              };
-
-              const retryBtn = findRetryButton();
-              if (retryBtn) {
-                videoRetryAttempts++;
-                lastVideoRetryTime = Date.now();
-                notifyProgress('AUTO_RETRY', `⚠️ Google Flow mendeteksi kendala render video. Menekan tombol Retry otomatis (Percobaan ${videoRetryAttempts}/${maxVideoRetries})...`, 55);
-
-                const target = retryBtn.querySelector('mat-icon, .mat-mdc-button-touch-target') || retryBtn;
-                const rect = target.getBoundingClientRect();
-                const clientX = Math.round(rect.left + rect.width / 2);
-                const clientY = Math.round(rect.top + rect.height / 2);
-                const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY };
-
-                try {
-                  target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
-                  target.dispatchEvent(new MouseEvent('mousedown', eventInit));
-                  target.dispatchEvent(new PointerEvent('pointerup', eventInit));
-                  target.dispatchEvent(new MouseEvent('mouseup', eventInit));
-                  target.dispatchEvent(new MouseEvent('click', eventInit));
-                  retryBtn.click();
-                } catch (_) {}
-
-                renderDeadline = Math.max(renderDeadline, Date.now() + 90000);
+            // 1. Check window.__sinematicaLastVideoReadyEvent from interceptor (HIGHEST PRIORITY)
+            if (typeof window !== 'undefined' && window.__sinematicaLastVideoReadyEvent) {
+              const lastEvt = window.__sinematicaLastVideoReadyEvent;
+              if (lastEvt.time >= startTime || !lastEvt.time) {
+                const vidUrl = (lastEvt.videoUrls && lastEvt.videoUrls[0]) || (lastEvt.videos && lastEvt.videos[0] && (lastEvt.videos[0].url || lastEvt.videos[0].downloadUrl));
+                if (vidUrl) {
+                  notifyProgress('VIDEO_READY', 'Video berhasil dirender di Google Flow!', 100);
+                  return { video_url: vidUrl, references_added: referencesAdded };
+                }
               }
             }
 
+            // 2. Direct video tag source check
+            const url = extractVideoUrl(before);
+            if (url) {
+              notifyProgress('VIDEO_READY', 'Video berhasil dirender di Google Flow!', 100);
+              return { video_url: url, references_added: referencesAdded };
+            }
+
+            // 3. Scan for completed video tiles on canvas (Tiles with Play icon or video tag)
+            const allCanvasTiles = Array.from(document.querySelectorAll('flow-media-tile, flow-grid-tile-container, flow-video-tile, [data-media-id]'));
+            const completedVideoTiles = allCanvasTiles.filter((t) => {
+              const text = (t.innerText || t.textContent || '').toLowerCase();
+              const isError = /failed|unusual activity|sorry, this video failed|gagal|kebijakan|tokoh berpengaruh|policy violation/i.test(text);
+              const isProgress = /\b\d{1,2}%\b|generating|queued/i.test(text);
+              const hasPlay = !!t.querySelector('mat-icon, button[aria-label*="Play" i], .play-icon') &&
+                /play|videocam|play_arrow/i.test(t.querySelector('mat-icon')?.innerText || t.querySelector('button')?.getAttribute('aria-label') || '');
+              const isVideoEl = !!t.querySelector('video') || t.tagName?.toLowerCase() === 'flow-video-tile';
+              return (hasPlay || isVideoEl) && !isError && !isProgress;
+            });
+
+            if (completedVideoTiles.length > 0) {
+              const newestTile = completedVideoTiles[0];
+              const vid = newestTile.querySelector('video');
+              const vSrc = vid?.currentSrc || vid?.src;
+              if (vSrc && isUsableVideoUrl(vSrc)) {
+                notifyProgress('VIDEO_READY', 'Video berhasil dirender di Google Flow!', 100);
+                return { video_url: vSrc, references_added: referencesAdded };
+              }
+
+              const img = newestTile.querySelector('img');
+              const imgSrc = img?.currentSrc || img?.src;
+              const mediaId = newestTile.getAttribute('data-media-id') || (imgSrc && imgSrc.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]);
+              if (imgSrc && isUsableVideoUrl(imgSrc) && (!beforeImages.has(imgSrc) || (mediaId && !beforeMediaIds.has(mediaId)))) {
+                notifyProgress('VIDEO_READY', 'Video berhasil dirender di Google Flow!', 100);
+                return { video_url: imgSrc, mediaId: mediaId, references_added: referencesAdded };
+              }
+            }
+
+            // 4. Progress percentage tracking
             const tileNodes = Array.from(document.querySelectorAll('flow-media-tile, flow-grid-tile-container, flow-video-tile, button, [role="progressbar"]'));
             for (const node of tileNodes) {
               const txt = (node.innerText || node.textContent || '').trim();
@@ -1726,15 +2060,44 @@ async function generateVideoViaAuthenticatedFlowUi(tabId, requestBody, requestId
               }
             }
 
-            const url = extractVideoUrl(before);
-            if (url) {
-              notifyProgress('VIDEO_READY', 'Video berhasil dirender di Google Flow!', 100);
-              return { video_url: url, references_added: referencesAdded };
+            // 5. Controlled Auto-Retry: ONLY if NO completed video tile exists AND never spam same tile
+            if (completedVideoTiles.length === 0 && videoRetryAttempts < 1 && Date.now() - lastVideoRetryTime > 8000) {
+              const errorCards = Array.from(document.querySelectorAll('flow-error-tile, .error-tile, [class*="error"], [class*="failed"]')).filter(card => !card.dataset.retried);
+              if (errorCards.length > 0) {
+                const targetCard = errorCards[0];
+                targetCard.dataset.retried = 'true';
+                const retryBtn = targetCard.querySelector('button[aria-label*="Retry" i], button[aria-label*="retry" i], button');
+                if (retryBtn) {
+                  videoRetryAttempts++;
+                  lastVideoRetryTime = Date.now();
+                  notifyProgress('AUTO_RETRY', 'Google Flow menampilkan kartu kendala; mencoba 1x retry...', 55);
+                  retryBtn.click();
+                  renderDeadline = Math.max(renderDeadline, Date.now() + 60000);
+                }
+              }
             }
           }
+
+          // Fallback: Check top-left canvas tile
+          const finalTiles = Array.from(document.querySelectorAll('flow-media-tile, flow-grid-tile-container, flow-video-tile, [data-media-id]'));
+          if (finalTiles.length > 0) {
+            const first = finalTiles[0];
+            const vid = first.querySelector('video');
+            const vSrc = vid?.currentSrc || vid?.src;
+            if (vSrc && isUsableVideoUrl(vSrc)) {
+              return { video_url: vSrc, references_added: referencesAdded };
+            }
+            const img = first.querySelector('img');
+            const iSrc = img?.currentSrc || img?.src;
+            if (iSrc && isUsableVideoUrl(iSrc)) {
+              const mId = first.getAttribute('data-media-id') || iSrc.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
+              return { video_url: iSrc, mediaId: mId, references_added: referencesAdded };
+            }
+          }
+
           return { error: 'FLOW_UI_VIDEO_GENERATION_TIMEOUT' };
         },
-        args: [prepData.beforeSources, prepData.references_added, requestId],
+        args: [prepData, requestId],
       }).catch(() => null);
 
       if (result?.[0]?.result?.video_url) break;
@@ -1932,37 +2295,13 @@ async function handleApiRequest(msg) {
             let found = parseCreditStr(bodyText);
             if (found) return { credits: found, source: 'direct_visible' };
 
-            // Check if account panel is already open on screen
-            const hasCloseBtn = document.querySelector('[aria-label*="Close account panel"], [aria-label*="Tutup panel akun"], [aria-label*="Close account"]');
-            
-            // 2. Click avatar button & wait for popup rendering ONLY if panel is not open
-            if (!hasCloseBtn) {
-              const avatarBtn = document.querySelector('[aria-label*="Google Account:"], [aria-label*="Akun Google:"], [aria-label*="Google Account"], [aria-label*="Akun Google"], a[href*="accounts.google.com"], button[aria-label*="Account"], button[aria-label*="Akun"], [role="button"][aria-label*="Account"], [role="button"][aria-label*="Akun"], [data-ogsr-up], a:has(img[src*="googleusercontent"]), button:has(img[src*="googleusercontent"]), img[src*="googleusercontent"]');
-              if (avatarBtn) {
-                const targetClick = avatarBtn.closest('button') || avatarBtn.closest('a') || avatarBtn;
-                targetClick.click();
-                await new Promise(r => setTimeout(r, 800));
-
-                bodyText = document.body ? (document.body.innerText || document.body.textContent || "") : "";
-                found = parseCreditStr(bodyText);
-
-                if (!found) {
-                  const allEls = document.querySelectorAll('*');
-                  for (const el of allEls) {
-                    if (el.shadowRoot) {
-                      const sTxt = el.shadowRoot.innerText || el.shadowRoot.textContent || "";
-                      found = parseCreditStr(sTxt);
-                      if (found) break;
-                    }
-                  }
-                }
-
-                // If opened by us, toggle close
-                const closeBtn = document.querySelector('[aria-label*="Close account panel"], [aria-label*="Tutup panel akun"], [aria-label*="Close account"]');
-                if (closeBtn) closeBtn.click();
-                else targetClick.click();
-
-                if (found) return { credits: found, source: 'avatar_click' };
+            // 2. Check shadow DOMs passively (DO NOT click any link or avatar button)
+            const allEls = document.querySelectorAll('*');
+            for (const el of allEls) {
+              if (el.shadowRoot) {
+                const sTxt = el.shadowRoot.innerText || el.shadowRoot.textContent || "";
+                found = parseCreditStr(sTxt);
+                if (found) return { credits: found, source: 'shadow_root' };
               }
             }
 
@@ -2137,10 +2476,9 @@ async function handleApiRequest(msg) {
 
     // The current Flow web app can submit Ingredients video jobs from its
     // authenticated composer, but its R2V HTTP endpoint rejects the public
-    // API key when no bearer is exposed to the extension. Use that same UI
-    // session and return a pollable UI handle instead of sending the doomed
-    // API-key-only request.
-    if (isVideoReferenceRequest && !activeBearerKey) {
+    // API key when no bearer is exposed to the extension. Always use the UI
+    // session and attach the storyboard and character ingredients directly into the composer.
+    if (isVideoReferenceRequest) {
       const uiFallback = await generateVideoViaAuthenticatedFlowUi(targetTab.id, body, id);
       if (uiFallback?.status === 200) {
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -2454,22 +2792,32 @@ async function handleNativeClick(targetTabId, x, y) {
       clickCount: 1,
     });
 
+    await new Promise((r) => setTimeout(r, 60));
+
+    // Dispatch trusted Enter key to ProseMirror editor to guarantee immediate submission
     await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
       type: 'rawKeyDown',
+      key: 'Enter',
+      code: 'Enter',
       windowsVirtualKeyCode: 13,
       nativeVirtualKeyCode: 13,
       macCharCode: 13,
       text: '\r',
       unmodifiedText: '\r',
     }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 40));
     await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
       type: 'keyUp',
+      key: 'Enter',
+      code: 'Enter',
       windowsVirtualKeyCode: 13,
       nativeVirtualKeyCode: 13,
       macCharCode: 13,
       text: '\r',
       unmodifiedText: '\r',
     }).catch(() => {});
+
+    await new Promise((r) => setTimeout(r, 100));
 
     try {
       await chrome.debugger.detach(target);
